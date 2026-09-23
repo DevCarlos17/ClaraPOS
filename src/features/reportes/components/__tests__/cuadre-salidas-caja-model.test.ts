@@ -99,37 +99,43 @@ describe('resolverConceptoSalida — resuelve el label de la columna Concepto', 
   })
 })
 
-describe('clasificarOrigenNc — deriva el origen (POS vs ADM) SOLO desde liquidacion_modalidad', () => {
-  it('REFUND_TESORERIA clasifica como ADM', () => {
-    expect(clasificarOrigenNc({ liquidacion_modalidad: 'REFUND_TESORERIA' })).toBe('ADM')
+describe('clasificarOrigenNc — deriva el origen (POS vs ADM) SOLO desde nc.sesion_caja_id (discriminador real de punto de entrada)', () => {
+  it('nc_sesion_caja_id presente clasifica como POS (la NC fue emitida desde una sesion de caja activa)', () => {
+    expect(clasificarOrigenNc({ nc_sesion_caja_id: 'sesion-123' })).toBe('POS')
   })
 
-  it('EFECTIVO_REAL clasifica como POS', () => {
-    expect(clasificarOrigenNc({ liquidacion_modalidad: 'EFECTIVO_REAL' })).toBe('POS')
+  it('nc_sesion_caja_id null clasifica como ADM (entry point Admin/Tradicional, nunca vincula sesion)', () => {
+    expect(clasificarOrigenNc({ nc_sesion_caja_id: null })).toBe('ADM')
   })
 
-  it('SALDO_FAVOR clasifica como POS', () => {
-    expect(clasificarOrigenNc({ liquidacion_modalidad: 'SALDO_FAVOR' })).toBe('POS')
+  it('nc_sesion_caja_id string vacio (defensivo, dato malformado) cae a ADM', () => {
+    expect(clasificarOrigenNc({ nc_sesion_caja_id: '' })).toBe('ADM')
   })
 
-  it('COMPENSACION_VENTA clasifica como POS', () => {
-    expect(clasificarOrigenNc({ liquidacion_modalidad: 'COMPENSACION_VENTA' })).toBe('POS')
+  it('POS "devolver dinero" (modalidad REFUND_TESORERIA pero entryPoint POS) clasifica POS — el header persiste sesion_caja_id independientemente de la modalidad de liquidacion', () => {
+    // Bug QA confirmado: `emitirNcRefund` (nota-credito-pos-modal.tsx) hardcodea
+    // modalidad='REFUND_TESORERIA' CON entryPoint='POS'. La clasificacion vieja
+    // (por liquidacion_modalidad) marcaba esto como Adm incorrectamente. La
+    // correcta usa nc.sesion_caja_id, que SI se escribe para cualquier NC POS
+    // sin importar la modalidad de liquidacion (use-notas-credito.ts:720/944).
+    expect(clasificarOrigenNc({ nc_sesion_caja_id: 'sesion-cajero-activa' })).toBe('POS')
   })
 
-  it('AJUSTE_CXC clasifica como POS', () => {
-    expect(clasificarOrigenNc({ liquidacion_modalidad: 'AJUSTE_CXC' })).toBe('POS')
+  it('Admin REFUND_TESORERIA→SESION_CAJA (el egreso cae en la sesion elegida pero el header de la NC es Admin) clasifica ADM', () => {
+    // El admin puede elegir destino SESION_CAJA para el egreso de tesoreria
+    // (`movimientos_metodo_cobro.sesion_caja_id = linea.sesionCajaId`), pero el
+    // HEADER de la NC (`notas_credito.sesion_caja_id`) queda NULL porque el
+    // entry point es Admin/Tradicional (use-notas-credito.ts:720). Comportamiento
+    // deseado: se clasifica ADM aunque el dinero aterrice en esta sesion.
+    expect(clasificarOrigenNc({ nc_sesion_caja_id: null })).toBe('ADM')
   })
 
-  it('null (join a notas_credito sin match, dato huerfano) cae a POS — fallback seguro', () => {
-    expect(clasificarOrigenNc({ liquidacion_modalidad: null })).toBe('POS')
-  })
-
-  it('undefined (fila malformada sin el campo) tambien cae a POS — mismo fallback seguro', () => {
+  it('undefined (fila malformada sin el campo) cae a ADM — mismo fallback seguro', () => {
     // `as` justificado: simula una fila real donde el campo directamente falta
     // (no pasa por el tipo `string | null` del contrato), para probar que el
     // fallback de runtime es robusto mas alla de lo que el type-checker exige.
     const itemSinCampo = {} as ClasificacionNcInput
-    expect(clasificarOrigenNc(itemSinCampo)).toBe('POS')
+    expect(clasificarOrigenNc(itemSinCampo)).toBe('ADM')
   })
 })
 
@@ -137,7 +143,7 @@ describe('splitSalidasNcPorOrigen — subtotales por origen (POS/ADM) x moneda n
   function ncItem(overrides: Partial<SalidaNcSubtotalItem> = {}): SalidaNcSubtotalItem {
     return {
       origen: 'NCR',
-      liquidacion_modalidad: 'EFECTIVO_REAL',
+      nc_sesion_caja_id: 'sesion-activa',
       metodo_moneda: 'USD',
       monto: '0',
       ...overrides,
@@ -146,10 +152,10 @@ describe('splitSalidasNcPorOrigen — subtotales por origen (POS/ADM) x moneda n
 
   it('mezcla POS/ADM en USD y Bs — separa los 4 buckets correctamente', () => {
     const items: SalidaNcSubtotalItem[] = [
-      ncItem({ liquidacion_modalidad: 'EFECTIVO_REAL', metodo_moneda: 'USD', monto: '100' }), // POS USD
-      ncItem({ liquidacion_modalidad: 'SALDO_FAVOR', metodo_moneda: 'BS', monto: '250' }), // POS Bs
-      ncItem({ liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'USD', monto: '50' }), // ADM USD
-      ncItem({ liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'BS', monto: '75' }), // ADM Bs
+      ncItem({ nc_sesion_caja_id: 'sesion-1', metodo_moneda: 'USD', monto: '100' }), // POS USD
+      ncItem({ nc_sesion_caja_id: 'sesion-1', metodo_moneda: 'BS', monto: '250' }), // POS Bs
+      ncItem({ nc_sesion_caja_id: null, metodo_moneda: 'USD', monto: '50' }), // ADM USD
+      ncItem({ nc_sesion_caja_id: null, metodo_moneda: 'BS', monto: '75' }), // ADM Bs
     ]
     expect(splitSalidasNcPorOrigen(items)).toEqual({
       posUsd: 100,
@@ -161,8 +167,8 @@ describe('splitSalidasNcPorOrigen — subtotales por origen (POS/ADM) x moneda n
 
   it('solo origen POS presente — los buckets ADM dan 0, no undefined', () => {
     const items: SalidaNcSubtotalItem[] = [
-      ncItem({ liquidacion_modalidad: 'EFECTIVO_REAL', metodo_moneda: 'USD', monto: '40' }),
-      ncItem({ liquidacion_modalidad: 'AJUSTE_CXC', metodo_moneda: 'BS', monto: '60' }),
+      ncItem({ nc_sesion_caja_id: 'sesion-1', metodo_moneda: 'USD', monto: '40' }),
+      ncItem({ nc_sesion_caja_id: 'sesion-2', metodo_moneda: 'BS', monto: '60' }),
     ]
     const result = splitSalidasNcPorOrigen(items)
     expect(result).toEqual({ posUsd: 40, posBsNativo: 60, admUsd: 0, admBsNativo: 0 })
@@ -170,7 +176,7 @@ describe('splitSalidasNcPorOrigen — subtotales por origen (POS/ADM) x moneda n
 
   it('solo origen ADM presente — los buckets POS dan 0, no undefined', () => {
     const items: SalidaNcSubtotalItem[] = [
-      ncItem({ liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'USD', monto: '30' }),
+      ncItem({ nc_sesion_caja_id: null, metodo_moneda: 'USD', monto: '30' }),
     ]
     const result = splitSalidasNcPorOrigen(items)
     expect(result).toEqual({ posUsd: 0, posBsNativo: 0, admUsd: 30, admBsNativo: 0 })
@@ -180,10 +186,10 @@ describe('splitSalidasNcPorOrigen — subtotales por origen (POS/ADM) x moneda n
     expect(splitSalidasNcPorOrigen([])).toEqual({ posUsd: 0, posBsNativo: 0, admUsd: 0, admBsNativo: 0 })
   })
 
-  it('filtra por ORIGENES_DEVOLUCION_NC — un item con origen no-NC no se cuenta aunque tenga liquidacion_modalidad', () => {
+  it('filtra por ORIGENES_DEVOLUCION_NC — un item con origen no-NC no se cuenta aunque tenga nc_sesion_caja_id', () => {
     const items: SalidaNcSubtotalItem[] = [
-      ncItem({ origen: 'EGRESO_MANUAL', liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'USD', monto: '999' }),
-      ncItem({ origen: 'NCR', liquidacion_modalidad: 'EFECTIVO_REAL', metodo_moneda: 'USD', monto: '15' }),
+      ncItem({ origen: 'EGRESO_MANUAL', nc_sesion_caja_id: 'sesion-1', metodo_moneda: 'USD', monto: '999' }),
+      ncItem({ origen: 'NCR', nc_sesion_caja_id: 'sesion-1', metodo_moneda: 'USD', monto: '15' }),
     ]
     expect(splitSalidasNcPorOrigen(items)).toEqual({ posUsd: 15, posBsNativo: 0, admUsd: 0, admBsNativo: 0 })
   })
@@ -192,16 +198,16 @@ describe('splitSalidasNcPorOrigen — subtotales por origen (POS/ADM) x moneda n
 describe('invariante sagrado: split por origen reconstruye exactamente splitEgresosArqueo (display-only, ningun total cambia)', () => {
   it('posUsd + admUsd == devolucionesNcUsd, y posBsNativo + admBsNativo == devolucionesNcBsNativo', () => {
     // Mismos 4 montos/monedas modelados en las dos vistas: la vista "salida NC
-    // individual" (con liquidacion_modalidad, consumida por splitSalidasNcPorOrigen)
+    // individual" (con nc_sesion_caja_id, consumida por splitSalidasNcPorOrigen)
     // y la vista "movimiento manual" (con metodo_tipo/mov_tipo, consumida por
     // splitEgresosArqueo, Card "Arqueo Teorico"). Ambas fuentes son independientes
     // en produccion (use-cuadre.ts las expone por separado) pero deben sumar el
     // mismo total agregado — ese es el invariante que este test prueba.
     const salidaNcItems: SalidaNcSubtotalItem[] = [
-      { origen: 'NCR', liquidacion_modalidad: 'EFECTIVO_REAL', metodo_moneda: 'USD', monto: '100' }, // POS USD
-      { origen: 'NCR', liquidacion_modalidad: 'SALDO_FAVOR', metodo_moneda: 'BS', monto: '250' }, // POS Bs
-      { origen: 'NCR', liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'USD', monto: '50' }, // ADM USD
-      { origen: 'NCR', liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'BS', monto: '75' }, // ADM Bs
+      { origen: 'NCR', nc_sesion_caja_id: 'sesion-1', metodo_moneda: 'USD', monto: '100' }, // POS USD
+      { origen: 'NCR', nc_sesion_caja_id: 'sesion-1', metodo_moneda: 'BS', monto: '250' }, // POS Bs
+      { origen: 'NCR', nc_sesion_caja_id: null, metodo_moneda: 'USD', monto: '50' }, // ADM USD
+      { origen: 'NCR', nc_sesion_caja_id: null, metodo_moneda: 'BS', monto: '75' }, // ADM Bs
     ]
     const movimientoManualItems: MovimientoManualItem[] = [
       { metodo_tipo: 'EFECTIVO', metodo_moneda: 'USD', mov_tipo: 'EGRESO', origen: 'NCR', total: 100 },

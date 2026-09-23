@@ -4,25 +4,33 @@
 
 ### Requirement: Clasificación de salidas NC por origen (POS vs Administración)
 
-La función pura de clasificación MUST derivar el origen de cada salida de caja con `origen='NCR'` exclusivamente a partir de `notas_credito.liquidacion_modalidad` (nunca del texto de `concepto`). `liquidacion_modalidad === 'REFUND_TESORERIA'` MUST clasificar como **Admin**. Cualquier otro valor — incluyendo `EFECTIVO_REAL` y el caso `null`/`undefined` (join sin match, dato huérfano) — MUST clasificar como **POS**, preservando el comportamiento visual actual (badge único "NC") para todo lo que no sea explícitamente `REFUND_TESORERIA`.
+La función pura de clasificación MUST derivar el origen de cada salida de caja con `origen='NCR'` exclusivamente a partir de `notas_credito.sesion_caja_id` (nunca de `liquidacion_modalidad` ni del texto de `concepto`). `notas_credito.sesion_caja_id` es el discriminador real de punto de entrada: se escribe UNA sola vez al INSERT del header de la NC (`entryPoint === 'POS' ? sesionCajaActivaId ?? null : null`) y nunca se actualiza después. Un `sesion_caja_id` no nulo y no vacío MUST clasificar como **POS**. `null`, `undefined` o cadena vacía (join sin match, dato huérfano, o entry point Admin/Tradicional que nunca vincula sesión) MUST clasificar como **Admin**.
 
-#### Scenario: EFECTIVO_REAL clasifica como POS
+`liquidacion_modalidad` (EFECTIVO_REAL vs REFUND_TESORERIA) MUST NOT usarse como discriminador de origen: indica el MECANISMO de reembolso (cajón del cajero vs tesorería), no el PUNTO DE ENTRADA. Bug QA confirmado en la primera implementación de este cambio: el flujo POS "Devolver dinero" (`emitirNcRefund`) hardcodea `modalidad: 'REFUND_TESORERIA'` con `entryPoint: 'POS'`, por lo que clasificar por modalidad marcaba erróneamente esas NC-POS como Admin.
 
-- GIVEN una salida NCR con `liquidacion_modalidad = 'EFECTIVO_REAL'`
+#### Scenario: NC con sesión de caja asociada clasifica como POS
+
+- GIVEN una salida NCR donde `notas_credito.sesion_caja_id` no es `null` ni vacío
 - WHEN se clasifica el origen
 - THEN el resultado es `POS`
 
-#### Scenario: REFUND_TESORERIA clasifica como Admin
+#### Scenario: NC sin sesión de caja asociada clasifica como Admin
 
-- GIVEN una salida NCR con `liquidacion_modalidad = 'REFUND_TESORERIA'`
+- GIVEN una salida NCR donde `notas_credito.sesion_caja_id` es `null`
 - WHEN se clasifica el origen
 - THEN el resultado es `Admin`
 
-#### Scenario: Modalidad ausente cae a POS (fallback seguro)
+#### Scenario: POS "devolver dinero" (REFUND_TESORERIA con entryPoint POS) clasifica como POS
 
-- GIVEN una salida NCR donde el JOIN a `notas_credito` no resuelve (`liquidacion_modalidad` es `null`)
+- GIVEN una NC emitida desde el POS express vía "Devolver dinero" (`emitirNcRefund`, que hardcodea `modalidad: 'REFUND_TESORERIA'` con `entryPoint: 'POS'`), cuyo header persiste `sesion_caja_id = sesionCajaActivaId`
 - WHEN se clasifica el origen
-- THEN el resultado es `POS`, igual que el comportamiento previo a este cambio
+- THEN el resultado es `POS`, sin importar la modalidad de liquidación
+
+#### Scenario: Admin REFUND_TESORERIA→SESION_CAJA clasifica como Admin aunque el egreso caiga en la sesión
+
+- GIVEN una NC emitida desde el módulo Admin (Consulta de Factura) con modalidad `REFUND_TESORERIA` y destino `SESION_CAJA`, donde el egreso de `movimientos_metodo_cobro` se escribe con la `sesion_caja_id` elegida por el admin, pero el HEADER de la NC (`notas_credito.sesion_caja_id`) permanece `null` porque el entry point es Admin
+- WHEN se clasifica el origen
+- THEN el resultado es `Admin`, aunque el dinero aterrice en esa sesión de caja
 
 ### Requirement: Badge por fila refleja el origen de la salida NC
 
@@ -52,7 +60,7 @@ Cuando existan salidas NC de ambos orígenes en la sesión, la tabla MUST mostra
 
 #### Scenario: Sesión con NC de un solo origen
 
-- GIVEN una sesión donde todas las salidas NC clasifican `POS` (ningún `REFUND_TESORERIA`)
+- GIVEN una sesión donde todas las salidas NC tienen `notas_credito.sesion_caja_id` no nulo (todas clasifican `POS`)
 - WHEN se abre la tabla "Salidas de Caja"
 - THEN solo se muestra el subtotal `POS`; no aparece un subtotal `Admin` vacío o en cero
 

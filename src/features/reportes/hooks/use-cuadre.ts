@@ -1510,7 +1510,8 @@ export interface MovimientoEfectivoDetalle {
   fecha: string
   destinatario: string | null
   nro_ncr: string | null
-  liquidacion_modalidad: string | null
+  /** `notas_credito.sesion_caja_id` — discriminador real de punto de entrada (POS vs Admin). Ver `clasificarOrigenNc` en `cuadre-salidas-caja-model.ts`. NO es `liquidacion_modalidad` (eso indica el mecanismo de reembolso, no el punto de entrada). */
+  nc_sesion_caja_id: string | null
 }
 
 export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
@@ -1528,7 +1529,7 @@ export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
                 ELSE COALESCE(mon.codigo_iso, 'USD') END as metodo_moneda,
            ud.nombre as destinatario,
            nc.nro_ncr as nro_ncr,
-           nc.liquidacion_modalidad as liquidacion_modalidad
+           nc.sesion_caja_id as nc_sesion_caja_id
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
@@ -1554,7 +1555,7 @@ export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
     fecha: String(row.fecha ?? ''),
     destinatario: row.destinatario ? String(row.destinatario) : null,
     nro_ncr: row.nro_ncr ? String(row.nro_ncr) : null,
-    liquidacion_modalidad: row.liquidacion_modalidad ? String(row.liquidacion_modalidad) : null,
+    nc_sesion_caja_id: row.nc_sesion_caja_id ? String(row.nc_sesion_caja_id) : null,
   }))
 
   return { movimientos: items, isLoading }

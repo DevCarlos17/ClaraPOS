@@ -53,18 +53,35 @@ export function resolverConceptoSalida(item: ConceptoSalidaInput): string {
 }
 
 // Desglose de salidas NC por origen (POS vs Administracion). Unica fuente de
-// verdad: SOLO liquidacion_modalidad, nunca `concepto` (Spec caja, Req 1).
-// REFUND_TESORERIA -> ADM. Cualquier otro valor (EFECTIVO_REAL, SALDO_FAVOR,
-// COMPENSACION_VENTA, AJUSTE_CXC) y null/undefined (join sin match, dato
-// huerfano) -> POS, preservando el comportamiento visual previo a este cambio.
+// verdad: SOLO nc.sesion_caja_id — bugfix QA (Spec caja, Req 1 corregido).
+//
+// `liquidacion_modalidad` (EFECTIVO_REAL vs REFUND_TESORERIA) NUNCA fue el
+// discriminador correcto: indica el MECANISMO de reembolso (cajon del
+// cajero vs tesoreria), no el PUNTO DE ENTRADA (POS vs Admin). El flujo POS
+// "Devolver dinero" (`emitirNcRefund`, nota-credito-pos-modal.tsx) hardcodea
+// `modalidad: 'REFUND_TESORERIA'` CON `entryPoint: 'POS'` — clasificar por
+// modalidad marcaba esas NC-POS como "Adm" incorrectamente.
+//
+// `nc.sesion_caja_id` SI es el discriminador real: se escribe UNA sola vez
+// al INSERT del header de la NC (`use-notas-credito.ts:944`, formula
+// `sesionCajaIdParaNc = entryPoint === 'POS' ? sesionCajaActivaId ?? null : null`
+// en la linea 720) y nunca se actualiza despues. Por lo tanto:
+//  - NC desde POS (cualquier modalidad, incluida "devolver dinero") -> `nc.sesion_caja_id`
+//    NO es null -> POS.
+//  - NC desde Admin (Consulta de Factura / entry point Tradicional) -> `nc.sesion_caja_id`
+//    es null -> ADM. Esto es correcto incluso cuando esa NC usa
+//    REFUND_TESORERIA con destino SESION_CAJA: el egreso de caja aterriza en
+//    la sesion elegida via `movimientos_metodo_cobro.sesion_caja_id`, pero el
+//    HEADER de la NC (`notas_credito.sesion_caja_id`) sigue NULL porque el
+//    punto de entrada es Admin — comportamiento deseado, no un bug.
 export type OrigenSalidaNc = 'POS' | 'ADM'
 
 export interface ClasificacionNcInput {
-  liquidacion_modalidad: string | null
+  nc_sesion_caja_id: string | null
 }
 
 export function clasificarOrigenNc(item: ClasificacionNcInput): OrigenSalidaNc {
-  return item.liquidacion_modalidad === 'REFUND_TESORERIA' ? 'ADM' : 'POS'
+  return item.nc_sesion_caja_id != null && item.nc_sesion_caja_id !== '' ? 'POS' : 'ADM'
 }
 
 export interface SalidaNcSubtotalItem extends ClasificacionNcInput {
