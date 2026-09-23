@@ -714,7 +714,7 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     await user.click(screen.getByText('Autorizar'))
     expect(screen.queryByText(/Automatico/i)).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /Volver/i }))
+    await user.click(screen.getByRole('button', { name: /^Volver$/i }))
     await user.click(screen.getByText(/C01-000001/i))
     await revelarSeccionNc(user)
 
@@ -1365,7 +1365,13 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     // `SeleccionLineasNc` en este modal (se movio a la seccion final,
     // ver test dedicado mas abajo) — el anclaje de posicion pasa a ser la
     // tabla de articulos en si.
-    const tablaArticulos = screen.getByRole('table')
+    // NC-parcial QA: el modal renderiza DOS tablas en este estado (el panel
+    // de detalle de la factura "Articulo/Cant./P.Unit./Total" y la de
+    // `SeleccionLineasNc` "Producto/Facturado/A devolver"). Anclamos a la
+    // segunda por su encabezado distintivo "A devolver" para evitar la
+    // ambiguedad de `getByRole('table')` (pre-existente, latente hasta que
+    // el fix del render-loop permitio ejecutar este test).
+    const tablaArticulos = screen.getByRole('columnheader', { name: /A devolver/i }).closest('table')!
     const origenReverso = screen.getByText('Origen del reverso')
     expect(
       tablaArticulos.compareDocumentPosition(origenReverso) & Node.DOCUMENT_POSITION_FOLLOWING
