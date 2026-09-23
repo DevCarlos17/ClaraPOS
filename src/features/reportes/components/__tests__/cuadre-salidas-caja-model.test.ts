@@ -13,11 +13,15 @@
 import {
   esSalidaCaja,
   resolverConceptoSalida,
+  clasificarOrigenNc,
+  splitSalidasNcPorOrigen,
   ORIGENES_SALIDA_CAJA,
   type SalidaCajaItem,
   type ConceptoSalidaInput,
+  type ClasificacionNcInput,
+  type SalidaNcSubtotalItem,
 } from '../cuadre-salidas-caja-model'
-import { ORIGENES_DEVOLUCION_NC } from '../cuadre-arqueo-teorico-model'
+import { ORIGENES_DEVOLUCION_NC, splitEgresosArqueo, type MovimientoManualItem } from '../cuadre-arqueo-teorico-model'
 
 function item(overrides: Partial<SalidaCajaItem> = {}): SalidaCajaItem {
   return { origen: 'EGRESO_MANUAL', ...overrides }
@@ -92,5 +96,124 @@ describe('resolverConceptoSalida — resuelve el label de la columna Concepto', 
       conceptoInput({ origen: 'EGRESO_MANUAL', concepto: null, destinatario: null, metodo_nombre: 'EFECTIVO USD' })
     )
     expect(label).toBe('EFECTIVO USD')
+  })
+})
+
+describe('clasificarOrigenNc — deriva el origen (POS vs ADM) SOLO desde liquidacion_modalidad', () => {
+  it('REFUND_TESORERIA clasifica como ADM', () => {
+    expect(clasificarOrigenNc({ liquidacion_modalidad: 'REFUND_TESORERIA' })).toBe('ADM')
+  })
+
+  it('EFECTIVO_REAL clasifica como POS', () => {
+    expect(clasificarOrigenNc({ liquidacion_modalidad: 'EFECTIVO_REAL' })).toBe('POS')
+  })
+
+  it('SALDO_FAVOR clasifica como POS', () => {
+    expect(clasificarOrigenNc({ liquidacion_modalidad: 'SALDO_FAVOR' })).toBe('POS')
+  })
+
+  it('COMPENSACION_VENTA clasifica como POS', () => {
+    expect(clasificarOrigenNc({ liquidacion_modalidad: 'COMPENSACION_VENTA' })).toBe('POS')
+  })
+
+  it('AJUSTE_CXC clasifica como POS', () => {
+    expect(clasificarOrigenNc({ liquidacion_modalidad: 'AJUSTE_CXC' })).toBe('POS')
+  })
+
+  it('null (join a notas_credito sin match, dato huerfano) cae a POS — fallback seguro', () => {
+    expect(clasificarOrigenNc({ liquidacion_modalidad: null })).toBe('POS')
+  })
+
+  it('undefined (fila malformada sin el campo) tambien cae a POS — mismo fallback seguro', () => {
+    // `as` justificado: simula una fila real donde el campo directamente falta
+    // (no pasa por el tipo `string | null` del contrato), para probar que el
+    // fallback de runtime es robusto mas alla de lo que el type-checker exige.
+    const itemSinCampo = {} as ClasificacionNcInput
+    expect(clasificarOrigenNc(itemSinCampo)).toBe('POS')
+  })
+})
+
+describe('splitSalidasNcPorOrigen — subtotales por origen (POS/ADM) x moneda nativa (USD/Bs), sin convertir', () => {
+  function ncItem(overrides: Partial<SalidaNcSubtotalItem> = {}): SalidaNcSubtotalItem {
+    return {
+      origen: 'NCR',
+      liquidacion_modalidad: 'EFECTIVO_REAL',
+      metodo_moneda: 'USD',
+      monto: '0',
+      ...overrides,
+    }
+  }
+
+  it('mezcla POS/ADM en USD y Bs — separa los 4 buckets correctamente', () => {
+    const items: SalidaNcSubtotalItem[] = [
+      ncItem({ liquidacion_modalidad: 'EFECTIVO_REAL', metodo_moneda: 'USD', monto: '100' }), // POS USD
+      ncItem({ liquidacion_modalidad: 'SALDO_FAVOR', metodo_moneda: 'BS', monto: '250' }), // POS Bs
+      ncItem({ liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'USD', monto: '50' }), // ADM USD
+      ncItem({ liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'BS', monto: '75' }), // ADM Bs
+    ]
+    expect(splitSalidasNcPorOrigen(items)).toEqual({
+      posUsd: 100,
+      posBsNativo: 250,
+      admUsd: 50,
+      admBsNativo: 75,
+    })
+  })
+
+  it('solo origen POS presente — los buckets ADM dan 0, no undefined', () => {
+    const items: SalidaNcSubtotalItem[] = [
+      ncItem({ liquidacion_modalidad: 'EFECTIVO_REAL', metodo_moneda: 'USD', monto: '40' }),
+      ncItem({ liquidacion_modalidad: 'AJUSTE_CXC', metodo_moneda: 'BS', monto: '60' }),
+    ]
+    const result = splitSalidasNcPorOrigen(items)
+    expect(result).toEqual({ posUsd: 40, posBsNativo: 60, admUsd: 0, admBsNativo: 0 })
+  })
+
+  it('solo origen ADM presente — los buckets POS dan 0, no undefined', () => {
+    const items: SalidaNcSubtotalItem[] = [
+      ncItem({ liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'USD', monto: '30' }),
+    ]
+    const result = splitSalidasNcPorOrigen(items)
+    expect(result).toEqual({ posUsd: 0, posBsNativo: 0, admUsd: 30, admBsNativo: 0 })
+  })
+
+  it('items: [] — todos los buckets en 0', () => {
+    expect(splitSalidasNcPorOrigen([])).toEqual({ posUsd: 0, posBsNativo: 0, admUsd: 0, admBsNativo: 0 })
+  })
+
+  it('filtra por ORIGENES_DEVOLUCION_NC — un item con origen no-NC no se cuenta aunque tenga liquidacion_modalidad', () => {
+    const items: SalidaNcSubtotalItem[] = [
+      ncItem({ origen: 'EGRESO_MANUAL', liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'USD', monto: '999' }),
+      ncItem({ origen: 'NCR', liquidacion_modalidad: 'EFECTIVO_REAL', metodo_moneda: 'USD', monto: '15' }),
+    ]
+    expect(splitSalidasNcPorOrigen(items)).toEqual({ posUsd: 15, posBsNativo: 0, admUsd: 0, admBsNativo: 0 })
+  })
+})
+
+describe('invariante sagrado: split por origen reconstruye exactamente splitEgresosArqueo (display-only, ningun total cambia)', () => {
+  it('posUsd + admUsd == devolucionesNcUsd, y posBsNativo + admBsNativo == devolucionesNcBsNativo', () => {
+    // Mismos 4 montos/monedas modelados en las dos vistas: la vista "salida NC
+    // individual" (con liquidacion_modalidad, consumida por splitSalidasNcPorOrigen)
+    // y la vista "movimiento manual" (con metodo_tipo/mov_tipo, consumida por
+    // splitEgresosArqueo, Card "Arqueo Teorico"). Ambas fuentes son independientes
+    // en produccion (use-cuadre.ts las expone por separado) pero deben sumar el
+    // mismo total agregado — ese es el invariante que este test prueba.
+    const salidaNcItems: SalidaNcSubtotalItem[] = [
+      { origen: 'NCR', liquidacion_modalidad: 'EFECTIVO_REAL', metodo_moneda: 'USD', monto: '100' }, // POS USD
+      { origen: 'NCR', liquidacion_modalidad: 'SALDO_FAVOR', metodo_moneda: 'BS', monto: '250' }, // POS Bs
+      { origen: 'NCR', liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'USD', monto: '50' }, // ADM USD
+      { origen: 'NCR', liquidacion_modalidad: 'REFUND_TESORERIA', metodo_moneda: 'BS', monto: '75' }, // ADM Bs
+    ]
+    const movimientoManualItems: MovimientoManualItem[] = [
+      { metodo_tipo: 'EFECTIVO', metodo_moneda: 'USD', mov_tipo: 'EGRESO', origen: 'NCR', total: 100 },
+      { metodo_tipo: 'EFECTIVO', metodo_moneda: 'BS', mov_tipo: 'EGRESO', origen: 'NCR', total: 250 },
+      { metodo_tipo: 'EFECTIVO', metodo_moneda: 'USD', mov_tipo: 'EGRESO', origen: 'NCR', total: 50 },
+      { metodo_tipo: 'EFECTIVO', metodo_moneda: 'BS', mov_tipo: 'EGRESO', origen: 'NCR', total: 75 },
+    ]
+
+    const subtotales = splitSalidasNcPorOrigen(salidaNcItems)
+    const arqueo = splitEgresosArqueo(movimientoManualItems)
+
+    expect(subtotales.posUsd + subtotales.admUsd).toBe(arqueo.devolucionesNcUsd)
+    expect(subtotales.posBsNativo + subtotales.admBsNativo).toBe(arqueo.devolucionesNcBsNativo)
   })
 })

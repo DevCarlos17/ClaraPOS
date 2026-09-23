@@ -1510,6 +1510,7 @@ export interface MovimientoEfectivoDetalle {
   fecha: string
   destinatario: string | null
   nro_ncr: string | null
+  liquidacion_modalidad: string | null
 }
 
 export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
@@ -1526,7 +1527,8 @@ export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS'
                 ELSE COALESCE(mon.codigo_iso, 'USD') END as metodo_moneda,
            ud.nombre as destinatario,
-           nc.nro_ncr as nro_ncr
+           nc.nro_ncr as nro_ncr,
+           nc.liquidacion_modalidad as liquidacion_modalidad
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
@@ -1552,6 +1554,7 @@ export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
     fecha: String(row.fecha ?? ''),
     destinatario: row.destinatario ? String(row.destinatario) : null,
     nro_ncr: row.nro_ncr ? String(row.nro_ncr) : null,
+    liquidacion_modalidad: row.liquidacion_modalidad ? String(row.liquidacion_modalidad) : null,
   }))
 
   return { movimientos: items, isLoading }

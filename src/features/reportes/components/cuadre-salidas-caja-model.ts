@@ -51,3 +51,55 @@ export function resolverConceptoSalida(item: ConceptoSalidaInput): string {
   }
   return item.concepto ?? item.destinatario ?? item.metodo_nombre
 }
+
+// Desglose de salidas NC por origen (POS vs Administracion). Unica fuente de
+// verdad: SOLO liquidacion_modalidad, nunca `concepto` (Spec caja, Req 1).
+// REFUND_TESORERIA -> ADM. Cualquier otro valor (EFECTIVO_REAL, SALDO_FAVOR,
+// COMPENSACION_VENTA, AJUSTE_CXC) y null/undefined (join sin match, dato
+// huerfano) -> POS, preservando el comportamiento visual previo a este cambio.
+export type OrigenSalidaNc = 'POS' | 'ADM'
+
+export interface ClasificacionNcInput {
+  liquidacion_modalidad: string | null
+}
+
+export function clasificarOrigenNc(item: ClasificacionNcInput): OrigenSalidaNc {
+  return item.liquidacion_modalidad === 'REFUND_TESORERIA' ? 'ADM' : 'POS'
+}
+
+export interface SalidaNcSubtotalItem extends ClasificacionNcInput {
+  origen: string
+  metodo_moneda: string
+  monto: string
+}
+
+export interface SalidasNcSubtotales {
+  posUsd: number
+  posBsNativo: number
+  admUsd: number
+  admBsNativo: number
+}
+
+// Mirror de splitEgresosArqueo (cuadre-arqueo-teorico-model.ts): filtra por
+// ORIGENES_DEVOLUCION_NC, separa por moneda nativa (sin convertir), nunca suma
+// entre origenes. Pura re-agrupacion de filas ya sumadas en el total existente
+// de "Devoluciones (NC)" — no es una fuente de verdad nueva para ningun total
+// (invariante verificado por test cruzado contra splitEgresosArqueo).
+export function splitSalidasNcPorOrigen(items: SalidaNcSubtotalItem[]): SalidasNcSubtotales {
+  const esDevolucionNc = (item: SalidaNcSubtotalItem) =>
+    (ORIGENES_DEVOLUCION_NC as readonly string[]).includes(item.origen)
+  const esBs = (item: SalidaNcSubtotalItem) => item.metodo_moneda === 'BS'
+  const esUsd = (item: SalidaNcSubtotalItem) => !esBs(item)
+
+  const sum = (predicate: (item: SalidaNcSubtotalItem) => boolean) =>
+    items
+      .filter((item) => esDevolucionNc(item) && predicate(item))
+      .reduce((s, item) => s + parseFloat(item.monto), 0)
+
+  return {
+    posUsd: sum((item) => esUsd(item) && clasificarOrigenNc(item) === 'POS'),
+    posBsNativo: sum((item) => esBs(item) && clasificarOrigenNc(item) === 'POS'),
+    admUsd: sum((item) => esUsd(item) && clasificarOrigenNc(item) === 'ADM'),
+    admBsNativo: sum((item) => esBs(item) && clasificarOrigenNc(item) === 'ADM'),
+  }
+}
