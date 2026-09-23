@@ -511,6 +511,51 @@ export function resolverModalidadDesdeOrigen(origenReverso: OrigenReverso): 'SAL
   return origenReverso === 'CREDITO_A_FAVOR' ? 'SALDO_FAVOR' : 'AJUSTE_CXC'
 }
 
+// =============================================
+// debeUsarRefundTesoreria / calcularMontoDisponibleRefund — PR1
+// (nc-parcial-devolver-dinero, Design §Routing/testable unit)
+// =============================================
+
+/**
+ * Gate REFUND_TESORERIA — "Devolver dinero" SIEMPRE enruta a
+ * `RefundTesoreriaForm`, independiente de `tipoNc` (TOTAL o PARCIAL). Antes
+ * del fix, ambos modales gateaban este componente ADEMAS a
+ * `tipoNc === 'TOTAL'` (obs #4013, sintomas confirmados #4007): una NC
+ * PARCIAL con "Devolver dinero" nunca invocaba `emitirNcRefund`, saltandose
+ * el egreso real de tesoreria/sesion aunque la parte fiscal se escribiera
+ * igual. Esta funcion es el UNICO criterio de ese gate — extraida a capa
+ * pura para hacerlo testeable sin montar los modales de 900+/400+ lineas.
+ */
+export function debeUsarRefundTesoreria(origen: OrigenReverso | null): boolean {
+  return origen === 'DEVOLVER_DINERO'
+}
+
+/**
+ * Monto disponible para reembolsar via Tesoreria/Sesion — formaliza en
+ * Decimal (Regla de negocio #10: nunca `float`/`Number` en computo
+ * financiero) la MISMA formula ya usada por el motor (Step A,
+ * `use-notas-credito.ts:1106-1108`) y duplicada inline en ambos modales
+ * (`nota-credito-pos-modal.tsx`, `crear-ncr-modal.tsx`): el monto de esta NC
+ * se aplica primero contra la deuda YA pendiente de la factura
+ * (`saldoPendVenta`), topeado a ambos limites; lo que sobra queda
+ * disponible para reembolso por tesoreria.
+ *
+ * `totalUsdNc` es el valor de ESTA nota de credito — para TOTAL, el total
+ * completo de la factura; para PARCIAL, la SUMA de solo las lineas
+ * seleccionadas (nunca `factura.total_usd`, que sobre-estimaria el monto
+ * disponible). Esta funcion no distingue el caso: el caller decide que
+ * monto pasarle.
+ */
+export function calcularMontoDisponibleRefund(
+  totalUsdNc: DecimalInput,
+  saldoPendVenta: DecimalInput
+): Decimal {
+  const total = new Decimal(totalUsdNc)
+  const saldoPend = new Decimal(saldoPendVenta)
+  const montoAplicadoAPendiente = Decimal.min(saldoPend, total)
+  return Decimal.max(new Decimal(0), total.minus(montoAplicadoAPendiente))
+}
+
 export function agruparReversosPorNc(rows: ReversoFacturaRowInput[]): ReversoAplicado[] {
   const porId = new Map<string, ReversoAplicado>()
   for (const row of rows) {

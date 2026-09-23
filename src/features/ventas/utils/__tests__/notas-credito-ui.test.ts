@@ -1,3 +1,4 @@
+import Decimal from 'decimal.js'
 import {
   derivarEstadoPago,
   huboAfectacionCxc,
@@ -12,6 +13,8 @@ import {
   resolverBadgesFactura,
   filaFacturaAtenuada,
   resolverModalidadDesdeOrigen,
+  debeUsarRefundTesoreria,
+  calcularMontoDisponibleRefund,
 } from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
@@ -496,6 +499,83 @@ describe('agruparReversosPorNc (F1: historial additivo — original + reverso, R
 
     expect(result[0].montoUsd).toBe(0)
     expect(result[0].montoBs).toBe(0)
+  })
+})
+
+// ─── debeUsarRefundTesoreria (nc-parcial-devolver-dinero, PR1 — Design §Routing/testable unit) ────────
+//
+// Decide si "Devolver dinero" enruta a REFUND_TESORERIA — MISMO gate para
+// TOTAL y PARCIAL (bug corregido: antes solo TOTAL llegaba a
+// RefundTesoreriaForm, ver design.md "1. Both modales gate...").
+
+describe('debeUsarRefundTesoreria (nc-parcial-devolver-dinero, PR1: gate REFUND_TESORERIA independiente de tipo TOTAL/PARCIAL)', () => {
+  it('DEVOLVER_DINERO -> true (habilita RefundTesoreriaForm, sin importar TOTAL/PARCIAL — este gate no conoce el tipo)', () => {
+    expect(debeUsarRefundTesoreria('DEVOLVER_DINERO')).toBe(true)
+  })
+
+  it('CREDITO_A_FAVOR -> false (NUNCA enruta a tesoreria, va por resolverModalidadDesdeOrigen -> SALDO_FAVOR)', () => {
+    expect(debeUsarRefundTesoreria('CREDITO_A_FAVOR')).toBe(false)
+  })
+
+  it('null (origen aun no elegido) -> false, nunca revienta', () => {
+    expect(debeUsarRefundTesoreria(null)).toBe(false)
+  })
+})
+
+// ─── calcularMontoDisponibleRefund (nc-parcial-devolver-dinero, PR1 — Design §Routing/testable unit) ────────
+//
+// Formaliza min(saldoPend,total)/max(0,total-aplicado) — MISMA formula que
+// el motor (`use-notas-credito.ts:1106-1108`, Step A) y que el inline
+// duplicado 2x en los modales (pos:318-324, admin:166-172), ahora en
+// Decimal (nunca Number/float, Regla de negocio #10). El caller pasa
+// `totalUsdNc` = total de la factura completa (TOTAL) o suma de SOLO las
+// lineas seleccionadas (PARCIAL) — esta funcion no distingue el caso, solo
+// aplica la formula sobre el monto que recibe.
+
+describe('calcularMontoDisponibleRefund (nc-parcial-devolver-dinero, PR1: min(saldoPend,total)/max(0,total-aplicado), Decimal)', () => {
+  it('paridad con la formula inline TOTAL ya existente: total=100, saldoPend=30 -> aplicado=30, disponible=70', () => {
+    const result = calcularMontoDisponibleRefund(100, 30)
+    expect(result).toBeInstanceOf(Decimal)
+    expect(result.toNumber()).toBe(70)
+  })
+
+  it('factura de CREDITO puro (saldoPend === total): TODO se aplica a la deuda, disponible=0 (comportamiento pre-existente de TOTAL preservado)', () => {
+    const result = calcularMontoDisponibleRefund(100, 100)
+    expect(result.toNumber()).toBe(0)
+  })
+
+  it('factura de CONTADO puro (saldoPend=0): nada se aplica a deuda, TODO el monto queda disponible para refund', () => {
+    const result = calcularMontoDisponibleRefund(100, 0)
+    expect(result.toNumber()).toBe(100)
+  })
+
+  it('CLAMP: saldoPend > total (edge case defensivo, no deberia ocurrir por invariante de ventas) -> aplicado se topea a total, disponible=0, nunca negativo', () => {
+    const result = calcularMontoDisponibleRefund(100, 150)
+    expect(result.toNumber()).toBe(0)
+  })
+
+  it('PARCIAL desde lineas seleccionadas: totalUsdNc es la SUMA de las lineas elegidas (11.6), no el total de la factura completa (100)', () => {
+    // Factura total=100, saldoPend=50 (ABONADA) — pero el caller ya redujo
+    // totalUsdNc a lo seleccionado (Botox 10 USD + 16% IVA = 11.6), NUNCA el
+    // factura.total_usd completo.
+    const result = calcularMontoDisponibleRefund('11.6', '50')
+    // aplicado = min(50, 11.6) = 11.6 -> disponible = max(0, 11.6-11.6) = 0
+    expect(result.toNumber()).toBe(0)
+  })
+
+  it('PARCIAL con precision decimal.js real (evita fuga de float): total=11.6, saldoPend=5 -> aplicado=5, disponible=6.6 exacto', () => {
+    const result = calcularMontoDisponibleRefund('11.6', '5')
+    expect(result.toFixed(1)).toBe('6.6')
+  })
+
+  it('edge: totalUsdNc=0 (ninguna linea seleccionada aun) -> disponible=0, sin importar saldoPend', () => {
+    expect(calcularMontoDisponibleRefund(0, 50).toNumber()).toBe(0)
+  })
+
+  it('acepta string y number indistintamente (DecimalInput) sin perder precision', () => {
+    const conString = calcularMontoDisponibleRefund('100.00000000', '30.00000000')
+    const conNumber = calcularMontoDisponibleRefund(100, 30)
+    expect(conString.toNumber()).toBe(conNumber.toNumber())
   })
 })
 
