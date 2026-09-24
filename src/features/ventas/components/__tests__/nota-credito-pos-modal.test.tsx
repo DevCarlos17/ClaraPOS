@@ -1572,6 +1572,57 @@ describe('NotaCreditoPosModal — Slice 3 (Origen del reverso reemplaza Modalida
 
     expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeDisabled()
   })
+
+  it('nc-factura-credito-ux: factura 100% credito (saldo_pend_usd === total_usd) — confirmar TOTAL SIN elegir origen invoca crearNotaCredito con modalidad SALDO_FAVOR (soloCancelaDeuda)', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ total_usd: '80.00', saldo_pend_usd: '80.00' })],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+
+    // Sin remanente: el panel NO ofrece "Devolver dinero"/"Credito a favor".
+    expect(screen.queryByRole('button', { name: 'Devolver dinero' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Credito a favor' })).not.toBeInTheDocument()
+    expect(
+      screen.getByText('Esta nota de crédito cancela $80.00 de la deuda pendiente de la factura.')
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
+      entryPoint: 'POS',
+      sesionCajaActivaId: sesionActiva.id,
+      modalidad: 'SALDO_FAVOR',
+    })
+  })
+
+  it('nc-factura-credito-ux: factura mixta (con remanente) — "Confirmar Anulacion" NO aparece hasta elegir origen (regresion)', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ total_usd: '100.00', saldo_pend_usd: '40.00' })],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+
+    expect(
+      screen.getByText('De $100.00: $40.00 cancela deuda pendiente, $60.00 disponible')
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Credito a favor' }))
+
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
+  })
 })
 
 /**

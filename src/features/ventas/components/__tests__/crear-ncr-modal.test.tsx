@@ -325,6 +325,59 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeEnabled()
   })
 
+  it('nc-factura-credito-ux: factura 100% credito (saldo_pend_usd === total_usd) — confirmar TOTAL SIN elegir origen invoca crearNotaCredito con modalidad SALDO_FAVOR (soloCancelaDeuda)', async () => {
+    const user = userEvent.setup()
+    render(
+      <CrearNcrModal
+        isOpen
+        onClose={() => {}}
+        factura={baseFactura({ total_usd: '80.00', saldo_pend_usd: '80.00' })}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+
+    // Sin remanente: el selector NO ofrece "Devolver dinero"/"Credito a favor".
+    expect(screen.queryByRole('button', { name: /Devolver dinero/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Credito a favor/i })).not.toBeInTheDocument()
+    expect(
+      screen.getByText('Esta nota de crédito cancela $80.00 de la deuda pendiente de la factura.')
+    ).toBeInTheDocument()
+
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
+      venta_id: 'venta-1',
+      modalidad: 'SALDO_FAVOR',
+      tipo: 'TOTAL',
+    })
+  })
+
+  it('nc-factura-credito-ux: factura mixta (con remanente) — "Confirmar Anulacion" NO aparece hasta elegir origen (regresion)', async () => {
+    const user = userEvent.setup()
+    render(
+      <CrearNcrModal
+        isOpen
+        onClose={() => {}}
+        factura={baseFactura({ total_usd: '100.00', saldo_pend_usd: '40.00' })}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+
+    expect(
+      screen.getByText('De $100.00: $40.00 cancela deuda pendiente, $60.00 disponible')
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
+
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeEnabled()
+  })
+
   describe('Scenario "Sin preseleccion" (UX rework, nc-refund-tesoreria)', () => {
     it('Total/Parcial: ningun boton arranca presionado', () => {
       render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
