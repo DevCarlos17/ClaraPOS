@@ -22,7 +22,7 @@ import {
   resolverBadgesFactura,
   resolverModalidadDesdeOrigen,
   debeUsarRefundTesoreria,
-  calcularMontoDisponibleRefund,
+  resolverVistaReversoNc,
   type EstadoPago,
   type BadgeReverso,
   type OrigenReverso,
@@ -321,20 +321,35 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     return buildReciboDataDesdeFacturaGuardada(factura, detalle, pagosFactura, company)
   }, [factura, detalle, pagosFactura, company])
 
-  // Monto disponible para reembolsar via Tesoreria/Sesion (Slice 4,
-  // unificacion-modal-nc; ampliado en PR2, nc-parcial-devolver-dinero) —
-  // MISMA formula pura que `crear-ncr-modal.tsx` (`calcularMontoDisponibleRefund`,
-  // PR1): el monto de ESTA NC se aplica primero contra la deuda pendiente
-  // de la factura, lo que sobra queda disponible para reembolso. Para
-  // TOTAL, `totalUsdNc` es el total completo de la factura (comportamiento
-  // preexistente, sin cambios); para PARCIAL es la SUMA de solo las lineas
-  // seleccionadas (`estadoParcialConfirm.totalUsdPreview`, ya calculado por
+  // Vista pre-calculada del reverso (nc-factura-credito-ux, Design
+  // §Interfaces) — reemplaza el antiguo `montoDisponibleParaRefund` (Slice
+  // 4, unificacion-modal-nc; ampliado en PR2, nc-parcial-devolver-dinero).
+  // `resolverVistaReversoNc` reusa la MISMA formula pura que
+  // `crear-ncr-modal.tsx` (`calcularMontoDisponibleRefund`, PR1): el monto
+  // de ESTA NC se aplica primero contra la deuda pendiente de la factura,
+  // lo que sobra queda disponible para reembolso. Para TOTAL, `totalUsdNc`
+  // es el total completo de la factura (comportamiento preexistente, sin
+  // cambios); para PARCIAL es la SUMA de solo las lineas seleccionadas
+  // (`estadoParcialConfirm.totalUsdPreview`, ya calculado por
   // `SeleccionLineasNc` via `previewMontoBsNc` — CERO formula paralela) —
   // nunca `factura.total_usd`, que sobre-estimaria el disponible.
-  const montoDisponibleParaRefund = useMemo(() => {
-    if (!factura) return 0
+  // `soloCancelaDeuda` alimenta a `OrigenReversoSelector` para decidir si
+  // ofrece los 2 botones o solo el copy de cancelacion — MISMO patron que
+  // `crear-ncr-modal.tsx` (invariante #4, POS=admin via el mismo componente
+  // y la misma funcion pura).
+  const vistaReversoNc = useMemo(() => {
+    if (!factura) return resolverVistaReversoNc(0, 0)
     const totalUsdNc = tipoNc === 'PARCIAL' ? (estadoParcialConfirm?.totalUsdPreview ?? 0) : Number(factura.total_usd)
-    return calcularMontoDisponibleRefund(totalUsdNc, factura.saldo_pend_usd).toNumber()
+    // PARCIAL sin lineas seleccionadas todavia (`totalUsdNc<=0`,
+    // `SeleccionLineasNc` dispara `onEstadoConfirmarChange` con
+    // `totalUsdPreview:0` apenas se monta): no hay info suficiente para
+    // decidir `soloCancelaDeuda` — colapsar aqui mostraria "$0.00 cancela
+    // deuda" (0/0 siempre cae bajo el umbral 0.01) antes de que el usuario
+    // elija un monto real. Se fuerza `soloCancelaDeuda: false` para
+    // mantener el selector completo (comportamiento pre-existente) hasta
+    // tener un total real. MISMO guard que `crear-ncr-modal.tsx`.
+    if (totalUsdNc <= 0) return { ...resolverVistaReversoNc(0, 0), soloCancelaDeuda: false }
+    return resolverVistaReversoNc(totalUsdNc, factura.saldo_pend_usd)
   }, [factura, tipoNc, estadoParcialConfirm])
 
   // Lineas candidatas a NC PARCIAL (Slice 3b, Design §Decision 7) — mismo
@@ -388,7 +403,12 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         // alcanza cuando `origenReverso` ya esta elegido (TOTAL gateado a
         // 'CREDITO_A_FAVOR' en el JSX; PARCIAL gateado via `origenPendiente`
         // en `SeleccionLineasNc`) — el `!` es seguro por esos 2 gates de UI.
-        modalidad: resolverModalidadDesdeOrigen(origenReverso!),
+        // Fallback `?? 'CREDITO_A_FAVOR'` (nc-factura-credito-ux): cuando
+        // `vistaReversoNc.soloCancelaDeuda` es `true` el cajero puede
+        // confirmar sin elegir origen — el remanente es 0 asi que Step B es
+        // no-op, cualquier modalidad produce el MISMO resultado (invariante
+        // #2 del change).
+        modalidad: resolverModalidadDesdeOrigen(origenReverso ?? 'CREDITO_A_FAVOR'),
         ...(lineasParcial ? { tipo: 'PARCIAL' as const, lineas: lineasParcial } : {}),
         // PIN B (Slice 5a-2b): `resolverDepositoOverride` retorna `null`
         // salvo que el segundo PIN ya haya autorizado el override Y el
@@ -743,7 +763,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                         depositoInvalido={depositoInvalido}
                         mostrarBotonConfirmar={false}
                         onEstadoConfirmarChange={setEstadoParcialConfirm}
-                        origenPendiente={origenReverso === null}
+                        origenPendiente={origenReverso === null && !vistaReversoNc.soloCancelaDeuda}
                       />
                     ) : null}
 
@@ -756,7 +776,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                         (misma funcion pura que admin). "Devolver dinero"
                         revela `RefundTesoreriaForm` restringido + link de
                         PIN C (Slice 4, D3/D5 — ver footer mas abajo). */}
-                    <OrigenReversoSelector value={origenReverso} onChange={setOrigenReverso} />
+                    <OrigenReversoSelector value={origenReverso} onChange={setOrigenReverso} vista={vistaReversoNc} />
 
                     <div>
                       <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
@@ -769,7 +789,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                       />
                     </div>
 
-                    {tipoNc === 'TOTAL' && origenReverso === 'CREDITO_A_FAVOR' ? (
+                    {tipoNc === 'TOTAL' && (origenReverso === 'CREDITO_A_FAVOR' || vistaReversoNc.soloCancelaDeuda) ? (
                       // Item 6 (ajustes-qa-nota-credito-pos-modal): la
                       // confirmacion de TOTAL ya NO vive en el pie del modal
                       // (mismo slot fisico que el boton de revelar, hazard de
@@ -827,7 +847,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                       // `lineas` junto al `egresoParams` de tesoreria.
                       <div className="space-y-2">
                         <RefundTesoreriaForm
-                          montoDisponibleUsd={montoDisponibleParaRefund}
+                          montoDisponibleUsd={vistaReversoNc.montoDisponible.toNumber()}
                           tasaHistorica={Number(factura.tasa)}
                           onConfirm={(lineas) =>
                             void emitirNcRefund(

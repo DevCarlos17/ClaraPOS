@@ -556,6 +556,45 @@ export function calcularMontoDisponibleRefund(
   return Decimal.max(new Decimal(0), total.minus(montoAplicadoAPendiente))
 }
 
+// =============================================
+// resolverVistaReversoNc — nc-factura-credito-ux (Design §Interfaces)
+// =============================================
+
+/**
+ * Vista pre-calculada para decidir que renderiza `OrigenReversoSelector`:
+ * cuando el remanente disponible para reembolso es cero (o por debajo del
+ * umbral), la NC solo cancela deuda pendiente y no tiene sentido ofrecer
+ * "Devolver dinero"/"Credito a favor" — la vista pasa a solo-confirmacion.
+ * Los 3 campos numericos quedan en `Decimal` (nunca `.toNumber()` aqui,
+ * Regla de negocio #10: redondear solo al final) — `formatUsd` ya acepta
+ * `Decimal` directamente (`DecimalInput`, `src/lib/currency.ts:7`).
+ */
+export interface VistaReversoNc {
+  totalUsdNc: Decimal
+  montoAplicadoADeuda: Decimal
+  montoDisponible: Decimal
+  soloCancelaDeuda: boolean
+}
+
+/**
+ * Reusa `calcularMontoDisponibleRefund` (no reimplementa la formula) y usa
+ * el MISMO umbral `0.01` que el gate del motor (`use-notas-credito.ts:1229`,
+ * `remanenteALiquidar.gt('0.01')`) para decidir `soloCancelaDeuda` — si la UI
+ * usara un umbral distinto, podria prometer un desglose+opciones para un
+ * remanente que el motor trata como no-op, o viceversa.
+ */
+export function resolverVistaReversoNc(totalUsdNc: DecimalInput, saldoPendVenta: DecimalInput): VistaReversoNc {
+  const total = new Decimal(totalUsdNc)
+  const montoDisponible = calcularMontoDisponibleRefund(total, saldoPendVenta)
+  const montoAplicadoADeuda = total.minus(montoDisponible)
+  return {
+    totalUsdNc: total,
+    montoAplicadoADeuda,
+    montoDisponible,
+    soloCancelaDeuda: montoDisponible.lte('0.01'),
+  }
+}
+
 export function agruparReversosPorNc(rows: ReversoFacturaRowInput[]): ReversoAplicado[] {
   const porId = new Map<string, ReversoAplicado>()
   for (const row of rows) {

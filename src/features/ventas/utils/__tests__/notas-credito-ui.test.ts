@@ -15,6 +15,7 @@ import {
   resolverModalidadDesdeOrigen,
   debeUsarRefundTesoreria,
   calcularMontoDisponibleRefund,
+  resolverVistaReversoNc,
 } from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
@@ -604,5 +605,61 @@ describe('resolverModalidadDesdeOrigen (Design §D2: mapeo Origen del reverso ->
 
   it('DEVOLVER_DINERO -> AJUSTE_CXC (fallback verbatim — riesgo preservado a proposito, ver Nota resuelta en tasks.md)', () => {
     expect(resolverModalidadDesdeOrigen('DEVOLVER_DINERO')).toBe('AJUSTE_CXC')
+  })
+})
+
+// ─── resolverVistaReversoNc (nc-factura-credito-ux, Design §Interfaces) ────────
+//
+// Reusa `calcularMontoDisponibleRefund` (no reimplementa la formula) y usa el
+// MISMO umbral 0.01 que el gate del motor (`use-notas-credito.ts:1229`,
+// `remanenteALiquidar.gt('0.01')`) para decidir `soloCancelaDeuda`.
+
+describe('resolverVistaReversoNc (umbral 0.01, reusa calcularMontoDisponibleRefund)', () => {
+  it('100% contado (saldoPend=0): desglose completo, nada aplicado a deuda, todo disponible', () => {
+    const vista = resolverVistaReversoNc(80, 0)
+    expect(vista.totalUsdNc).toBeInstanceOf(Decimal)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(0)
+    expect(vista.montoDisponible.toNumber()).toBe(80)
+    expect(vista.soloCancelaDeuda).toBe(false)
+  })
+
+  it('100% credito (saldoPend === total): solo-confirmacion, todo aplicado a deuda, nada disponible', () => {
+    const vista = resolverVistaReversoNc(80, 80)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(80)
+    expect(vista.montoDisponible.toNumber()).toBe(0)
+    expect(vista.soloCancelaDeuda).toBe(true)
+  })
+
+  it('mixta (total=100, saldoPend=40): desglose, 40 aplicado a deuda, 60 disponible', () => {
+    const vista = resolverVistaReversoNc(100, 40)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(40)
+    expect(vista.montoDisponible.toNumber()).toBe(60)
+    expect(vista.soloCancelaDeuda).toBe(false)
+  })
+
+  it('PARCIAL con lineas <= saldo pendiente (30/50): solo-confirmacion, sin remanente', () => {
+    const vista = resolverVistaReversoNc(30, 50)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(30)
+    expect(vista.montoDisponible.toNumber()).toBe(0)
+    expect(vista.soloCancelaDeuda).toBe(true)
+  })
+
+  it('PARCIAL con lineas > saldo pendiente (50/30): desglose, 30 aplicado, 20 disponible', () => {
+    const vista = resolverVistaReversoNc(50, 30)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(30)
+    expect(vista.montoDisponible.toNumber()).toBe(20)
+    expect(vista.soloCancelaDeuda).toBe(false)
+  })
+
+  it('boundary: montoDisponible exactamente 0.01 -> soloCancelaDeuda=true (lte)', () => {
+    const vista = resolverVistaReversoNc('100.01', '100')
+    expect(vista.montoDisponible.toFixed(2)).toBe('0.01')
+    expect(vista.soloCancelaDeuda).toBe(true)
+  })
+
+  it('boundary: montoDisponible exactamente 0.02 -> soloCancelaDeuda=false (por encima del umbral)', () => {
+    const vista = resolverVistaReversoNc('100.02', '100')
+    expect(vista.montoDisponible.toFixed(2)).toBe('0.02')
+    expect(vista.soloCancelaDeuda).toBe(false)
   })
 })
