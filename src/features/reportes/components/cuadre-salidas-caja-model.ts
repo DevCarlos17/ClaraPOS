@@ -51,3 +51,72 @@ export function resolverConceptoSalida(item: ConceptoSalidaInput): string {
   }
   return item.concepto ?? item.destinatario ?? item.metodo_nombre
 }
+
+// Desglose de salidas NC por origen (POS vs Administracion). Unica fuente de
+// verdad: SOLO nc.sesion_caja_id — bugfix QA (Spec caja, Req 1 corregido).
+//
+// `liquidacion_modalidad` (EFECTIVO_REAL vs REFUND_TESORERIA) NUNCA fue el
+// discriminador correcto: indica el MECANISMO de reembolso (cajon del
+// cajero vs tesoreria), no el PUNTO DE ENTRADA (POS vs Admin). El flujo POS
+// "Devolver dinero" (`emitirNcRefund`, nota-credito-pos-modal.tsx) hardcodea
+// `modalidad: 'REFUND_TESORERIA'` CON `entryPoint: 'POS'` — clasificar por
+// modalidad marcaba esas NC-POS como "Adm" incorrectamente.
+//
+// `nc.sesion_caja_id` SI es el discriminador real: se escribe UNA sola vez
+// al INSERT del header de la NC (`use-notas-credito.ts:944`, formula
+// `sesionCajaIdParaNc = entryPoint === 'POS' ? sesionCajaActivaId ?? null : null`
+// en la linea 720) y nunca se actualiza despues. Por lo tanto:
+//  - NC desde POS (cualquier modalidad, incluida "devolver dinero") -> `nc.sesion_caja_id`
+//    NO es null -> POS.
+//  - NC desde Admin (Consulta de Factura / entry point Tradicional) -> `nc.sesion_caja_id`
+//    es null -> ADM. Esto es correcto incluso cuando esa NC usa
+//    REFUND_TESORERIA con destino SESION_CAJA: el egreso de caja aterriza en
+//    la sesion elegida via `movimientos_metodo_cobro.sesion_caja_id`, pero el
+//    HEADER de la NC (`notas_credito.sesion_caja_id`) sigue NULL porque el
+//    punto de entrada es Admin — comportamiento deseado, no un bug.
+export type OrigenSalidaNc = 'POS' | 'ADM'
+
+export interface ClasificacionNcInput {
+  nc_sesion_caja_id: string | null
+}
+
+export function clasificarOrigenNc(item: ClasificacionNcInput): OrigenSalidaNc {
+  return item.nc_sesion_caja_id != null && item.nc_sesion_caja_id !== '' ? 'POS' : 'ADM'
+}
+
+export interface SalidaNcSubtotalItem extends ClasificacionNcInput {
+  origen: string
+  metodo_moneda: string
+  monto: string
+}
+
+export interface SalidasNcSubtotales {
+  posUsd: number
+  posBsNativo: number
+  admUsd: number
+  admBsNativo: number
+}
+
+// Mirror de splitEgresosArqueo (cuadre-arqueo-teorico-model.ts): filtra por
+// ORIGENES_DEVOLUCION_NC, separa por moneda nativa (sin convertir), nunca suma
+// entre origenes. Pura re-agrupacion de filas ya sumadas en el total existente
+// de "Devoluciones (NC)" — no es una fuente de verdad nueva para ningun total
+// (invariante verificado por test cruzado contra splitEgresosArqueo).
+export function splitSalidasNcPorOrigen(items: SalidaNcSubtotalItem[]): SalidasNcSubtotales {
+  const esDevolucionNc = (item: SalidaNcSubtotalItem) =>
+    (ORIGENES_DEVOLUCION_NC as readonly string[]).includes(item.origen)
+  const esBs = (item: SalidaNcSubtotalItem) => item.metodo_moneda === 'BS'
+  const esUsd = (item: SalidaNcSubtotalItem) => !esBs(item)
+
+  const sum = (predicate: (item: SalidaNcSubtotalItem) => boolean) =>
+    items
+      .filter((item) => esDevolucionNc(item) && predicate(item))
+      .reduce((s, item) => s + parseFloat(item.monto), 0)
+
+  return {
+    posUsd: sum((item) => esUsd(item) && clasificarOrigenNc(item) === 'POS'),
+    posBsNativo: sum((item) => esBs(item) && clasificarOrigenNc(item) === 'POS'),
+    admUsd: sum((item) => esUsd(item) && clasificarOrigenNc(item) === 'ADM'),
+    admBsNativo: sum((item) => esBs(item) && clasificarOrigenNc(item) === 'ADM'),
+  }
+}
