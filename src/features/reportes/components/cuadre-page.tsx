@@ -23,7 +23,12 @@ import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
 import { CuadreImprimir } from './cuadre-imprimir'
 import { CuadreArqueoTeorico } from './cuadre-arqueo-teorico'
 import { splitEgresosArqueo, ORIGENES_DEVOLUCION_NC } from './cuadre-arqueo-teorico-model'
-import { esSalidaCaja, resolverConceptoSalida } from './cuadre-salidas-caja-model'
+import {
+  esSalidaCaja,
+  resolverConceptoSalida,
+  clasificarOrigenNc,
+  splitSalidasNcPorOrigen,
+} from './cuadre-salidas-caja-model'
 import { DiferencialCambiarioModal } from './diferencial-cambiario-modal'
 import { AbsorcionModal } from './absorcion-modal'
 import {
@@ -1253,6 +1258,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
 // ─── Tabla de movimientos manuales (ingresos o egresos) ──────
 
 function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[] }) {
+  const ncSubtotales = splitSalidasNcPorOrigen(items)
   return (
     <div className="border-t overflow-x-auto">
       <table className="w-full text-xs">
@@ -1274,6 +1280,7 @@ function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[
                     const isTesoreria = m.origen === 'INGRESO_TESORERIA' || m.origen === 'EGRESO_TESORERIA'
                     const isCxP = m.origen === 'PAGO_PROVEEDOR'
                     const isDevolucionNc = (ORIGENES_DEVOLUCION_NC as readonly string[]).includes(m.origen)
+                    const isDevolucionNcAdm = isDevolucionNc && clasificarOrigenNc(m) === 'ADM'
                     return (
                       <tr key={m.id} className="border-b last:border-0 hover:bg-muted/20">
                         <td className="px-4 py-2.5">
@@ -1288,9 +1295,14 @@ function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[
                                 CxP
                               </span>
                             )}
-                            {isDevolucionNc && (
+                            {isDevolucionNc && !isDevolucionNcAdm && (
                               <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-red-100 text-red-700 font-medium">
                                 NC
+                              </span>
+                            )}
+                            {isDevolucionNcAdm && (
+                              <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-purple-100 text-purple-700 font-medium">
+                                NC · Adm
                               </span>
                             )}
                             <span className="truncate max-w-[180px]">{label}</span>
@@ -1304,6 +1316,50 @@ function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[
               </tr>
             )
           })}
+          {ncSubtotales.posUsd > 0 && (
+            <tr className="bg-red-50/40 border-t border-red-200">
+              <td colSpan={2} className="px-4 py-1.5 text-xs font-semibold text-red-700">
+                Subtotal NC · POS (USD)
+              </td>
+              <td className="px-4 py-1.5 text-right font-mono font-bold text-red-700 tabular-nums">
+                {formatUsd(ncSubtotales.posUsd)}
+              </td>
+              <td />
+            </tr>
+          )}
+          {ncSubtotales.posBsNativo > 0 && (
+            <tr className="bg-red-50/40 border-t border-red-200">
+              <td colSpan={2} className="px-4 py-1.5 text-xs font-semibold text-red-700">
+                Subtotal NC · POS (Bs.)
+              </td>
+              <td className="px-4 py-1.5 text-right font-mono font-bold text-red-700 tabular-nums">
+                {formatBs(ncSubtotales.posBsNativo)}
+              </td>
+              <td />
+            </tr>
+          )}
+          {ncSubtotales.admUsd > 0 && (
+            <tr className="bg-purple-50/40 border-t border-purple-200">
+              <td colSpan={2} className="px-4 py-1.5 text-xs font-semibold text-purple-700">
+                Subtotal NC · Adm (USD)
+              </td>
+              <td className="px-4 py-1.5 text-right font-mono font-bold text-purple-700 tabular-nums">
+                {formatUsd(ncSubtotales.admUsd)}
+              </td>
+              <td />
+            </tr>
+          )}
+          {ncSubtotales.admBsNativo > 0 && (
+            <tr className="bg-purple-50/40 border-t border-purple-200">
+              <td colSpan={2} className="px-4 py-1.5 text-xs font-semibold text-purple-700">
+                Subtotal NC · Adm (Bs.)
+              </td>
+              <td className="px-4 py-1.5 text-right font-mono font-bold text-purple-700 tabular-nums">
+                {formatBs(ncSubtotales.admBsNativo)}
+              </td>
+              <td />
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
