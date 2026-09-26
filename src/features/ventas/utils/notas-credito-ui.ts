@@ -595,6 +595,56 @@ export function resolverVistaReversoNc(totalUsdNc: DecimalInput, saldoPendVenta:
   }
 }
 
+// =============================================
+// calcularReembolsoTopadoAlPago / prorratearMontoPagado —
+// nc-reembolso-real-reverso-gasto (Design §Interfaces)
+// =============================================
+
+/**
+ * Tope de reembolso al PAGO REAL del cliente (Spec "Tope de reembolso al
+ * pago real en Step B"): el remanente disponible para reembolsar por
+ * tesoreria/SAFC/AJUSTE_CXC nunca puede exceder lo que el cliente
+ * efectivamente pago (`SUM(pagos.monto_usd)`), aunque `remanente` (derivado
+ * de `totalUsdNc`/`saldoPendVenta`, funcion sibling
+ * `calcularMontoDisponibleRefund`) sea mayor — caso tipico: gasto de
+ * absorcion de diferencial cambiario (`ABSORCION_DIFERENCIAL_POS`/
+ * `DIFERENCIAL_CAMBIARIO_FALTANTE`) cubrio la diferencia entre lo cobrado y
+ * el total de la factura. Funcion *sibling* de `calcularMontoDisponibleRefund`
+ * (Design §Architecture Decisions #1) — NUNCA le agrega un 3er parametro,
+ * para no mezclar "calculo de remanente" con "tope de pago real".
+ */
+export function calcularReembolsoTopadoAlPago(
+  remanente: DecimalInput,
+  montoPagadoRealUsd: DecimalInput
+): Decimal {
+  const remanenteClamp = Decimal.max(new Decimal(0), new Decimal(remanente))
+  const pagadoClamp = Decimal.max(new Decimal(0), new Decimal(montoPagadoRealUsd))
+  return Decimal.min(remanenteClamp, pagadoClamp)
+}
+
+/**
+ * Prorratea el pago real total de la factura al subconjunto que representa
+ * una NC `PARCIAL` (Spec "NC parcial prorratea el pago real"): el pago real
+ * es de TODA la factura, pero `calcularReembolsoTopadoAlPago` necesita el
+ * pago real correspondiente SOLO a las lineas de esta NC —
+ * `montoPagadoRealUsd * (totalUsdNc / totalFacturaUsd)`. En NC `TOTAL`
+ * (`totalUsdNc === totalFacturaUsd`) el ratio es 1, retorna
+ * `montoPagadoRealUsd` sin cambios. Guard `totalFacturaUsd <= 0` (defensivo,
+ * no deberia ocurrir por invariante de `ventas`): retorna
+ * `montoPagadoRealUsd` SIN aplicar ratio, evitando division por cero.
+ */
+export function prorratearMontoPagado(
+  montoPagadoRealUsd: DecimalInput,
+  totalUsdNc: DecimalInput,
+  totalFacturaUsd: DecimalInput
+): Decimal {
+  const pagado = new Decimal(montoPagadoRealUsd)
+  const totalFactura = new Decimal(totalFacturaUsd)
+  if (totalFactura.lte(0)) return pagado
+  const ratio = new Decimal(totalUsdNc).dividedBy(totalFactura)
+  return pagado.times(ratio)
+}
+
 export function agruparReversosPorNc(rows: ReversoFacturaRowInput[]): ReversoAplicado[] {
   const porId = new Map<string, ReversoAplicado>()
   for (const row of rows) {

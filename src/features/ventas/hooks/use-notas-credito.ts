@@ -19,6 +19,14 @@ import {
   type TipoImpuestoLineaNc,
 } from '@/features/ventas/utils/notas-credito-fiscal'
 import {
+  calcularReembolsoTopadoAlPago,
+  prorratearMontoPagado,
+  calcularEstadoReversoLineas,
+  type LineaConCantidadFacturada,
+  type NotaCreditoDetParaReverso,
+} from '@/features/ventas/utils/notas-credito-ui'
+import { reversarGastoEnTx } from '@/features/contabilidad/hooks/use-gastos'
+import {
   buildNotasCreditoFiltro,
   rangoMesActual,
 } from '@/features/ventas/utils/notas-credito-admin-filters'
@@ -1146,6 +1154,30 @@ export async function crearNotaCredito(
       ])
     }
 
+    // 6a2. Step A' (nc-reembolso-real-reverso-gasto, Design §Data Flow): pago
+    //    REAL total de la factura — SIN el gate `tipoNc==='TOTAL'` de la
+    //    Regla de Oro (6c, mas abajo): dos concerns distintos, dos queries
+    //    (Design §Architecture Decisions #4). Prorrateado por
+    //    `totalUsdNc/venta.total_usd` para NC PARCIAL — ratio=1 en TOTAL
+    //    (`totalUsdNc === venta.total_usd` siempre para ese tipo), la propia
+    //    `prorratearMontoPagado` deja el valor sin cambios.
+    const pagosRealesResult = await tx.execute(
+      'SELECT monto_usd FROM pagos WHERE venta_id = ? AND is_reversed = 0',
+      [venta_id]
+    )
+    let montoPagadoRealUsd = new Decimal(0)
+    if (pagosRealesResult.rows) {
+      for (let i = 0; i < pagosRealesResult.rows.length; i++) {
+        const pagoRow = pagosRealesResult.rows.item(i) as { monto_usd: string }
+        montoPagadoRealUsd = montoPagadoRealUsd.plus(new Decimal(pagoRow.monto_usd || '0'))
+      }
+    }
+    const montoPagadoRealProrrateado = prorratearMontoPagado(
+      montoPagadoRealUsd,
+      totalUsdNc,
+      venta.total_usd
+    )
+
     // 6b. Si la factura tenía un diferencial cambiario aplicado, reversarlo también
     try {
       await reversarDiferencialEnTx(tx, {
@@ -1224,7 +1256,18 @@ export async function crearNotaCredito(
     //     escopeado a las lineas seleccionadas. EFECTIVO_REAL no entra a
     //     este switch: su liquidacion ES el egreso condicional de la Regla
     //     de Oro (paso 6c/10), no un movimiento de cuenta adicional.
-    const remanenteALiquidar = totalUsdNc.minus(montoAplicadoAPendiente)
+    // Step B topa al PAGO REAL (Spec "Tope de reembolso al pago real en
+    // Step B", nc-reembolso-real-reverso-gasto): nunca reembolsa mas de lo
+    // que el cliente efectivamente pago, aunque el remanente teorico
+    // (totalUsdNc - montoAplicadoAPendiente) sea mayor — caso tipico: gasto
+    // de absorcion de diferencial cambiario cubrio la diferencia. Envuelve
+    // TODOS los usos aguas abajo (gate `.gt('0.01')`, SALDO_FAVOR/
+    // COMPENSACION_VENTA, AJUSTE_CXC, REFUND_TESORERIA) — factura sin
+    // absorcion (pago real >= remanente) deja este cap como no-op.
+    const remanenteALiquidar = calcularReembolsoTopadoAlPago(
+      totalUsdNc.minus(montoAplicadoAPendiente),
+      montoPagadoRealProrrateado
+    )
 
     if (remanenteALiquidar.gt('0.01')) {
       if (modalidad === 'SALDO_FAVOR' || modalidad === 'COMPENSACION_VENTA') {
@@ -1444,6 +1487,50 @@ export async function crearNotaCredito(
         toStorageString(nuevoSaldoPendVenta),
         venta_id,
       ])
+    }
+
+    // Step C (nc-reembolso-real-reverso-gasto, Design §Data Flow/Architecture
+    // Decisions #2/#3): si TODAS las lineas de la factura ya alcanzaron su
+    // cantidad facturada (acumulado de ESTA NC — ya insertada en el paso
+    // 5 — mas cualquier NC previa), reversar el/los gasto(s) de
+    // absorcion/diferencial asociados a la factura. Mismo computo
+    // `calcularEstadoReversoLineas` para TOTAL y PARCIAL (sin rama
+    // `tipoNc==='TOTAL' OR ...` — una NC TOTAL valida siempre deja
+    // `todasCompletas=true`, redundante distinguir el tipo). SIN try/catch:
+    // a diferencia de 6b/paso 9 (best-effort), un fallo aqui MUST abortar
+    // toda la NC (Spec "Atomicidad e inmutabilidad del reverso de gasto").
+    const lineasFacturadas: LineaConCantidadFacturada[] = ventaDetRows.map((row) => ({
+      venta_det_id: row.id,
+      cantidad_facturada: row.cantidad,
+    }))
+    const inPlaceholders = ventaDetRows.map(() => '?').join(',')
+    const notasCreditoDetAcumResult = ventaDetRows.length
+      ? await tx.execute(
+          `SELECT venta_det_id, cantidad FROM notas_credito_det WHERE empresa_id = ? AND venta_det_id IN (${inPlaceholders})`,
+          [empresa_id, ...ventaDetRows.map((row) => row.id)]
+        )
+      : null
+    const notasCreditoDetAcum: NotaCreditoDetParaReverso[] = []
+    if (notasCreditoDetAcumResult?.rows) {
+      for (let i = 0; i < notasCreditoDetAcumResult.rows.length; i++) {
+        notasCreditoDetAcum.push(
+          notasCreditoDetAcumResult.rows.item(i) as NotaCreditoDetParaReverso
+        )
+      }
+    }
+    const { todasCompletas } = calcularEstadoReversoLineas(lineasFacturadas, notasCreditoDetAcum)
+
+    if (todasCompletas) {
+      const gastosAbsorcionResult = await tx.execute(
+        `SELECT id FROM gastos WHERE empresa_id = ? AND nro_factura = ? AND descripcion IN ('ABSORCION_DIFERENCIAL_POS', 'DIFERENCIAL_CAMBIARIO_FALTANTE') AND status = 'REGISTRADO'`,
+        [empresa_id, venta.nro_factura]
+      )
+      if (gastosAbsorcionResult.rows) {
+        for (let i = 0; i < gastosAbsorcionResult.rows.length; i++) {
+          const gastoRow = gastosAbsorcionResult.rows.item(i) as { id: string }
+          await reversarGastoEnTx(tx, { gastoId: gastoRow.id, usuarioId: usuario_id }, now)
+        }
+      }
     }
 
     // 9. Generar asientos contables NCR

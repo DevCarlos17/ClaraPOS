@@ -16,6 +16,8 @@ import {
   debeUsarRefundTesoreria,
   calcularMontoDisponibleRefund,
   resolverVistaReversoNc,
+  calcularReembolsoTopadoAlPago,
+  prorratearMontoPagado,
 } from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
@@ -661,5 +663,74 @@ describe('resolverVistaReversoNc (umbral 0.01, reusa calcularMontoDisponibleRefu
     const vista = resolverVistaReversoNc('100.02', '100')
     expect(vista.montoDisponible.toFixed(2)).toBe('0.02')
     expect(vista.soloCancelaDeuda).toBe(false)
+  })
+})
+
+// ─── calcularReembolsoTopadoAlPago / prorratearMontoPagado
+// (nc-reembolso-real-reverso-gasto, Design §Interfaces) ────────
+//
+// El reembolso disponible NUNCA puede exceder lo REALMENTE pagado por el
+// cliente — factura Bs500 pagada con Bs490 (Bs10 absorbidos por el negocio
+// via gasto de absorcion) solo puede reembolsar hasta Bs490.
+
+describe('calcularReembolsoTopadoAlPago (Design §Interfaces: min(max(0,remanente), max(0,montoPagadoRealUsd)))', () => {
+  it('Scenario "NC total con absorcion": factura pagada 490 de 500 (10 absorbidos) -> tope aplica en 490, no 500', () => {
+    const result = calcularReembolsoTopadoAlPago(500, 490)
+    expect(result).toBeInstanceOf(Decimal)
+    expect(result.toNumber()).toBe(490)
+  })
+
+  it('Scenario "Factura sin absorcion — sin regresion": pagado >= remanente -> el remanente NO se topa (identico al actual)', () => {
+    const result = calcularReembolsoTopadoAlPago(500, 500)
+    expect(result.toNumber()).toBe(500)
+  })
+
+  it('pagado > remanente (sobra pago real de sobra) -> tope sigue siendo el remanente, nunca lo excede', () => {
+    const result = calcularReembolsoTopadoAlPago(300, 500)
+    expect(result.toNumber()).toBe(300)
+  })
+
+  it('edge: montoPagadoRealUsd=0 (factura nunca cobrada) -> tope en 0, sin importar el remanente', () => {
+    const result = calcularReembolsoTopadoAlPago(500, 0)
+    expect(result.toNumber()).toBe(0)
+  })
+
+  it('precision decimal.js real: remanente=13.20, pagado=10.5 -> tope=10.5 exacto (nunca float)', () => {
+    const result = calcularReembolsoTopadoAlPago('13.20', '10.5')
+    expect(result.toFixed(2)).toBe('10.50')
+  })
+
+  it('acepta string y number indistintamente (DecimalInput)', () => {
+    const conString = calcularReembolsoTopadoAlPago('500.00000000', '490.00000000')
+    const conNumber = calcularReembolsoTopadoAlPago(500, 490)
+    expect(conString.toNumber()).toBe(conNumber.toNumber())
+  })
+})
+
+describe('prorratearMontoPagado (Design §Interfaces: montoPagadoRealUsd * (totalUsdNc/totalFacturaUsd), guard total<=0)', () => {
+  it('Scenario "NC parcial prorratea el pago real": pago real 490 de factura 500, NC parcial de 250 (mitad) -> prorrateado = 245', () => {
+    const result = prorratearMontoPagado(490, 250, 500)
+    expect(result).toBeInstanceOf(Decimal)
+    expect(result.toNumber()).toBe(245)
+  })
+
+  it('TOTAL (ratio=1): totalUsdNc === totalFacturaUsd -> retorna montoPagadoRealUsd sin cambios', () => {
+    const result = prorratearMontoPagado(490, 500, 500)
+    expect(result.toNumber()).toBe(490)
+  })
+
+  it('guard total<=0: totalFacturaUsd=0 -> retorna montoPagadoRealUsd SIN aplicar ratio (evita division por cero)', () => {
+    const result = prorratearMontoPagado(490, 250, 0)
+    expect(result.toNumber()).toBe(490)
+  })
+
+  it('guard total<=0: totalFacturaUsd negativo (defensivo) -> retorna montoPagadoRealUsd sin ratio', () => {
+    const result = prorratearMontoPagado(490, 250, -10)
+    expect(result.toNumber()).toBe(490)
+  })
+
+  it('precision decimal.js real: pago real 11.6, NC parcial 5.8 de factura 23.2 -> ratio 0.25, prorrateado=2.9 exacto', () => {
+    const result = prorratearMontoPagado('11.6', '5.8', '23.2')
+    expect(result.toFixed(2)).toBe('2.90')
   })
 })
