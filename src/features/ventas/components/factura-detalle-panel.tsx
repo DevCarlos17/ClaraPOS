@@ -1,4 +1,4 @@
-import { formatUsd, formatBs, type DecimalInput } from '@/lib/currency'
+import { formatUsd, formatBs, usdToBs, type DecimalInput } from '@/lib/currency'
 import {
   construirFilasTotales,
   construirLineasEvolucion,
@@ -84,6 +84,10 @@ export function FacturaDetallePanel({
   // 'TOTAL' tanto por una unica NC TOTAL como por PARCIALes acumuladas.
   const estadoReverso = badgeReverso
   const totalAbonos = sumarAbonos(recibo.pagos)
+  // Tasa de la factura derivada de los abonos ya convertidos (bs/usd). En una
+  // factura con absorcion SIEMPRE hubo un pago real, asi que totalAbonos.usd > 0
+  // (nc-reembolso-real-reverso-gasto QA: mostrar "Pagado"/"Asumido" tambien en Bs).
+  const tasaFactura = totalAbonos.usd > 0 ? totalAbonos.bs / totalAbonos.usd : 0
 
   return (
     <div className="relative space-y-4 p-4">
@@ -190,11 +194,19 @@ export function FacturaDetallePanel({
             <>
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>Pagado</span>
-                <span className="tabular-nums">{formatUsd(totalAbonos.usd)}</span>
+                <span className="tabular-nums">
+                  {formatMontoBimonetario(totalAbonos.usd, totalAbonos.bs, recibo.monedaPresentacion)}
+                </span>
               </div>
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>Asumido por el negocio</span>
-                <span className="tabular-nums">{formatUsd(gastoAbsorbido.montoUsd)}</span>
+                <span className="tabular-nums">
+                  {formatMontoBimonetario(
+                    Number(gastoAbsorbido.montoUsd),
+                    Number(usdToBs(gastoAbsorbido.montoUsd, tasaFactura)),
+                    recibo.monedaPresentacion
+                  )}
+                </span>
               </div>
             </>
           )}

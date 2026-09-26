@@ -564,11 +564,13 @@ describe('FacturaDetallePanel — gastoAbsorbido (nc-reembolso-real-reverso-gast
     expect(screen.getByText('Total abonos')).toBeInTheDocument()
 
     const pagadoRow = screen.getByText('Pagado').closest('div') as HTMLElement
-    // baseRecibo: pago unico de 23.2 USD (ver Total abonos, mismo valor).
-    expect(within(pagadoRow).getByText('$23.20')).toBeInTheDocument()
+    // baseRecibo: pago unico de 23.2 USD, tasa 40 -> Bs 928 (bimonetario, QA:
+    // mostrar tambien el equivalente en Bs a la tasa de la factura).
+    expect(within(pagadoRow).getByText('$23.20 (Bs. 928,00)')).toBeInTheDocument()
 
     const asumidoRow = screen.getByText('Asumido por el negocio').closest('div') as HTMLElement
-    expect(within(asumidoRow).getByText('$10.00')).toBeInTheDocument()
+    // gasto 10 USD, tasa derivada de los abonos (928/23.2 = 40) -> Bs 400.
+    expect(within(asumidoRow).getByText('$10.00 (Bs. 400,00)')).toBeInTheDocument()
   })
 
   it('el resto del panel (lineas, totales, metodos de pago individuales) sigue visible junto al desglose', () => {
