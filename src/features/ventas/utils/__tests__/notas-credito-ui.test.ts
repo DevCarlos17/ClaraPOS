@@ -18,6 +18,7 @@ import {
   resolverVistaReversoNc,
   calcularReembolsoTopadoAlPago,
   prorratearMontoPagado,
+  sumarPagosRealesUsd,
 } from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
@@ -732,5 +733,66 @@ describe('prorratearMontoPagado (Design §Interfaces: montoPagadoRealUsd * (tota
   it('precision decimal.js real: pago real 11.6, NC parcial 5.8 de factura 23.2 -> ratio 0.25, prorrateado=2.9 exacto', () => {
     const result = prorratearMontoPagado('11.6', '5.8', '23.2')
     expect(result.toFixed(2)).toBe('2.90')
+  })
+})
+
+// ─── sumarPagosRealesUsd (nc-reembolso-real-reverso-gasto, Design §Interfaces
+// — SOLO UI, usePagosFactura trae filas no filtradas) ────────
+
+describe('sumarPagosRealesUsd (Design §Interfaces: suma monto_usd donde !is_reversed)', () => {
+  it('suma los monto_usd de pagos no reversados', () => {
+    const result = sumarPagosRealesUsd([
+      { monto_usd: '10.50', is_reversed: 0 },
+      { monto_usd: '5.25', is_reversed: 0 },
+    ])
+    expect(result).toBeInstanceOf(Decimal)
+    expect(result.toNumber()).toBe(15.75)
+  })
+
+  it('ignora filas reversadas (is_reversed=1)', () => {
+    const result = sumarPagosRealesUsd([
+      { monto_usd: '10.50', is_reversed: 0 },
+      { monto_usd: '5.25', is_reversed: 1 },
+    ])
+    expect(result.toNumber()).toBe(10.5)
+  })
+
+  it('acepta is_reversed boolean (true) ademas de number (1)', () => {
+    const result = sumarPagosRealesUsd([{ monto_usd: '10.50', is_reversed: true }])
+    expect(result.toNumber()).toBe(0)
+  })
+
+  it('arreglo vacio -> 0', () => {
+    expect(sumarPagosRealesUsd([]).toNumber()).toBe(0)
+  })
+})
+
+// ─── resolverVistaReversoNc — 3er param montoPagadoRealUsd
+// (nc-reembolso-real-reverso-gasto, Design §Interfaces) ────────
+
+describe('resolverVistaReversoNc — 3er param montoPagadoRealUsd (tope de reembolso al pago real, UI)', () => {
+  it('sin el 3er param: comportamiento identico al actual (sin regresion)', () => {
+    const vista = resolverVistaReversoNc(100, 40)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(40)
+    expect(vista.montoDisponible.toNumber()).toBe(60)
+    expect(vista.soloCancelaDeuda).toBe(false)
+  })
+
+  it('con el 3er param: montoDisponible se topea al pago real (factura Bs500 pagada con Bs490 de absorcion)', () => {
+    const vista = resolverVistaReversoNc(500, 0, 490)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(0)
+    expect(vista.montoDisponible.toNumber()).toBe(490)
+    expect(vista.soloCancelaDeuda).toBe(false)
+  })
+
+  it('montoAplicadoADeuda se computa ANTES del tope (Step A puro) — no cambia aunque el pago real sea menor', () => {
+    const vista = resolverVistaReversoNc(100, 40, 10)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(40)
+    expect(vista.montoDisponible.toNumber()).toBe(10)
+  })
+
+  it('pago real >= remanente (sin absorcion): montoDisponible NO se topa (identico a sin el param)', () => {
+    const vista = resolverVistaReversoNc(500, 0, 500)
+    expect(vista.montoDisponible.toNumber()).toBe(500)
   })
 })

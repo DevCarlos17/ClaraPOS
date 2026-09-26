@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { CrearNcrModal } from '../crear-ncr-modal'
 import { crearNotaCredito, useReversosFactura, type FacturaParaAnular } from '../../hooks/use-notas-credito'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
+import { useGastoAbsorcionFactura } from '@/features/contabilidad/hooks/use-gastos'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useDepositosVentaActivos, type Deposito } from '@/features/inventario/hooks/use-depositos'
@@ -82,6 +83,7 @@ vi.mock('@/features/cxc/hooks/use-cxc', () => ({
   useDetalleFactura: vi.fn(),
   usePagosFactura: vi.fn(),
 }))
+vi.mock('@/features/contabilidad/hooks/use-gastos', () => ({ useGastoAbsorcionFactura: vi.fn() }))
 vi.mock('@/features/configuracion/hooks/use-company', () => ({ useCompany: vi.fn() }))
 vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
 vi.mock('@/features/inventario/hooks/use-depositos', () => ({ useDepositosVentaActivos: vi.fn() }))
@@ -91,6 +93,7 @@ const mockedCrearNotaCredito = vi.mocked(crearNotaCredito)
 const mockedUseReversosFactura = vi.mocked(useReversosFactura)
 const mockedUseDetalleFactura = vi.mocked(useDetalleFactura)
 const mockedUsePagosFactura = vi.mocked(usePagosFactura)
+const mockedUseGastoAbsorcionFactura = vi.mocked(useGastoAbsorcionFactura)
 const mockedUseCompany = vi.mocked(useCompany)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 const mockedUseDepositosVentaActivos = vi.mocked(useDepositosVentaActivos)
@@ -142,6 +145,7 @@ function detalleUnaLinea() {
 function setup() {
   mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
   mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+  mockedUseGastoAbsorcionFactura.mockReturnValue({ gasto: null, isLoading: false })
   mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
   mockedUseCompany.mockReturnValue({
     company: { id: 'emp-1', nombre: 'ClaraPOS Estetica C.A.', rif: 'J-12345678-9', direccion: null } as never,
@@ -644,5 +648,107 @@ describe('CrearNcrModal — PR3 (nc-parcial-devolver-dinero): PARCIAL + Devolver
       tipo: 'TOTAL',
     })
     expect(mockedCrearNotaCredito.mock.calls[0][0]).not.toHaveProperty('lineas')
+  })
+})
+
+/** Fixture minima de `PagoFacturaCxc` (nc-reembolso-real-reverso-gasto) — evita el warning de `key` de React en `FacturaDetallePanel` (lee `metodo_cobro_id`). */
+function pagoFacturaFixture(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 'pago-1',
+    venta_id: 'venta-1',
+    metodo_cobro_id: 'metodo-1',
+    moneda_id: 'moneda-usd',
+    tasa: '40',
+    monto: '0',
+    monto_usd: '0',
+    referencia: null,
+    fecha: '2026-01-01T00:00:00Z',
+    created_by: null,
+    is_reversed: 0,
+    reversed_at: null,
+    reversed_by: null,
+    reversed_reason: null,
+    procesado_por_nombre: null,
+    metodo_nombre: 'Efectivo USD',
+    moneda_label: 'USD',
+    ...overrides,
+  } as never
+}
+
+/**
+ * nc-reembolso-real-reverso-gasto (Slice B, Design §Interfaces): el modal
+ * consulta `useGastoAbsorcionFactura` y, cuando existe un gasto de absorcion
+ * para la factura, topa `montoDisponible` (via `resolverVistaReversoNc` +
+ * su 3er param) al pago REAL del cliente en vez del remanente crudo — y
+ * pasa el gasto a `FacturaDetallePanel` para el desglose "Pagado/Asumido".
+ * Sin gasto (default de `setup()`, `gasto: null`), CERO cambio de
+ * comportamiento (ver el resto de la suite, todos con `gasto: null`).
+ */
+describe('CrearNcrModal — nc-reembolso-real-reverso-gasto (Slice B: tope de reembolso al pago real + desglose)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setup()
+  })
+
+  it('con gasto de absorcion: "Pendiente por reembolsar" muestra el pago REAL topado (490), no el remanente crudo (500)', async () => {
+    const user = userEvent.setup()
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [pagoFacturaFixture({ monto_usd: '490.00', monto: '490.00' })],
+      isLoading: false,
+    })
+    mockedUseGastoAbsorcionFactura.mockReturnValue({
+      gasto: { id: 'gasto-1', monto_usd: '10.00', descripcion: 'ABSORCION_DIFERENCIAL_POS', status: 'REGISTRADO' },
+      isLoading: false,
+    })
+    render(
+      <CrearNcrModal
+        isOpen
+        onClose={() => {}}
+        factura={baseFactura({ total_usd: '500.00', saldo_pend_usd: '0.00' })}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-monto-disponible-usd', '490')
+  })
+
+  it('con gasto de absorcion: FacturaDetallePanel muestra "Pagado"/"Asumido por el negocio" con los montos correctos', async () => {
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [pagoFacturaFixture({ monto_usd: '490.00', monto: '490.00' })],
+      isLoading: false,
+    })
+    mockedUseGastoAbsorcionFactura.mockReturnValue({
+      gasto: { id: 'gasto-1', monto_usd: '10.00', descripcion: 'ABSORCION_DIFERENCIAL_POS', status: 'REGISTRADO' },
+      isLoading: false,
+    })
+    render(
+      <CrearNcrModal
+        isOpen
+        onClose={() => {}}
+        factura={baseFactura({ total_usd: '500.00', saldo_pend_usd: '0.00' })}
+      />
+    )
+
+    expect(screen.getByText('Pagado')).toBeInTheDocument()
+    expect(screen.getByText('Asumido por el negocio')).toBeInTheDocument()
+  })
+
+  it('sin gasto de absorcion (default): "Pendiente por reembolsar" NO se topa — identico al comportamiento pre-existente', async () => {
+    const user = userEvent.setup()
+    render(
+      <CrearNcrModal
+        isOpen
+        onClose={() => {}}
+        factura={baseFactura({ total_usd: '500.00', saldo_pend_usd: '0.00' })}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-monto-disponible-usd', '500')
+    expect(screen.queryByText('Asumido por el negocio')).not.toBeInTheDocument()
   })
 })

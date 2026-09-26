@@ -583,10 +583,29 @@ export interface VistaReversoNc {
  * usara un umbral distinto, podria prometer un desglose+opciones para un
  * remanente que el motor trata como no-op, o viceversa.
  */
-export function resolverVistaReversoNc(totalUsdNc: DecimalInput, saldoPendVenta: DecimalInput): VistaReversoNc {
+/**
+ * 3er param opcional `montoPagadoRealUsd` (nc-reembolso-real-reverso-gasto,
+ * Design §Interfaces) — SIN el param, comportamiento identico al existente
+ * (regresion garantizada, mismos 2 argumentos que antes). CON el param,
+ * `montoAplicadoADeuda` se sigue computando ANTES del tope (Step A puro,
+ * sobre el remanente crudo) — solo `montoDisponible` (y por lo tanto
+ * `soloCancelaDeuda`) refleja el tope real via `calcularReembolsoTopadoAlPago`.
+ * El caller (los modales de NC) es responsable de prorratear
+ * `montoPagadoRealUsd` para NC PARCIAL antes de pasarlo aqui
+ * (`prorratearMontoPagado`) — esta funcion no distingue TOTAL/PARCIAL.
+ */
+export function resolverVistaReversoNc(
+  totalUsdNc: DecimalInput,
+  saldoPendVenta: DecimalInput,
+  montoPagadoRealUsd?: DecimalInput
+): VistaReversoNc {
   const total = new Decimal(totalUsdNc)
-  const montoDisponible = calcularMontoDisponibleRefund(total, saldoPendVenta)
-  const montoAplicadoADeuda = total.minus(montoDisponible)
+  const montoDisponibleCrudo = calcularMontoDisponibleRefund(total, saldoPendVenta)
+  const montoAplicadoADeuda = total.minus(montoDisponibleCrudo)
+  const montoDisponible =
+    montoPagadoRealUsd === undefined
+      ? montoDisponibleCrudo
+      : calcularReembolsoTopadoAlPago(montoDisponibleCrudo, montoPagadoRealUsd)
   return {
     totalUsdNc: total,
     montoAplicadoADeuda,
@@ -643,6 +662,25 @@ export function prorratearMontoPagado(
   if (totalFactura.lte(0)) return pagado
   const ratio = new Decimal(totalUsdNc).dividedBy(totalFactura)
   return pagado.times(ratio)
+}
+
+/**
+ * Suma el pago real de una factura a partir de las filas crudas de
+ * `usePagosFactura` (nc-reembolso-real-reverso-gasto, Design §Interfaces) —
+ * SOLO UI: `usePagosFactura` trae TODAS las filas (incluidas las
+ * reversadas), a diferencia del SELECT del motor
+ * (`use-notas-credito.ts`, Step A') que ya filtra `is_reversed = 0` en SQL.
+ * `is_reversed` llega como `number` (PowerSync boolean-as-integer) desde
+ * `usePagosFactura`, pero se acepta `boolean` tambien para uso directo en
+ * tests/otros callers.
+ */
+export function sumarPagosRealesUsd(
+  pagos: Array<{ monto_usd: DecimalInput; is_reversed: number | boolean }>
+): Decimal {
+  return pagos.reduce((acc, p) => {
+    const reversado = typeof p.is_reversed === 'boolean' ? p.is_reversed : p.is_reversed !== 0
+    return reversado ? acc : acc.plus(new Decimal(p.monto_usd))
+  }, new Decimal(0))
 }
 
 export function agruparReversosPorNc(rows: ReversoFacturaRowInput[]): ReversoAplicado[] {

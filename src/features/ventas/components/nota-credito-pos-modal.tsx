@@ -23,6 +23,8 @@ import {
   resolverModalidadDesdeOrigen,
   debeUsarRefundTesoreria,
   resolverVistaReversoNc,
+  sumarPagosRealesUsd,
+  prorratearMontoPagado,
   type EstadoPago,
   type BadgeReverso,
   type OrigenReverso,
@@ -36,6 +38,7 @@ import { TipoNcSelector } from './tipo-nc-selector'
 import { OrigenReversoSelector } from './origen-reverso-selector'
 import { RefundTesoreriaForm } from './refund-tesoreria-form'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
+import { useGastoAbsorcionFactura } from '@/features/contabilidad/hooks/use-gastos'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
@@ -285,6 +288,19 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const { pagos: pagosFactura } = usePagosFactura(facturaId)
   const { company } = useCompany()
 
+  // nc-reembolso-real-reverso-gasto (Slice B, Design §Interfaces): gasto de
+  // absorcion de diferencial asociado a la factura, si existe — alimenta el
+  // desglose "Pagado/Asumido" del panel Y el tope de `vistaReversoNc` de
+  // abajo. MISMO predicado que Step C del motor (`nro_factura`), sin
+  // filtro `status`.
+  const { gasto: gastoAbsorbidoRaw } = useGastoAbsorcionFactura(
+    factura?.nro_factura ?? null,
+    user?.empresa_id ?? null
+  )
+  const gastoAbsorbido = gastoAbsorbidoRaw
+    ? { montoUsd: gastoAbsorbidoRaw.monto_usd, tipo: gastoAbsorbidoRaw.descripcion }
+    : null
+
   // F1 QA fix (Slice 5a): historial de NC(s) ya aplicadas a la factura
   // seleccionada — alimenta (a) la seccion aditiva del panel de detalle y
   // (b) el tope de remanente por linea que consume SeleccionLineasNc.
@@ -349,8 +365,20 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     // mantener el selector completo (comportamiento pre-existente) hasta
     // tener un total real. MISMO guard que `crear-ncr-modal.tsx`.
     if (totalUsdNc <= 0) return { ...resolverVistaReversoNc(0, 0), soloCancelaDeuda: false }
-    return resolverVistaReversoNc(totalUsdNc, factura.saldo_pend_usd)
-  }, [factura, tipoNc, estadoParcialConfirm])
+    // nc-reembolso-real-reverso-gasto (Slice B): SIN gasto de absorcion, el
+    // 3er param se omite -> `resolverVistaReversoNc` es BYTE-IDENTICO al
+    // llamado pre-existente (invariante #1, cero regresion). CON gasto,
+    // se topa `montoDisponible` al pago REAL del cliente
+    // (`sumarPagosRealesUsd`), prorrateado para PARCIAL — mismo criterio
+    // que Step B del motor (`use-notas-credito.ts`).
+    if (!gastoAbsorbido) return resolverVistaReversoNc(totalUsdNc, factura.saldo_pend_usd)
+    const montoPagadoRealUsd = sumarPagosRealesUsd(pagosFactura)
+    const montoPagadoRealParaVista =
+      tipoNc === 'PARCIAL'
+        ? prorratearMontoPagado(montoPagadoRealUsd, totalUsdNc, factura.total_usd)
+        : montoPagadoRealUsd
+    return resolverVistaReversoNc(totalUsdNc, factura.saldo_pend_usd, montoPagadoRealParaVista)
+  }, [factura, tipoNc, estadoParcialConfirm, gastoAbsorbido, pagosFactura])
 
   // Lineas candidatas a NC PARCIAL (Slice 3b, Design §Decision 7) — mismo
   // `detalle` de `useDetalleFactura` ya usado para el panel de detalle,
@@ -672,6 +700,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                   reversos={historialReversos}
                   badgeReverso={badgesPorVenta[facturaId ?? ''] ?? null}
                   hideFacturaTitle
+                  gastoAbsorbido={gastoAbsorbido}
                 />
 
                 {factura && !puedeEmitirNc && (

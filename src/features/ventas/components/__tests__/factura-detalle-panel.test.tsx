@@ -529,3 +529,58 @@ describe('FacturaDetallePanel — Enhancement B (metodos de reembolso de tesorer
     expect(screen.getByText('Reembolso: Tesorería · Caja Fuerte Principal')).toBeInTheDocument()
   })
 })
+
+// ─── gastoAbsorbido (nc-reembolso-real-reverso-gasto, Slice B): desglose
+// "Pagado/Asumido por el negocio" en la seccion de Metodos de pago —
+// presentacional puro (prop-driven, sin fetch). Sin la prop (o null),
+// comportamiento IDENTICO al actual (regresion). ────────
+
+describe('FacturaDetallePanel — gastoAbsorbido (nc-reembolso-real-reverso-gasto, desglose Pagado/Asumido)', () => {
+  it('sin la prop (omitida): NO muestra "Pagado" ni "Asumido por el negocio" (regresion, desglose actual sin cambios)', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
+
+    expect(screen.queryByText('Pagado')).not.toBeInTheDocument()
+    expect(screen.queryByText('Asumido por el negocio')).not.toBeInTheDocument()
+    // "Total abonos" sigue presente sin cambios.
+    expect(screen.getByText('Total abonos')).toBeInTheDocument()
+  })
+
+  it('con gastoAbsorbido null explicito: mismo resultado que omitirla (regresion)', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} gastoAbsorbido={null} />)
+
+    expect(screen.queryByText('Pagado')).not.toBeInTheDocument()
+    expect(screen.queryByText('Asumido por el negocio')).not.toBeInTheDocument()
+  })
+
+  it('con gastoAbsorbido presente: muestra "Pagado $X" (el total de abonos real) y "Asumido por el negocio $Y" (el monto del gasto)', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        gastoAbsorbido={{ montoUsd: '10.00', tipo: 'ABSORCION_DIFERENCIAL_POS' }}
+      />
+    )
+
+    // "Total abonos" sigue visible (aditivo, no reemplazado).
+    expect(screen.getByText('Total abonos')).toBeInTheDocument()
+
+    const pagadoRow = screen.getByText('Pagado').closest('div') as HTMLElement
+    // baseRecibo: pago unico de 23.2 USD (ver Total abonos, mismo valor).
+    expect(within(pagadoRow).getByText('$23.20')).toBeInTheDocument()
+
+    const asumidoRow = screen.getByText('Asumido por el negocio').closest('div') as HTMLElement
+    expect(within(asumidoRow).getByText('$10.00')).toBeInTheDocument()
+  })
+
+  it('el resto del panel (lineas, totales, metodos de pago individuales) sigue visible junto al desglose', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        gastoAbsorbido={{ montoUsd: '10.00', tipo: 'ABSORCION_DIFERENCIAL_POS' }}
+      />
+    )
+
+    expect(screen.getByText('Botox 50U')).toBeInTheDocument()
+    expect(screen.getByText('TOTAL FACTURA')).toBeInTheDocument()
+    expect(screen.getByText('Efectivo USD')).toBeInTheDocument()
+  })
+})

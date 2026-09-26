@@ -681,6 +681,44 @@ export async function insertarGastoDeduccionEnTx(
   return { gastoId }
 }
 
+export interface GastoAbsorcionFactura {
+  id: string
+  monto_usd: string
+  descripcion: string
+  status: string
+}
+
+/**
+ * Gasto de absorcion de diferencial (`ABSORCION_DIFERENCIAL_POS`/
+ * `DIFERENCIAL_CAMBIARIO_FALTANTE`) asociado a una factura, si existe
+ * (nc-reembolso-real-reverso-gasto, Slice B, Design §Interfaces) — alimenta
+ * el desglose "Pagado/Asumido por el negocio" de `FacturaDetallePanel` en
+ * los 3 consumidores (2 modales de NC + Consulta de factura). MISMO
+ * predicado `nro_factura + descripcion IN (...)` que Step C del motor
+ * (`crearNotaCredito`), SIN filtro `status` a proposito: una factura ya
+ * reversada puede tener el gasto en `ANULADO` y el desglose sigue siendo
+ * historicamente correcto (mostro lo que se asumio en su momento).
+ */
+export function useGastoAbsorcionFactura(
+  nroFactura: string | null,
+  empresaId: string | null
+): { gasto: GastoAbsorcionFactura | null; isLoading: boolean } {
+  const { data, isLoading } = useQuery(
+    nroFactura && empresaId
+      ? `SELECT id, monto_usd, descripcion, status
+           FROM gastos
+          WHERE empresa_id = ?
+            AND nro_factura = ?
+            AND descripcion IN ('ABSORCION_DIFERENCIAL_POS', 'DIFERENCIAL_CAMBIARIO_FALTANTE')
+          LIMIT 1`
+      : '',
+    nroFactura && empresaId ? [empresaId, nroFactura] : []
+  )
+  const rows = (data ?? []) as GastoAbsorcionFactura[]
+  const gasto: GastoAbsorcionFactura | null = rows[0] ?? null
+  return { gasto, isLoading }
+}
+
 export interface ReversarGastoParams {
   gastoId: string
   usuarioId?: string

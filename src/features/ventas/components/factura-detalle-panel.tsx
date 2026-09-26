@@ -1,4 +1,4 @@
-import { formatUsd, formatBs } from '@/lib/currency'
+import { formatUsd, formatBs, type DecimalInput } from '@/lib/currency'
 import {
   construirFilasTotales,
   construirLineasEvolucion,
@@ -51,6 +51,17 @@ export interface FacturaDetallePanelProps {
    * NC y Consulta/Reimprimir — ningun otro consumidor pasa esta prop.
    */
   hideFacturaTitle?: boolean
+  /**
+   * nc-reembolso-real-reverso-gasto (Slice B, Design §Interfaces): gasto de
+   * absorcion de diferencial (`ABSORCION_DIFERENCIAL_POS`/
+   * `DIFERENCIAL_CAMBIARIO_FALTANTE`) asociado a esta factura, si existe
+   * (`useGastoAbsorcionFactura`). Cuando presente, la seccion "Metodos de
+   * pago" ADEMAS muestra "Pagado"/"Asumido por el negocio" para explicar
+   * por que el cobrado real difiere del total de la factura. Componente
+   * PURO: recibe el gasto YA RESUELTO por el llamador, nunca hace fetch.
+   * `null`/ausente (default): comportamiento actual sin cambios.
+   */
+  gastoAbsorbido?: { montoUsd: DecimalInput; tipo: string } | null
 }
 
 export function FacturaDetallePanel({
@@ -58,6 +69,7 @@ export function FacturaDetallePanel({
   reversos = [],
   badgeReverso = null,
   hideFacturaTitle = false,
+  gastoAbsorbido = null,
 }: FacturaDetallePanelProps) {
   if (!recibo) {
     return (
@@ -174,6 +186,18 @@ export function FacturaDetallePanel({
               {formatMontoBimonetario(totalAbonos.usd, totalAbonos.bs, recibo.monedaPresentacion)}
             </span>
           </div>
+          {gastoAbsorbido && (
+            <>
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>Pagado</span>
+                <span className="tabular-nums">{formatUsd(totalAbonos.usd)}</span>
+              </div>
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>Asumido por el negocio</span>
+                <span className="tabular-nums">{formatUsd(gastoAbsorbido.montoUsd)}</span>
+              </div>
+            </>
+          )}
         </div>
       )}
 
