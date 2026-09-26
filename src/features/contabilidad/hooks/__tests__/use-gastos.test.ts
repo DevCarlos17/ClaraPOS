@@ -33,10 +33,12 @@ vi.mock('@/features/caja/lib/deducciones-cierre', () => ({
 }))
 
 import type { Transaction } from '@powersync/common'
+import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
-import { anularGasto, reversarGastoEnTx } from '../use-gastos'
+import { anularGasto, reversarGastoEnTx, useGastoAbsorcionFactura } from '../use-gastos'
 
 const mockedDb = vi.mocked(db, true)
+const mockedUseQuery = vi.mocked(useQuery)
 
 interface Call {
   sql: string
@@ -218,5 +220,57 @@ describe('anularGasto — regresion (delega en reversarGastoEnTx dentro de su pr
       asientosIds: ['as-1'],
       usuarioId: 'user-1',
     })
+  })
+})
+
+describe('useGastoAbsorcionFactura (nc-reembolso-real-reverso-gasto, Slice B: hook compartido para el desglose Pagado/Asumido)', () => {
+  it('retorna el gasto de absorcion encontrado por nro_factura + empresa_id (mismo predicado de descripcion que Step C, SIN filtro status)', () => {
+    mockedUseQuery.mockReturnValue({
+      data: [{ id: 'gasto-1', monto_usd: '10.00', descripcion: 'ABSORCION_DIFERENCIAL_POS', status: 'REGISTRADO' }],
+      isLoading: false,
+    } as never)
+
+    const { gasto, isLoading } = useGastoAbsorcionFactura('FAC-0001', 'emp-1')
+
+    expect(isLoading).toBe(false)
+    expect(gasto).toEqual({
+      id: 'gasto-1',
+      monto_usd: '10.00',
+      descripcion: 'ABSORCION_DIFERENCIAL_POS',
+      status: 'REGISTRADO',
+    })
+    const [sql, params] = mockedUseQuery.mock.calls[0]
+    expect(sql).toContain('FROM gastos')
+    expect(sql).toContain("IN ('ABSORCION_DIFERENCIAL_POS', 'DIFERENCIAL_CAMBIARIO_FALTANTE')")
+    expect(sql).not.toContain("status = 'REGISTRADO'")
+    expect(params).toEqual(['emp-1', 'FAC-0001'])
+  })
+
+  it('tambien retorna un gasto ANULADO (sin filtro status — el reverso ya pudo anularlo)', () => {
+    mockedUseQuery.mockReturnValue({
+      data: [{ id: 'gasto-1', monto_usd: '10.00', descripcion: 'DIFERENCIAL_CAMBIARIO_FALTANTE', status: 'ANULADO' }],
+      isLoading: false,
+    } as never)
+
+    const { gasto } = useGastoAbsorcionFactura('FAC-0001', 'emp-1')
+
+    expect(gasto?.status).toBe('ANULADO')
+  })
+
+  it('sin gasto asociado a la factura -> null, sin lanzar', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    const { gasto } = useGastoAbsorcionFactura('FAC-9999', 'emp-1')
+
+    expect(gasto).toBeNull()
+  })
+
+  it('sin nroFactura o sin empresaId (null): no ejecuta query (sql vacio) y retorna null', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    const { gasto } = useGastoAbsorcionFactura(null, 'emp-1')
+
+    expect(gasto).toBeNull()
+    expect(mockedUseQuery.mock.calls[0][0]).toBe('')
   })
 })

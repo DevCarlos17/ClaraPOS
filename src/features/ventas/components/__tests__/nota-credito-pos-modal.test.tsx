@@ -4,6 +4,7 @@ import { NotaCreditoPosModal } from '../nota-credito-pos-modal'
 import { crearNotaCredito, useReversosFactura } from '../../hooks/use-notas-credito'
 import { useFacturasSesionActiva, useBadgesReversoSesion } from '../../hooks/use-facturas-sesion-activa'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
+import { useGastoAbsorcionFactura } from '@/features/contabilidad/hooks/use-gastos'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions } from '@/core/hooks/use-permissions'
@@ -145,6 +146,7 @@ vi.mock('@/features/cxc/hooks/use-cxc', () => ({
   useDetalleFactura: vi.fn(),
   usePagosFactura: vi.fn(),
 }))
+vi.mock('@/features/contabilidad/hooks/use-gastos', () => ({ useGastoAbsorcionFactura: vi.fn() }))
 vi.mock('@/features/configuracion/hooks/use-company', () => ({ useCompany: vi.fn() }))
 vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
 vi.mock('@/core/hooks/use-permissions', async (importOriginal) => {
@@ -160,6 +162,7 @@ const mockedUseFacturasSesionActiva = vi.mocked(useFacturasSesionActiva)
 const mockedUseBadgesReversoSesion = vi.mocked(useBadgesReversoSesion)
 const mockedUseDetalleFactura = vi.mocked(useDetalleFactura)
 const mockedUsePagosFactura = vi.mocked(usePagosFactura)
+const mockedUseGastoAbsorcionFactura = vi.mocked(useGastoAbsorcionFactura)
 const mockedUseCompany = vi.mocked(useCompany)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 const mockedUsePermissions = vi.mocked(usePermissions)
@@ -223,11 +226,36 @@ function facturaSesion(overrides: Partial<FacturaParaAnular> = {}): FacturaParaA
   }
 }
 
+/** Fixture minima de `PagoFacturaCxc` (nc-reembolso-real-reverso-gasto) — evita el warning de `key` de React en `FacturaDetallePanel` (lee `metodo_cobro_id`). */
+function pagoFacturaFixture(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 'pago-1',
+    venta_id: 'venta-1',
+    metodo_cobro_id: 'metodo-1',
+    moneda_id: 'moneda-usd',
+    tasa: '40',
+    monto: '0',
+    monto_usd: '0',
+    referencia: null,
+    fecha: '2026-01-01T00:00:00Z',
+    created_by: null,
+    is_reversed: 0,
+    reversed_at: null,
+    reversed_by: null,
+    reversed_reason: null,
+    procesado_por_nombre: null,
+    metodo_nombre: 'Efectivo USD',
+    moneda_label: 'USD',
+    ...overrides,
+  } as never
+}
+
 function setup(opts: { hasPermission: boolean }) {
   mockedUseFacturasSesionActiva.mockReturnValue({ facturas: [facturaSesion()], isLoading: false })
   mockedUseBadgesReversoSesion.mockReturnValue({ badgesPorVenta: {}, isLoading: false })
   mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
   mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+  mockedUseGastoAbsorcionFactura.mockReturnValue({ gasto: null, isLoading: false })
   mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
   mockedUseCompany.mockReturnValue({
     company: { id: 'emp-1', nombre: 'ClaraPOS Estetica C.A.', rif: 'J-12345678-9', direccion: null } as never,
@@ -2069,5 +2097,87 @@ describe('NotaCreditoPosModal — responsive master-detail (nota-credito-pos-mod
 
     expect(columnaDetalle.style.minHeight).not.toBe('420px')
     expect(columnaDetalle.className.split(/\s+/)).toContain('md:min-h-[420px]')
+  })
+})
+
+/**
+ * nc-reembolso-real-reverso-gasto (Slice B, Design §Interfaces): el modal
+ * consulta `useGastoAbsorcionFactura` y, cuando existe un gasto de absorcion
+ * para la factura seleccionada, topa `montoDisponible` (via
+ * `resolverVistaReversoNc` + su 3er param) al pago REAL del cliente
+ * (`sumarPagosRealesUsd(pagosFactura)`) en vez del remanente crudo — y pasa
+ * el gasto a `FacturaDetallePanel` para el desglose "Pagado/Asumido". Sin
+ * gasto (default de `setup()`, `gasto: null`), CERO cambio de comportamiento
+ * (ver el resto de la suite de este archivo, todos con `gasto: null`).
+ */
+describe('NotaCreditoPosModal — nc-reembolso-real-reverso-gasto (Slice B: tope de reembolso al pago real + desglose)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('con gasto de absorcion: "Pendiente por reembolsar" muestra el pago REAL topado (490), no el remanente crudo (500)', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ total_usd: '500.00', saldo_pend_usd: '0.00' })],
+      isLoading: false,
+    })
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [pagoFacturaFixture({ monto_usd: '490.00', monto: '490.00', is_reversed: 0 })],
+      isLoading: false,
+    })
+    mockedUseGastoAbsorcionFactura.mockReturnValue({
+      gasto: { id: 'gasto-1', monto_usd: '10.00', descripcion: 'ABSORCION_DIFERENCIAL_POS', status: 'REGISTRADO' },
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: 'Devolver dinero' }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-monto-disponible-usd', '490')
+  })
+
+  it('con gasto de absorcion: FacturaDetallePanel muestra "Pagado"/"Asumido por el negocio" con los montos correctos', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ total_usd: '500.00', saldo_pend_usd: '0.00' })],
+      isLoading: false,
+    })
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [pagoFacturaFixture({ monto_usd: '490.00', monto: '490.00', is_reversed: 0 })],
+      isLoading: false,
+    })
+    mockedUseGastoAbsorcionFactura.mockReturnValue({
+      gasto: { id: 'gasto-1', monto_usd: '10.00', descripcion: 'ABSORCION_DIFERENCIAL_POS', status: 'REGISTRADO' },
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    expect(screen.getByText('Pagado')).toBeInTheDocument()
+    expect(screen.getByText('Asumido por el negocio')).toBeInTheDocument()
+  })
+
+  it('sin gasto de absorcion (default): "Pendiente por reembolsar" NO se topa — identico al comportamiento pre-existente', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ total_usd: '500.00', saldo_pend_usd: '0.00' })],
+      isLoading: false,
+    })
+    // pagos vacios (sin dato realista) — precisamente el escenario que
+    // demuestra que SIN gasto, el pago real nunca se consulta para el tope.
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: 'Devolver dinero' }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-monto-disponible-usd', '500')
+    expect(screen.queryByText('Asumido por el negocio')).not.toBeInTheDocument()
   })
 })

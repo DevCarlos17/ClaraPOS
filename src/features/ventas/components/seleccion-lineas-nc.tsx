@@ -332,7 +332,7 @@ export function SeleccionLineasNc({
       )}
 
       <div className="flex items-center justify-between rounded-lg border bg-muted/30 p-2 text-sm">
-        <span className="text-muted-foreground">Total a devolver:</span>
+        <span className="text-muted-foreground">Valor de los articulos:</span>
         <span className="font-semibold">
           {formatUsd(preview.totalUsd)} / {formatBs(preview.totalBs)}
         </span>

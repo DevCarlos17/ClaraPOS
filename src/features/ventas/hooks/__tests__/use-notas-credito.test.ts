@@ -30,6 +30,17 @@ vi.mock('@/features/cxc/hooks/use-cxc', () => ({
   reversarDiferencialEnTx: vi.fn(async () => undefined),
   useDetalleFactura: vi.fn(),
 }))
+// Step C (nc-reembolso-real-reverso-gasto): espia usado para PROBAR que
+// `crearNotaCredito` llama `reversarGastoEnTx` con el `gastoId` correcto SOLO
+// cuando `calcularEstadoReversoLineas.todasCompletas` es true y existe un
+// gasto REGISTRADO — mismo patron de aislamiento que `reversarDiferencialEnTx`.
+const reversarGastoEnTxSpy = vi.fn<
+  (tx: Transaction, params: { gastoId: string; usuarioId?: string }, now: string) => Promise<void>
+>(async () => undefined)
+vi.mock('@/features/contabilidad/hooks/use-gastos', () => ({
+  reversarGastoEnTx: (tx: Transaction, params: { gastoId: string; usuarioId?: string }, now: string) =>
+    reversarGastoEnTxSpy(tx, params, now),
+}))
 // Slice 3, task 3.1: espia usado para PROBAR que `crearNotaCredito` NUNCA
 // compone internamente una segunda venta (COMPENSACION_VENTA deja el SAFC
 // y el llamador — Slice 5 UI — hace un `crearVenta()` SEPARADO). El modulo
@@ -105,8 +116,15 @@ interface NcrTxFixtures {
   depositoOrigenIsActive?: boolean
   /** Id del deposito principal activo de la empresa — solo se consulta/usa cuando `depositoOrigenIsActive` es `false` (fallback NCR). */
   principalDepositoId?: string
-  /** Slice 2: pagos NO reversados de la venta (fuente del egreso condicional + reversa). */
-  pagos?: Array<{ id: string; metodo_cobro_id: string; monto: string; moneda_id: string }>
+  /**
+   * Slice 2: pagos NO reversados de la venta (fuente del egreso condicional
+   * + reversa, Regla de Oro 6c). `monto_usd` (nc-reembolso-real-reverso-gasto,
+   * Step A'/B): opcional — SIN el, la query nueva `SELECT monto_usd FROM
+   * pagos` devuelve un sentinel "ilimitado" (ningun cap aplica), preservando
+   * byte-a-byte el comportamiento de CUALQUIER test pre-existente que no
+   * modela esta feature. CON el, alimenta `montoPagadoRealUsd` real.
+   */
+  pagos?: Array<{ id: string; metodo_cobro_id: string; monto: string; moneda_id: string; monto_usd?: string }>
   /** Slice 3: saldo_actual del cliente ANTES de liquidar el remanente (Step B). */
   clienteSaldoActual?: string
   /** Slice 4b: SUM(cantidad) ya acreditado por venta_det_id — alimenta el guard de doble-credito (`buildSumCantidadYaAcreditadaQuery`). */
@@ -124,6 +142,23 @@ interface NcrTxFixtures {
    * Ausencia de entrada para un id => sesion "no encontrada".
    */
   sesionesCaja?: Record<string, { status: string; empresa_id: string }>
+  /**
+   * Step C (nc-reembolso-real-reverso-gasto): estado ACUMULADO de
+   * `notas_credito_det` por `venta_det_id` — representa el estado que la
+   * query veria DESPUES de que esta misma NC insertara sus propias filas en
+   * el paso 5 (el test author ya incluye esa contribucion en el fixture, no
+   * hace falta simular el INSERT real). Default `[]` (ninguna linea
+   * acreditada) — con el default, `todasCompletas` es `false` para
+   * cualquier factura con lineas, y aun si fuera `true` el lookup de gastos
+   * (tambien default vacio) nunca dispararia `reversarGastoEnTx`.
+   */
+  notasCreditoDetAcumuladas?: Array<{ venta_det_id: string; cantidad: string }>
+  /**
+   * Step C: gasto(s) `REGISTRADO` de absorcion/diferencial asociados a
+   * `venta.nro_factura` — fuente del `SELECT id FROM gastos WHERE ...
+   * status='REGISTRADO'`. Default `[]` (sin gasto asociado) — no-op.
+   */
+  gastosAbsorcionParaReverso?: Array<{ id: string }>
 }
 
 /**
@@ -229,6 +264,20 @@ function mockCrearNcrTx(opts: NcrTxFixtures) {
           const pagos = opts.pagos ?? []
           return { rows: { length: pagos.length, item: (i: number) => pagos[i] } }
         }
+        // Step A' (nc-reembolso-real-reverso-gasto): pago real TOTAL de la
+        // factura, SIN gate tipoNc==='TOTAL' (query separada de la Regla de
+        // Oro de arriba). Sentinel "ilimitado" cuando ninguna fila del
+        // fixture especifica `monto_usd` — el cap (`calcularReembolsoTopadoAlPago`)
+        // queda como no-op, byte-a-byte igual a antes de esta feature.
+        if (sql.startsWith('SELECT monto_usd FROM pagos WHERE venta_id')) {
+          const conMontoUsd = (opts.pagos ?? []).filter((p) => p.monto_usd !== undefined)
+          if (conMontoUsd.length === 0) {
+            return { rows: { length: 1, item: () => ({ monto_usd: '999999999.99' }) } }
+          }
+          return {
+            rows: { length: conMontoUsd.length, item: (i: number) => ({ monto_usd: conMontoUsd[i]!.monto_usd }) },
+          }
+        }
         if (sql.startsWith('UPDATE pagos SET is_reversed')) {
           return { rows: { length: 0, item: () => undefined } }
         }
@@ -272,6 +321,17 @@ function mockCrearNcrTx(opts: NcrTxFixtures) {
         }
         if (sql.startsWith('UPDATE bancos_empresa SET saldo_actual') || sql.startsWith('UPDATE caja_fuerte SET saldo_actual')) {
           return { rows: { length: 0, item: () => undefined } }
+        }
+        // Step C (nc-reembolso-real-reverso-gasto): estado acumulado de
+        // notas_credito_det (gate `calcularEstadoReversoLineas.todasCompletas`)
+        // y lookup del gasto de absorcion/diferencial REGISTRADO.
+        if (sql.startsWith('SELECT venta_det_id, cantidad FROM notas_credito_det')) {
+          const rows = opts.notasCreditoDetAcumuladas ?? []
+          return { rows: { length: rows.length, item: (i: number) => rows[i] } }
+        }
+        if (sql.startsWith('SELECT id FROM gastos WHERE empresa_id')) {
+          const rows = opts.gastosAbsorcionParaReverso ?? []
+          return { rows: { length: rows.length, item: (i: number) => rows[i] } }
         }
 
         return { rows: { length: 0, item: () => undefined } }
@@ -1738,6 +1798,279 @@ describe('crearNotaCredito — Slice 4b (wiring PARCIAL en la tx atomica: notas_
     const ventaUpdate = calls.find((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
     expect(ventaUpdate).toBeDefined()
     expect(ventaUpdate!.params).toContain('0.00000000')
+  })
+})
+
+describe('crearNotaCredito — nc-reembolso-real-reverso-gasto (Step B: tope al pago real)', () => {
+  it('Scenario "NC total con absorcion": factura Bs500 pagada con Bs490 -> el disponible topea en 490, no 500', async () => {
+    const calls = mockCrearNcrTx({
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '500.00',
+        total_bs: '20000.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '1.000', lote_id: null, precio_unitario_usd: '500.00' }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      inventarioStock: { 'prod-1::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+      pagos: [{ id: 'pago-1', metodo_cobro_id: 'metodo-1', monto: '490.00', moneda_id: 'moneda-usd', monto_usd: '490.00' }],
+    })
+
+    await crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL', modalidad: 'SALDO_FAVOR' }))
+
+    const safcInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+    )
+    expect(safcInsert).toBeDefined()
+    expect(safcInsert!.params).toContain('490.00000000') // topado al pago real, NO 500.00000000
+    expect(safcInsert!.params).not.toContain('500.00000000')
+  })
+
+  it('Scenario "Factura sin absorcion — sin regresion": pago real === total_usd -> el disponible es IDENTICO al remanente actual (sin cap efectivo)', async () => {
+    const calls = mockCrearNcrTx({
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '500.00',
+        total_bs: '20000.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '1.000', lote_id: null, precio_unitario_usd: '500.00' }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      inventarioStock: { 'prod-1::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+      pagos: [{ id: 'pago-1', metodo_cobro_id: 'metodo-1', monto: '500.00', moneda_id: 'moneda-usd', monto_usd: '500.00' }],
+    })
+
+    await crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL', modalidad: 'SALDO_FAVOR' }))
+
+    const safcInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+    )
+    expect(safcInsert).toBeDefined()
+    expect(safcInsert!.params).toContain('500.00000000') // pago real cubre el total -> sin cap, identico al remanente pre-existente
+  })
+
+  it('Scenario "NC parcial prorratea el pago real": factura total 500 pagada 490 (10 absorbidos), NC PARCIAL de 250 (mitad) -> pago real prorrateado 245 topea el disponible', async () => {
+    const ventaDetDosLineas = [
+      { id: 'vdet-A', producto_id: 'prod-A', cantidad: '1.000', lote_id: null, precio_unitario_usd: '250.00', tipo_impuesto: 'Exento', impuesto_pct: '0' },
+      { id: 'vdet-B', producto_id: 'prod-B', cantidad: '1.000', lote_id: null, precio_unitario_usd: '250.00', tipo_impuesto: 'Exento', impuesto_pct: '0' },
+    ]
+    const calls = mockCrearNcrTx({
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '500.00',
+        total_bs: '20000.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: ventaDetDosLineas,
+      productos: {
+        'prod-A': { tipo: 'P', stock: '10.000', nombre: 'Producto A' },
+        'prod-B': { tipo: 'P', stock: '10.000', nombre: 'Producto B' },
+      },
+      inventarioStock: { 'prod-A::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+      pagos: [{ id: 'pago-1', metodo_cobro_id: 'metodo-1', monto: '490.00', moneda_id: 'moneda-usd', monto_usd: '490.00' }],
+    })
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'SALDO_FAVOR',
+        tipo: 'PARCIAL',
+        lineas: [{ venta_det_id: 'vdet-A', cantidadDevolver: '1.000' }],
+      })
+    )
+
+    // totalUsdNc de esta NC parcial = 250.00 (solo linea A) -> ratio 250/500 = 0.5
+    // montoPagadoRealProrrateado = 490 * 0.5 = 245.00 -> topa el remanente (250) en 245
+    const safcInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+    )
+    expect(safcInsert).toBeDefined()
+    expect(safcInsert!.params).toContain('245.00000000')
+    expect(safcInsert!.params).not.toContain('250.00000000')
+  })
+
+  it('guard: sin fila de pagos con monto_usd en el fixture -> sentinel "ilimitado", el cap NUNCA reduce el remanente (regresion de TODOS los tests pre-existentes que no modelan esta feature)', async () => {
+    const calls = mockCrearNcrTx({
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '30.00',
+        total_bs: '1200.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '3.000', lote_id: null }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      inventarioStock: { 'prod-1::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+      // Sin `pagos` en el fixture — mismo shape que decenas de tests pre-existentes.
+    })
+
+    await crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL', modalidad: 'SALDO_FAVOR' }))
+
+    const safcInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+    )
+    expect(safcInsert).toBeDefined()
+    expect(safcInsert!.params).toContain('30.00000000')
+  })
+})
+
+describe('crearNotaCredito — nc-reembolso-real-reverso-gasto (Step C: reverso del gasto de absorcion)', () => {
+  function ventaBase(overrides: Partial<NcrTxFixtures['venta']> = {}): NcrTxFixtures['venta'] {
+    return {
+      id: 'venta-1',
+      cliente_id: 'cliente-1',
+      nro_factura: 'C01-000001',
+      tasa: '40',
+      total_usd: '500.00',
+      total_bs: '20000.00',
+      saldo_pend_usd: '0.00',
+      tipo: 'CONTADO',
+      status: 'ACTIVA',
+      deposito_id: 'dep-B',
+      ...overrides,
+    }
+  }
+
+  it('Scenario "NC total reversa el gasto completo": TOTAL con gasto REGISTRADO -> llama reversarGastoEnTx UNA vez con el gastoId correcto', async () => {
+    mockCrearNcrTx({
+      venta: ventaBase(),
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '3.000', lote_id: null }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      inventarioStock: { 'prod-1::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+      // TOTAL deriva id='vdet-fixture-0' (unica linea, sin `id` explicito).
+      notasCreditoDetAcumuladas: [{ venta_det_id: 'vdet-fixture-0', cantidad: '3.000' }],
+      gastosAbsorcionParaReverso: [{ id: 'gasto-1' }],
+    })
+
+    await crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL', modalidad: 'AJUSTE_CXC' }))
+
+    expect(reversarGastoEnTxSpy).toHaveBeenCalledTimes(1)
+    const [, params] = reversarGastoEnTxSpy.mock.calls[0]!
+    expect(params).toEqual({ gastoId: 'gasto-1', usuarioId: 'user-1' })
+  })
+
+  it('Scenario "Acumulado de parciales completa el 100%": PARCIAL que completa el acumulado -> llama reversarGastoEnTx', async () => {
+    mockCrearNcrTx({
+      venta: ventaBase({ total_usd: '100.00', total_bs: '4000.00' }),
+      ventaDet: [
+        { id: 'vdet-A', producto_id: 'prod-A', cantidad: '4.000', lote_id: null, precio_unitario_usd: '10.00', tipo_impuesto: 'Exento', impuesto_pct: '0' },
+      ],
+      productos: { 'prod-A': { tipo: 'P', stock: '10.000', nombre: 'Producto A' } },
+      inventarioStock: { 'prod-A::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+      // Una NC previa ya acredito 2.000 de 4.000 -- el guard de doble-credito
+      // (yaAcreditadoPorLinea, PRE-insert) permite esta NC devolver 2.000 mas.
+      yaAcreditadoPorLinea: { 'vdet-A': '2.000' },
+      // Acumulado POST-insert (2 previo + 2 de esta NC) = 4.000 = facturado -> completo.
+      notasCreditoDetAcumuladas: [{ venta_det_id: 'vdet-A', cantidad: '4.000' }],
+      gastosAbsorcionParaReverso: [{ id: 'gasto-2' }],
+    })
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'AJUSTE_CXC',
+        tipo: 'PARCIAL',
+        lineas: [{ venta_det_id: 'vdet-A', cantidadDevolver: '2.000' }],
+      })
+    )
+
+    expect(reversarGastoEnTxSpy).toHaveBeenCalledTimes(1)
+    const [, params] = reversarGastoEnTxSpy.mock.calls[0]!
+    expect(params).toEqual({ gastoId: 'gasto-2', usuarioId: 'user-1' })
+  })
+
+  it('Scenario "NC parcial que no completa el 100% no reversa": PARCIAL bajo el 100% acumulado -> NUNCA llama reversarGastoEnTx (gasto permanece REGISTRADO)', async () => {
+    mockCrearNcrTx({
+      venta: ventaBase({ total_usd: '100.00', total_bs: '4000.00' }),
+      ventaDet: [
+        { id: 'vdet-A', producto_id: 'prod-A', cantidad: '4.000', lote_id: null, precio_unitario_usd: '10.00', tipo_impuesto: 'Exento', impuesto_pct: '0' },
+      ],
+      productos: { 'prod-A': { tipo: 'P', stock: '10.000', nombre: 'Producto A' } },
+      inventarioStock: { 'prod-A::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+      yaAcreditadoPorLinea: { 'vdet-A': '1.000' },
+      // Acumulado POST-insert (1 previo + 2 de esta NC) = 3.000 < 4.000 facturado -> incompleto.
+      notasCreditoDetAcumuladas: [{ venta_det_id: 'vdet-A', cantidad: '3.000' }],
+      // Gasto presente a proposito: si el gate fallara (falso positivo), este
+      // test lo detectaria — la ausencia de llamada prueba que el GATE, no
+      // el lookup de gastos, es lo que bloquea el reverso.
+      gastosAbsorcionParaReverso: [{ id: 'gasto-3' }],
+    })
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'AJUSTE_CXC',
+        tipo: 'PARCIAL',
+        lineas: [{ venta_det_id: 'vdet-A', cantidadDevolver: '2.000' }],
+      })
+    )
+
+    expect(reversarGastoEnTxSpy).not.toHaveBeenCalled()
+  })
+
+  it('Scenario "Factura sin gasto asociado — no-op": TOTAL completo pero SIN gasto de absorcion -> no llama reversarGastoEnTx y no lanza', async () => {
+    mockCrearNcrTx({
+      venta: ventaBase(),
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '3.000', lote_id: null }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      inventarioStock: { 'prod-1::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+      notasCreditoDetAcumuladas: [{ venta_det_id: 'vdet-fixture-0', cantidad: '3.000' }],
+      // gastosAbsorcionParaReverso omitido -> default [] (sin gasto asociado).
+    })
+
+    await expect(
+      crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL', modalidad: 'AJUSTE_CXC' }))
+    ).resolves.toBeDefined()
+
+    expect(reversarGastoEnTxSpy).not.toHaveBeenCalled()
+  })
+
+  it('Scenario "Fallo en Step C revierte toda la NC": reversarGastoEnTx rechaza -> crearNotaCredito(...) rechaza (senal de rollback, SIN try/catch)', async () => {
+    reversarGastoEnTxSpy.mockRejectedValueOnce(new Error('fallo contable en Step C'))
+    mockCrearNcrTx({
+      venta: ventaBase(),
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '3.000', lote_id: null }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      inventarioStock: { 'prod-1::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+      notasCreditoDetAcumuladas: [{ venta_det_id: 'vdet-fixture-0', cantidad: '3.000' }],
+      gastosAbsorcionParaReverso: [{ id: 'gasto-fallido' }],
+    })
+
+    await expect(
+      crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL', modalidad: 'AJUSTE_CXC' }))
+    ).rejects.toThrow('fallo contable en Step C')
   })
 })
 
