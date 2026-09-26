@@ -1,3 +1,4 @@
+import Decimal from 'decimal.js'
 import {
   derivarEstadoPago,
   huboAfectacionCxc,
@@ -11,6 +12,13 @@ import {
   calcularBadgesReversoPorVenta,
   resolverBadgesFactura,
   filaFacturaAtenuada,
+  resolverModalidadDesdeOrigen,
+  debeUsarRefundTesoreria,
+  calcularMontoDisponibleRefund,
+  resolverVistaReversoNc,
+  calcularReembolsoTopadoAlPago,
+  prorratearMontoPagado,
+  sumarPagosRealesUsd,
 } from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
@@ -498,6 +506,83 @@ describe('agruparReversosPorNc (F1: historial additivo — original + reverso, R
   })
 })
 
+// ─── debeUsarRefundTesoreria (nc-parcial-devolver-dinero, PR1 — Design §Routing/testable unit) ────────
+//
+// Decide si "Devolver dinero" enruta a REFUND_TESORERIA — MISMO gate para
+// TOTAL y PARCIAL (bug corregido: antes solo TOTAL llegaba a
+// RefundTesoreriaForm, ver design.md "1. Both modales gate...").
+
+describe('debeUsarRefundTesoreria (nc-parcial-devolver-dinero, PR1: gate REFUND_TESORERIA independiente de tipo TOTAL/PARCIAL)', () => {
+  it('DEVOLVER_DINERO -> true (habilita RefundTesoreriaForm, sin importar TOTAL/PARCIAL — este gate no conoce el tipo)', () => {
+    expect(debeUsarRefundTesoreria('DEVOLVER_DINERO')).toBe(true)
+  })
+
+  it('CREDITO_A_FAVOR -> false (NUNCA enruta a tesoreria, va por resolverModalidadDesdeOrigen -> SALDO_FAVOR)', () => {
+    expect(debeUsarRefundTesoreria('CREDITO_A_FAVOR')).toBe(false)
+  })
+
+  it('null (origen aun no elegido) -> false, nunca revienta', () => {
+    expect(debeUsarRefundTesoreria(null)).toBe(false)
+  })
+})
+
+// ─── calcularMontoDisponibleRefund (nc-parcial-devolver-dinero, PR1 — Design §Routing/testable unit) ────────
+//
+// Formaliza min(saldoPend,total)/max(0,total-aplicado) — MISMA formula que
+// el motor (`use-notas-credito.ts:1106-1108`, Step A) y que el inline
+// duplicado 2x en los modales (pos:318-324, admin:166-172), ahora en
+// Decimal (nunca Number/float, Regla de negocio #10). El caller pasa
+// `totalUsdNc` = total de la factura completa (TOTAL) o suma de SOLO las
+// lineas seleccionadas (PARCIAL) — esta funcion no distingue el caso, solo
+// aplica la formula sobre el monto que recibe.
+
+describe('calcularMontoDisponibleRefund (nc-parcial-devolver-dinero, PR1: min(saldoPend,total)/max(0,total-aplicado), Decimal)', () => {
+  it('paridad con la formula inline TOTAL ya existente: total=100, saldoPend=30 -> aplicado=30, disponible=70', () => {
+    const result = calcularMontoDisponibleRefund(100, 30)
+    expect(result).toBeInstanceOf(Decimal)
+    expect(result.toNumber()).toBe(70)
+  })
+
+  it('factura de CREDITO puro (saldoPend === total): TODO se aplica a la deuda, disponible=0 (comportamiento pre-existente de TOTAL preservado)', () => {
+    const result = calcularMontoDisponibleRefund(100, 100)
+    expect(result.toNumber()).toBe(0)
+  })
+
+  it('factura de CONTADO puro (saldoPend=0): nada se aplica a deuda, TODO el monto queda disponible para refund', () => {
+    const result = calcularMontoDisponibleRefund(100, 0)
+    expect(result.toNumber()).toBe(100)
+  })
+
+  it('CLAMP: saldoPend > total (edge case defensivo, no deberia ocurrir por invariante de ventas) -> aplicado se topea a total, disponible=0, nunca negativo', () => {
+    const result = calcularMontoDisponibleRefund(100, 150)
+    expect(result.toNumber()).toBe(0)
+  })
+
+  it('PARCIAL desde lineas seleccionadas: totalUsdNc es la SUMA de las lineas elegidas (11.6), no el total de la factura completa (100)', () => {
+    // Factura total=100, saldoPend=50 (ABONADA) — pero el caller ya redujo
+    // totalUsdNc a lo seleccionado (Botox 10 USD + 16% IVA = 11.6), NUNCA el
+    // factura.total_usd completo.
+    const result = calcularMontoDisponibleRefund('11.6', '50')
+    // aplicado = min(50, 11.6) = 11.6 -> disponible = max(0, 11.6-11.6) = 0
+    expect(result.toNumber()).toBe(0)
+  })
+
+  it('PARCIAL con precision decimal.js real (evita fuga de float): total=11.6, saldoPend=5 -> aplicado=5, disponible=6.6 exacto', () => {
+    const result = calcularMontoDisponibleRefund('11.6', '5')
+    expect(result.toFixed(1)).toBe('6.6')
+  })
+
+  it('edge: totalUsdNc=0 (ninguna linea seleccionada aun) -> disponible=0, sin importar saldoPend', () => {
+    expect(calcularMontoDisponibleRefund(0, 50).toNumber()).toBe(0)
+  })
+
+  it('acepta string y number indistintamente (DecimalInput) sin perder precision', () => {
+    const conString = calcularMontoDisponibleRefund('100.00000000', '30.00000000')
+    const conNumber = calcularMontoDisponibleRefund(100, 30)
+    expect(conString.toNumber()).toBe(conNumber.toNumber())
+  })
+})
+
 // ─── filaFacturaAtenuada (Slice E.5, notas-credito-ruta-administrativa — QA feedback) ────────
 
 describe('filaFacturaAtenuada (Slice E.5: fila 100% reversada se atenua en la tabla de Facturas emitidas)', () => {
@@ -511,5 +596,203 @@ describe('filaFacturaAtenuada (Slice E.5: fila 100% reversada se atenua en la ta
 
   it('tiene_reverso_total ausente (undefined) -> false, nunca revienta', () => {
     expect(filaFacturaAtenuada({})).toBe(false)
+  })
+})
+
+// ─── resolverModalidadDesdeOrigen (Slice 3 unificacion-modal-nc, D2 — copia verbatim de crear-ncr-modal.tsx:230) ────────
+
+describe('resolverModalidadDesdeOrigen (Design §D2: mapeo Origen del reverso -> modalidad, camino NO-refund)', () => {
+  it('CREDITO_A_FAVOR -> SALDO_FAVOR', () => {
+    expect(resolverModalidadDesdeOrigen('CREDITO_A_FAVOR')).toBe('SALDO_FAVOR')
+  })
+
+  it('DEVOLVER_DINERO -> AJUSTE_CXC (fallback verbatim — riesgo preservado a proposito, ver Nota resuelta en tasks.md)', () => {
+    expect(resolverModalidadDesdeOrigen('DEVOLVER_DINERO')).toBe('AJUSTE_CXC')
+  })
+})
+
+// ─── resolverVistaReversoNc (nc-factura-credito-ux, Design §Interfaces) ────────
+//
+// Reusa `calcularMontoDisponibleRefund` (no reimplementa la formula) y usa el
+// MISMO umbral 0.01 que el gate del motor (`use-notas-credito.ts:1229`,
+// `remanenteALiquidar.gt('0.01')`) para decidir `soloCancelaDeuda`.
+
+describe('resolverVistaReversoNc (umbral 0.01, reusa calcularMontoDisponibleRefund)', () => {
+  it('100% contado (saldoPend=0): desglose completo, nada aplicado a deuda, todo disponible', () => {
+    const vista = resolverVistaReversoNc(80, 0)
+    expect(vista.totalUsdNc).toBeInstanceOf(Decimal)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(0)
+    expect(vista.montoDisponible.toNumber()).toBe(80)
+    expect(vista.soloCancelaDeuda).toBe(false)
+  })
+
+  it('100% credito (saldoPend === total): solo-confirmacion, todo aplicado a deuda, nada disponible', () => {
+    const vista = resolverVistaReversoNc(80, 80)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(80)
+    expect(vista.montoDisponible.toNumber()).toBe(0)
+    expect(vista.soloCancelaDeuda).toBe(true)
+  })
+
+  it('mixta (total=100, saldoPend=40): desglose, 40 aplicado a deuda, 60 disponible', () => {
+    const vista = resolverVistaReversoNc(100, 40)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(40)
+    expect(vista.montoDisponible.toNumber()).toBe(60)
+    expect(vista.soloCancelaDeuda).toBe(false)
+  })
+
+  it('PARCIAL con lineas <= saldo pendiente (30/50): solo-confirmacion, sin remanente', () => {
+    const vista = resolverVistaReversoNc(30, 50)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(30)
+    expect(vista.montoDisponible.toNumber()).toBe(0)
+    expect(vista.soloCancelaDeuda).toBe(true)
+  })
+
+  it('PARCIAL con lineas > saldo pendiente (50/30): desglose, 30 aplicado, 20 disponible', () => {
+    const vista = resolverVistaReversoNc(50, 30)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(30)
+    expect(vista.montoDisponible.toNumber()).toBe(20)
+    expect(vista.soloCancelaDeuda).toBe(false)
+  })
+
+  it('boundary: montoDisponible exactamente 0.01 -> soloCancelaDeuda=true (lte)', () => {
+    const vista = resolverVistaReversoNc('100.01', '100')
+    expect(vista.montoDisponible.toFixed(2)).toBe('0.01')
+    expect(vista.soloCancelaDeuda).toBe(true)
+  })
+
+  it('boundary: montoDisponible exactamente 0.02 -> soloCancelaDeuda=false (por encima del umbral)', () => {
+    const vista = resolverVistaReversoNc('100.02', '100')
+    expect(vista.montoDisponible.toFixed(2)).toBe('0.02')
+    expect(vista.soloCancelaDeuda).toBe(false)
+  })
+})
+
+// ─── calcularReembolsoTopadoAlPago / prorratearMontoPagado
+// (nc-reembolso-real-reverso-gasto, Design §Interfaces) ────────
+//
+// El reembolso disponible NUNCA puede exceder lo REALMENTE pagado por el
+// cliente — factura Bs500 pagada con Bs490 (Bs10 absorbidos por el negocio
+// via gasto de absorcion) solo puede reembolsar hasta Bs490.
+
+describe('calcularReembolsoTopadoAlPago (Design §Interfaces: min(max(0,remanente), max(0,montoPagadoRealUsd)))', () => {
+  it('Scenario "NC total con absorcion": factura pagada 490 de 500 (10 absorbidos) -> tope aplica en 490, no 500', () => {
+    const result = calcularReembolsoTopadoAlPago(500, 490)
+    expect(result).toBeInstanceOf(Decimal)
+    expect(result.toNumber()).toBe(490)
+  })
+
+  it('Scenario "Factura sin absorcion — sin regresion": pagado >= remanente -> el remanente NO se topa (identico al actual)', () => {
+    const result = calcularReembolsoTopadoAlPago(500, 500)
+    expect(result.toNumber()).toBe(500)
+  })
+
+  it('pagado > remanente (sobra pago real de sobra) -> tope sigue siendo el remanente, nunca lo excede', () => {
+    const result = calcularReembolsoTopadoAlPago(300, 500)
+    expect(result.toNumber()).toBe(300)
+  })
+
+  it('edge: montoPagadoRealUsd=0 (factura nunca cobrada) -> tope en 0, sin importar el remanente', () => {
+    const result = calcularReembolsoTopadoAlPago(500, 0)
+    expect(result.toNumber()).toBe(0)
+  })
+
+  it('precision decimal.js real: remanente=13.20, pagado=10.5 -> tope=10.5 exacto (nunca float)', () => {
+    const result = calcularReembolsoTopadoAlPago('13.20', '10.5')
+    expect(result.toFixed(2)).toBe('10.50')
+  })
+
+  it('acepta string y number indistintamente (DecimalInput)', () => {
+    const conString = calcularReembolsoTopadoAlPago('500.00000000', '490.00000000')
+    const conNumber = calcularReembolsoTopadoAlPago(500, 490)
+    expect(conString.toNumber()).toBe(conNumber.toNumber())
+  })
+})
+
+describe('prorratearMontoPagado (Design §Interfaces: montoPagadoRealUsd * (totalUsdNc/totalFacturaUsd), guard total<=0)', () => {
+  it('Scenario "NC parcial prorratea el pago real": pago real 490 de factura 500, NC parcial de 250 (mitad) -> prorrateado = 245', () => {
+    const result = prorratearMontoPagado(490, 250, 500)
+    expect(result).toBeInstanceOf(Decimal)
+    expect(result.toNumber()).toBe(245)
+  })
+
+  it('TOTAL (ratio=1): totalUsdNc === totalFacturaUsd -> retorna montoPagadoRealUsd sin cambios', () => {
+    const result = prorratearMontoPagado(490, 500, 500)
+    expect(result.toNumber()).toBe(490)
+  })
+
+  it('guard total<=0: totalFacturaUsd=0 -> retorna montoPagadoRealUsd SIN aplicar ratio (evita division por cero)', () => {
+    const result = prorratearMontoPagado(490, 250, 0)
+    expect(result.toNumber()).toBe(490)
+  })
+
+  it('guard total<=0: totalFacturaUsd negativo (defensivo) -> retorna montoPagadoRealUsd sin ratio', () => {
+    const result = prorratearMontoPagado(490, 250, -10)
+    expect(result.toNumber()).toBe(490)
+  })
+
+  it('precision decimal.js real: pago real 11.6, NC parcial 5.8 de factura 23.2 -> ratio 0.25, prorrateado=2.9 exacto', () => {
+    const result = prorratearMontoPagado('11.6', '5.8', '23.2')
+    expect(result.toFixed(2)).toBe('2.90')
+  })
+})
+
+// ─── sumarPagosRealesUsd (nc-reembolso-real-reverso-gasto, Design §Interfaces
+// — SOLO UI, usePagosFactura trae filas no filtradas) ────────
+
+describe('sumarPagosRealesUsd (Design §Interfaces: suma monto_usd donde !is_reversed)', () => {
+  it('suma los monto_usd de pagos no reversados', () => {
+    const result = sumarPagosRealesUsd([
+      { monto_usd: '10.50', is_reversed: 0 },
+      { monto_usd: '5.25', is_reversed: 0 },
+    ])
+    expect(result).toBeInstanceOf(Decimal)
+    expect(result.toNumber()).toBe(15.75)
+  })
+
+  it('ignora filas reversadas (is_reversed=1)', () => {
+    const result = sumarPagosRealesUsd([
+      { monto_usd: '10.50', is_reversed: 0 },
+      { monto_usd: '5.25', is_reversed: 1 },
+    ])
+    expect(result.toNumber()).toBe(10.5)
+  })
+
+  it('acepta is_reversed boolean (true) ademas de number (1)', () => {
+    const result = sumarPagosRealesUsd([{ monto_usd: '10.50', is_reversed: true }])
+    expect(result.toNumber()).toBe(0)
+  })
+
+  it('arreglo vacio -> 0', () => {
+    expect(sumarPagosRealesUsd([]).toNumber()).toBe(0)
+  })
+})
+
+// ─── resolverVistaReversoNc — 3er param montoPagadoRealUsd
+// (nc-reembolso-real-reverso-gasto, Design §Interfaces) ────────
+
+describe('resolverVistaReversoNc — 3er param montoPagadoRealUsd (tope de reembolso al pago real, UI)', () => {
+  it('sin el 3er param: comportamiento identico al actual (sin regresion)', () => {
+    const vista = resolverVistaReversoNc(100, 40)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(40)
+    expect(vista.montoDisponible.toNumber()).toBe(60)
+    expect(vista.soloCancelaDeuda).toBe(false)
+  })
+
+  it('con el 3er param: montoDisponible se topea al pago real (factura Bs500 pagada con Bs490 de absorcion)', () => {
+    const vista = resolverVistaReversoNc(500, 0, 490)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(0)
+    expect(vista.montoDisponible.toNumber()).toBe(490)
+    expect(vista.soloCancelaDeuda).toBe(false)
+  })
+
+  it('montoAplicadoADeuda se computa ANTES del tope (Step A puro) — no cambia aunque el pago real sea menor', () => {
+    const vista = resolverVistaReversoNc(100, 40, 10)
+    expect(vista.montoAplicadoADeuda.toNumber()).toBe(40)
+    expect(vista.montoDisponible.toNumber()).toBe(10)
+  })
+
+  it('pago real >= remanente (sin absorcion): montoDisponible NO se topa (identico a sin el param)', () => {
+    const vista = resolverVistaReversoNc(500, 0, 500)
+    expect(vista.montoDisponible.toNumber()).toBe(500)
   })
 })

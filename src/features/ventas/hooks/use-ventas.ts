@@ -428,6 +428,63 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     const totalProductosNetUsd = totalUsd.minus(totalCargosUsd)
     const totalBs = usdToBs(totalProductosNetUsd, tasa).plus(totalCargosNativosBs)
 
+    // Cierre SAF-aware del checkout (pos-aplicar-saf-checkout): se calcula ANTES del
+    // INSERT de `ventas` para escribir `saldo_pend_usd`/`tipo` finales en una sola
+    // escritura (venta-saldo-pend-single-write-p0001) — un reintento de batch de
+    // PowerSync que reenvie el mismo INSERT nunca dispara `trg_venta_protect` (P0001)
+    // porque NEW.saldo_pend_usd siempre es igual a OLD.saldo_pend_usd. Las lecturas
+    // que necesita (`pagos` param, `movimientos_cuenta` del cliente) son ajenas a la
+    // venta que se esta creando, por lo que adelantarlas es seguro.
+    const abonado_BsNativo = pagos.filter((p) => p.moneda === 'BS').reduce((s, p) => s.plus(p.monto), new Decimal(0))
+    const abonado_UsdNativo = pagos.filter((p) => p.moneda === 'USD').reduce((s, p) => s.plus(p.monto), new Decimal(0))
+
+    let creditoDisponibleUsd = new Decimal(0)
+    if (safEntry && safEntry.montoUsd > 0.001) {
+      // Fuente del gate: modelo derivado SUM(SAFC)-SUM(SAF), NO clientes.saldo_actual
+      // neteado (que puede estar inflado por deuda de facturas pendientes no
+      // relacionadas) — spec req.2 scn.1.
+      const creditoRes = await tx.execute(
+        `SELECT
+           COALESCE(SUM(CASE WHEN tipo = 'SAFC' THEN CAST(monto AS REAL) ELSE 0 END), 0) as creado,
+           COALESCE(SUM(CASE WHEN tipo = 'SAF'  THEN CAST(monto AS REAL) ELSE 0 END), 0) as consumido
+         FROM movimientos_cuenta WHERE cliente_id = ? AND empresa_id = ?`,
+        [safEntry.clienteId, empresa_id]
+      )
+      const creditoRow = creditoRes.rows?.item(0) as { creado: number; consumido: number } | undefined
+      creditoDisponibleUsd = calcularCreditoDisponible(creditoRow?.creado ?? 0, creditoRow?.consumido ?? 0)
+    }
+
+    const cierre = calcularCierreVentaConSaf({
+      totalUsd,
+      tasa,
+      abonadoBsNativo: abonado_BsNativo,
+      abonadoUsdNativo: abonado_UsdNativo,
+      safSolicitadoUsd: safEntry?.montoUsd ?? 0,
+      creditoDisponibleUsd,
+      respetarEleccionCredito: discrepancy?.mode === 'CREDITO',
+    })
+    // Defensa en profundidad: el `tipoDetectado` del frontend ya es SAF-aware y
+    // normalmente coincide; solo se corrige si el backend discrepa. Excluir
+    // ABSORBER/DIFERENCIAL_FALTANTE: `calcularCierreVentaConSaf` no conoce
+    // discrepancy.mode, por lo que puede devolver 'CREDITO' para un faltante
+    // que el cajero ya absorbio (venta liquidada, sin CxC) — sobreescribir
+    // `tipo` en ese caso corrompe la clasificacion contado/credito aunque
+    // saldo_pend_usd quede en 0 (CRITICAL, review adversarial
+    // pos-aplicar-saf-checkout).
+    const tipoFinal =
+      discrepancy?.mode === 'ABSORBER' || discrepancy?.mode === 'DIFERENCIAL_FALTANTE'
+        ? tipo
+        : cierre.tipo
+    // ABSORBER/DIFERENCIAL_FALTANTE: el negocio absorbe o el diferencial cubre el
+    // faltante en su totalidad — saldo_pend_usd final SIEMPRE es 0 para estos 2
+    // modos, sin depender de `cierre.saldoPendUsd` (que ignora discrepancy.mode).
+    // Escribir esto directo en el INSERT cierra el invariante de escritura unica
+    // tambien para estos modos (antes quedaban con un UPDATE forzado posterior).
+    const saldoPendFinal =
+      discrepancy?.mode === 'ABSORBER' || discrepancy?.mode === 'DIFERENCIAL_FALTANTE'
+        ? new Decimal(0)
+        : cierre.saldoPendUsd
+
     // 2. Generar nro_factura con prefijo por caja (C01-000001).
     //    Cada caja tiene su propio contador acumulado a traves de todas sus sesiones.
     //    Esto elimina colisiones entre cajas en escenarios multi-caja offline.
@@ -497,8 +554,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         toStorageString(totalBs),
         toStorageString(descuentoUsdFinal),
         toStorageString(descuentoBsFinal),
-        toStorageString(totalUsd),
-        tipo,
+        toStorageString(saldoPendFinal),
+        tipoFinal,
         usuario_id,
         now,
         empresa_id,
@@ -875,63 +932,16 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     // ya subia clientes.saldo_actual ANTES de que el ex-paso 7d (mas abajo)
     // intentara consumir el SAF, gateado sobre saldo_actual ya inflado — por
     // eso el consumo de SAF fallaba silenciosamente en casi todos los casos de
-    // cobertura parcial. Ahora: se lee el credito disponible (modelo derivado
-    // SUM(SAFC)-SUM(SAF)) y se calcula saldoPend/tipo/SAF-aplicado (capeado)
-    // ANTES de escribir el FAC, y el consumo de SAF se escribe en el mismo
-    // bloque, en la misma writeTransaction — sin estado intermedio SAF-unaware
-    // committeado. Ver design.md Decision 1/2/3 (pos-aplicar-saf-checkout).
-    const abonado_BsNativo = pagos.filter((p) => p.moneda === 'BS').reduce((s, p) => s.plus(p.monto), new Decimal(0))
-    const abonado_UsdNativo = pagos.filter((p) => p.moneda === 'USD').reduce((s, p) => s.plus(p.monto), new Decimal(0))
-
-    let creditoDisponibleUsd = new Decimal(0)
-    if (safEntry && safEntry.montoUsd > 0.001) {
-      // Fuente del gate: modelo derivado SUM(SAFC)-SUM(SAF), NO clientes.saldo_actual
-      // neteado (que puede estar inflado por deuda de facturas pendientes no
-      // relacionadas) — spec req.2 scn.1.
-      const creditoRes = await tx.execute(
-        `SELECT
-           COALESCE(SUM(CASE WHEN tipo = 'SAFC' THEN CAST(monto AS REAL) ELSE 0 END), 0) as creado,
-           COALESCE(SUM(CASE WHEN tipo = 'SAF'  THEN CAST(monto AS REAL) ELSE 0 END), 0) as consumido
-         FROM movimientos_cuenta WHERE cliente_id = ? AND empresa_id = ?`,
-        [safEntry.clienteId, empresa_id]
-      )
-      const creditoRow = creditoRes.rows?.item(0) as { creado: number; consumido: number } | undefined
-      creditoDisponibleUsd = calcularCreditoDisponible(creditoRow?.creado ?? 0, creditoRow?.consumido ?? 0)
-    }
-
-    const cierre = calcularCierreVentaConSaf({
-      totalUsd,
-      tasa,
-      abonadoBsNativo: abonado_BsNativo,
-      abonadoUsdNativo: abonado_UsdNativo,
-      safSolicitadoUsd: safEntry?.montoUsd ?? 0,
-      creditoDisponibleUsd,
-      respetarEleccionCredito: discrepancy?.mode === 'CREDITO',
-    })
+    // cobertura parcial. El `cierre` (credito disponible + saldoPend/tipo/SAF
+    // aplicado, ya capeado) se calcula ANTES de escribir el FAC — y ahora,
+    // ademas, antes del INSERT de `ventas` mismo (venta-saldo-pend-single-write-p0001,
+    // ver arriba) — y el consumo de SAF se escribe en el mismo bloque, en la
+    // misma writeTransaction — sin estado intermedio SAF-unaware committeado.
+    // Ver design.md Decision 1/2/3 (pos-aplicar-saf-checkout).
     const saldoPend = cierre.saldoPendUsd
     const safAplicadoUsd = cierre.safAplicadoUsd
     safAplicadoUsdResult = safAplicadoUsd.gt(0) ? safAplicadoUsd.toNumber() : undefined
     safFueCapeadoResult = safEntry ? cierre.safFueCapeado : undefined
-
-    await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-      toStorageString(saldoPend),
-      ventaId,
-    ])
-    // Defensa en profundidad: el `tipoDetectado` del frontend ya es SAF-aware y
-    // normalmente coincide; solo se corrige si el backend discrepa. Excluir
-    // ABSORBER/DIFERENCIAL_FALTANTE: `calcularCierreVentaConSaf` no conoce
-    // discrepancy.mode, por lo que puede devolver 'CREDITO' para un faltante
-    // que el cajero ya absorbio (venta liquidada, sin CxC) — sobreescribir
-    // `tipo` en ese caso corrompe la clasificacion contado/credito aunque
-    // saldo_pend_usd quede en 0 (CRITICAL, review adversarial
-    // pos-aplicar-saf-checkout).
-    if (
-      cierre.tipo !== tipo &&
-      discrepancy?.mode !== 'ABSORBER' &&
-      discrepancy?.mode !== 'DIFERENCIAL_FALTANTE'
-    ) {
-      await tx.execute('UPDATE ventas SET tipo = ? WHERE id = ?', [cierre.tipo, ventaId])
-    }
 
     // 7. Si CREDITO y deuda > 0: crear movimiento de cuenta con el remanente ya
     //    neto de SAF (gracias a calcularCierreVentaConSaf).
@@ -1161,13 +1171,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         }
 
         case 'ABSORBER': {
-          // Business absorbs shortfall — always zero out balance first, then record expense
-          // saldo_pend_usd = 0 is unconditional: supervisor already authorized
-          await tx.execute(
-            'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
-            ['0.00', ventaId]
-          )
-          try {
+          // Business absorbs shortfall — saldo_pend_usd = 0 already written in the
+          // INSERT (saldoPendFinal, venta-saldo-pend-single-write-p0001). No UPDATE
+          // needed here anymore — supervisor already authorized.
+          {
             // UUID-based: unique per venta, immune to multi-device COUNT collisions
             const nroGastoAbs = `POS-ABSORB-${ventaId.slice(0, 8).toUpperCase()}`
             // Intentar cuenta gastos_generales primero; fallback a PERDIDA_DIFERENCIAL_CAMBIARIO
@@ -1233,20 +1240,15 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 obsAbs, now, now, usuario_id,
               ]
             )
-          } catch {
-            // gastos insert optional — doesn't block the sale
-            console.warn('⚠️ ABSORBER: fallo al registrar gasto de absorcion para venta', ventaId)
           }
           break
         }
 
         case 'DIFERENCIAL_FALTANTE': {
-          // Auto-absorbed small denomination shortfall — always zero out balance first, then record expense
-          await tx.execute(
-            'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
-            ['0.00', ventaId]
-          )
-          try {
+          // Auto-absorbed small denomination shortfall — saldo_pend_usd = 0 already
+          // written in the INSERT (saldoPendFinal, venta-saldo-pend-single-write-p0001).
+          // No UPDATE needed here anymore.
+          {
             // UUID-based: unique per venta, immune to multi-device COUNT collisions
             const nroGastoDiff = `POS-DIFF-${ventaId.slice(0, 8).toUpperCase()}`
             const cuentaDiffRes = await tx.execute(
@@ -1308,9 +1310,6 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 obsDiff, now, now, usuario_id,
               ]
             )
-          } catch {
-            // gastos insert optional — doesn't block the sale
-            console.warn('⚠️ DIFERENCIAL_FALTANTE: fallo al registrar gasto diferencial para venta', ventaId)
           }
           break
         }

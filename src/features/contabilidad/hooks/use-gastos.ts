@@ -681,57 +681,126 @@ export async function insertarGastoDeduccionEnTx(
   return { gastoId }
 }
 
+export interface GastoAbsorcionFactura {
+  id: string
+  monto_usd: string
+  descripcion: string
+  status: string
+}
+
+/**
+ * Gasto de absorcion de diferencial (`ABSORCION_DIFERENCIAL_POS`/
+ * `DIFERENCIAL_CAMBIARIO_FALTANTE`) asociado a una factura, si existe
+ * (nc-reembolso-real-reverso-gasto, Slice B, Design §Interfaces) — alimenta
+ * el desglose "Pagado/Asumido por el negocio" de `FacturaDetallePanel` en
+ * los 3 consumidores (2 modales de NC + Consulta de factura). MISMO
+ * predicado `nro_factura + descripcion IN (...)` que Step C del motor
+ * (`crearNotaCredito`), SIN filtro `status` a proposito: una factura ya
+ * reversada puede tener el gasto en `ANULADO` y el desglose sigue siendo
+ * historicamente correcto (mostro lo que se asumio en su momento).
+ */
+export function useGastoAbsorcionFactura(
+  nroFactura: string | null,
+  empresaId: string | null
+): { gasto: GastoAbsorcionFactura | null; isLoading: boolean } {
+  const { data, isLoading } = useQuery(
+    nroFactura && empresaId
+      ? `SELECT id, monto_usd, descripcion, status
+           FROM gastos
+          WHERE empresa_id = ?
+            AND nro_factura = ?
+            AND descripcion IN ('ABSORCION_DIFERENCIAL_POS', 'DIFERENCIAL_CAMBIARIO_FALTANTE')
+          LIMIT 1`
+      : '',
+    nroFactura && empresaId ? [empresaId, nroFactura] : []
+  )
+  const rows = (data ?? []) as GastoAbsorcionFactura[]
+  const gasto: GastoAbsorcionFactura | null = rows[0] ?? null
+  return { gasto, isLoading }
+}
+
+export interface ReversarGastoParams {
+  gastoId: string
+  usuarioId?: string
+}
+
+/**
+ * Nucleo del reverso de un gasto — extraido VERBATIM del cuerpo de
+ * `anularGasto` (nc-reembolso-real-reverso-gasto, Design §Architecture
+ * Decisions: mismo split que `reversarDiferencialEnTx`/
+ * `registrarReversoDiferencialCxC` en use-cxc.ts). Corre DENTRO de una `tx`
+ * ya abierta por el llamador (Step C de `crearNotaCredito`, SIN try/catch en
+ * ese llamador — un fallo aqui debe abortar toda la transaccion padre) en
+ * vez de abrir su propia `writeTransaction` (PowerSync no permite anidarlas).
+ * Valida existencia/no-ANULADO (throw si no) y marca `status='ANULADO'` —
+ * el registro es inmutable: solo se puede anular, nunca editar ni borrar.
+ * Los contra-asientos contables SI siguen siendo best-effort (mismo
+ * comportamiento que antes de esta extraccion): un fallo de
+ * `reversarAsientos` no bloquea el reverso del gasto.
+ */
+export async function reversarGastoEnTx(
+  tx: Transaction,
+  p: ReversarGastoParams,
+  now: string
+): Promise<void> {
+  const { gastoId, usuarioId } = p
+
+  // Verificar que el gasto existe y no esta ya anulado
+  const gastoResult = await tx.execute(
+    'SELECT status, empresa_id FROM gastos WHERE id = ?',
+    [gastoId]
+  )
+  if (!gastoResult.rows || gastoResult.rows.length === 0) {
+    throw new Error('Gasto no encontrado')
+  }
+  const gasto = gastoResult.rows.item(0) as { status: string; empresa_id: string }
+  if (gasto.status === 'ANULADO') {
+    throw new Error('Este gasto ya fue anulado')
+  }
+
+  await tx.execute(
+    "UPDATE gastos SET status = 'ANULADO', updated_at = ? WHERE id = ?",
+    [now, gastoId]
+  )
+
+  // Reversar asientos contables del gasto (crea contra-asientos, no solo marca ANULADO)
+  if (usuarioId) {
+    try {
+      const asientosResult = await tx.execute(
+        `SELECT id FROM libro_contable WHERE empresa_id = ? AND doc_origen_id = ? AND modulo_origen = 'GASTO' AND estado = 'PENDIENTE'`,
+        [gasto.empresa_id, gastoId]
+      )
+      const asientosIds: string[] = []
+      if (asientosResult.rows) {
+        for (let i = 0; i < asientosResult.rows.length; i++) {
+          asientosIds.push((asientosResult.rows.item(i) as { id: string }).id)
+        }
+      }
+      if (asientosIds.length > 0) {
+        await reversarAsientos(tx, {
+          empresaId: gasto.empresa_id,
+          asientosIds,
+          usuarioId,
+        })
+      }
+    } catch {
+      // No bloquear la anulacion si falla la contabilidad
+    }
+  }
+}
+
 /**
  * Anula un gasto cambiando su status a ANULADO.
  * El registro es inmutable: solo se puede anular, no editar ni eliminar.
  * Genera asientos de reverso en el libro contable.
+ * Wrapper standalone: abre su propia `writeTransaction` y delega el nucleo
+ * en `reversarGastoEnTx` — mismo patron que
+ * `registrarReversoDiferencialCxC`/`reversarDiferencialEnTx` en use-cxc.ts.
  */
 export async function anularGasto(id: string, usuarioId?: string): Promise<void> {
   await db.writeTransaction(async (tx) => {
     const now = localNow()
-
-    // Verificar que el gasto existe y no esta ya anulado
-    const gastoResult = await tx.execute(
-      'SELECT status, empresa_id FROM gastos WHERE id = ?',
-      [id]
-    )
-    if (!gastoResult.rows || gastoResult.rows.length === 0) {
-      throw new Error('Gasto no encontrado')
-    }
-    const gasto = gastoResult.rows.item(0) as { status: string; empresa_id: string }
-    if (gasto.status === 'ANULADO') {
-      throw new Error('Este gasto ya fue anulado')
-    }
-
-    await tx.execute(
-      "UPDATE gastos SET status = 'ANULADO', updated_at = ? WHERE id = ?",
-      [now, id]
-    )
-
-    // Reversar asientos contables del gasto (crea contra-asientos, no solo marca ANULADO)
-    if (usuarioId) {
-      try {
-        const asientosResult = await tx.execute(
-          `SELECT id FROM libro_contable WHERE empresa_id = ? AND doc_origen_id = ? AND modulo_origen = 'GASTO' AND estado = 'PENDIENTE'`,
-          [gasto.empresa_id, id]
-        )
-        const asientosIds: string[] = []
-        if (asientosResult.rows) {
-          for (let i = 0; i < asientosResult.rows.length; i++) {
-            asientosIds.push((asientosResult.rows.item(i) as { id: string }).id)
-          }
-        }
-        if (asientosIds.length > 0) {
-          await reversarAsientos(tx, {
-            empresaId: gasto.empresa_id,
-            asientosIds,
-            usuarioId,
-          })
-        }
-      } catch {
-        // No bloquear la anulacion si falla la contabilidad
-      }
-    }
+    await reversarGastoEnTx(tx, { gastoId: id, usuarioId }, now)
   })
 }
 

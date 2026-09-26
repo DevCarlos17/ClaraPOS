@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { CrearNcrModal } from '../crear-ncr-modal'
 import { crearNotaCredito, useReversosFactura, type FacturaParaAnular } from '../../hooks/use-notas-credito'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
+import { useGastoAbsorcionFactura } from '@/features/contabilidad/hooks/use-gastos'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useDepositosVentaActivos, type Deposito } from '@/features/inventario/hooks/use-depositos'
@@ -40,14 +41,28 @@ vi.mock('../refund-tesoreria-form', () => ({
   RefundTesoreriaForm: ({
     onConfirm,
     motivoSlot,
+    montoDisponibleUsd,
+    disabledExterno,
   }: {
     onConfirm: (lineas: { destino: string; cuentaId: string; montoEnMonedaCuenta: string; referencia?: string }[]) => void
     motivoSlot?: React.ReactNode
+    // PR3 (nc-parcial-devolver-dinero): expuestos como data-attributes,
+    // MISMO criterio ya usado en `nota-credito-pos-modal.test.tsx` (PR2) —
+    // asertar que el monto disponible se recalcula para PARCIAL (suma de
+    // lineas seleccionadas, nunca `factura.total_usd`) y que `disabledExterno`
+    // bloquea "Confirmar" mientras `SeleccionLineasNc` no tiene lineas validas.
+    montoDisponibleUsd?: number
+    disabledExterno?: boolean
   }) => (
-    <div data-testid="mock-refund-tesoreria-form">
+    <div
+      data-testid="mock-refund-tesoreria-form"
+      data-monto-disponible-usd={montoDisponibleUsd}
+      data-disabled-externo={String(disabledExterno)}
+    >
       {motivoSlot}
       <button
         type="button"
+        disabled={disabledExterno}
         onClick={() =>
           onConfirm([
             { destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00', referencia: 'TRF-999' },
@@ -68,6 +83,7 @@ vi.mock('@/features/cxc/hooks/use-cxc', () => ({
   useDetalleFactura: vi.fn(),
   usePagosFactura: vi.fn(),
 }))
+vi.mock('@/features/contabilidad/hooks/use-gastos', () => ({ useGastoAbsorcionFactura: vi.fn() }))
 vi.mock('@/features/configuracion/hooks/use-company', () => ({ useCompany: vi.fn() }))
 vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
 vi.mock('@/features/inventario/hooks/use-depositos', () => ({ useDepositosVentaActivos: vi.fn() }))
@@ -77,6 +93,7 @@ const mockedCrearNotaCredito = vi.mocked(crearNotaCredito)
 const mockedUseReversosFactura = vi.mocked(useReversosFactura)
 const mockedUseDetalleFactura = vi.mocked(useDetalleFactura)
 const mockedUsePagosFactura = vi.mocked(usePagosFactura)
+const mockedUseGastoAbsorcionFactura = vi.mocked(useGastoAbsorcionFactura)
 const mockedUseCompany = vi.mocked(useCompany)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 const mockedUseDepositosVentaActivos = vi.mocked(useDepositosVentaActivos)
@@ -128,6 +145,7 @@ function detalleUnaLinea() {
 function setup() {
   mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
   mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+  mockedUseGastoAbsorcionFactura.mockReturnValue({ gasto: null, isLoading: false })
   mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
   mockedUseCompany.mockReturnValue({
     company: { id: 'emp-1', nombre: 'ClaraPOS Estetica C.A.', rif: 'J-12345678-9', direccion: null } as never,
@@ -311,6 +329,59 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeEnabled()
   })
 
+  it('nc-factura-credito-ux: factura 100% credito (saldo_pend_usd === total_usd) — confirmar TOTAL SIN elegir origen invoca crearNotaCredito con modalidad SALDO_FAVOR (soloCancelaDeuda)', async () => {
+    const user = userEvent.setup()
+    render(
+      <CrearNcrModal
+        isOpen
+        onClose={() => {}}
+        factura={baseFactura({ total_usd: '80.00', saldo_pend_usd: '80.00' })}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+
+    // Sin remanente: el selector NO ofrece "Devolver dinero"/"Credito a favor".
+    expect(screen.queryByRole('button', { name: /Devolver dinero/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Credito a favor/i })).not.toBeInTheDocument()
+    expect(
+      screen.getByText('Esta nota de crédito cancela $80.00 de la deuda pendiente de la factura.')
+    ).toBeInTheDocument()
+
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
+      venta_id: 'venta-1',
+      modalidad: 'SALDO_FAVOR',
+      tipo: 'TOTAL',
+    })
+  })
+
+  it('nc-factura-credito-ux: factura mixta (con remanente) — "Confirmar Anulacion" NO aparece hasta elegir origen (regresion)', async () => {
+    const user = userEvent.setup()
+    render(
+      <CrearNcrModal
+        isOpen
+        onClose={() => {}}
+        factura={baseFactura({ total_usd: '100.00', saldo_pend_usd: '40.00' })}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+
+    expect(
+      screen.getByText('De $100.00: $40.00 cancela deuda pendiente, $60.00 disponible')
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
+
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeEnabled()
+  })
+
   describe('Scenario "Sin preseleccion" (UX rework, nc-refund-tesoreria)', () => {
     it('Total/Parcial: ningun boton arranca presionado', () => {
       render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
@@ -334,15 +405,20 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
       expect(screen.queryByTestId('mock-refund-tesoreria-form')).not.toBeInTheDocument()
     })
 
-    it('eligiendo solo "Parcial" sin tocar "Origen del reverso", SeleccionLineasNc NO se muestra todavia (evita computar una modalidad nunca elegida)', async () => {
+    it('QA fix (unificacion-modal-nc): eligiendo solo "Parcial" sin tocar "Origen del reverso", SeleccionLineasNc SI se muestra (Total/Parcial es decision de inventario, independiente del vuelto) pero el boton Confirmar permanece deshabilitado hasta elegir el origen (origenPendiente)', async () => {
       const user = userEvent.setup()
       mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
       render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
       await user.click(screen.getByRole('button', { name: 'Parcial' }))
 
-      expect(screen.queryByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeInTheDocument()
-      expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
+      expect(screen.getByRole('spinbutton')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeDisabled()
+      expect(screen.getByText(/Debes elegir el origen del reverso antes de confirmar/i)).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
+
+      expect(screen.queryByText(/Debes elegir el origen del reverso antes de confirmar/i)).not.toBeInTheDocument()
     })
   })
 
@@ -424,6 +500,21 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     ).toBeTruthy()
   })
 
+  it('Scenario "Articulos a devolver" (Slice 2, D4 de unificacion-modal-nc): con Parcial + un origen elegidos, SeleccionLineasNc se renderiza ANTES que "Origen del reverso" en el DOM', async () => {
+    const user = userEvent.setup()
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
+
+    const seleccionLineas = screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })
+    const origen = screen.getByText(/Origen del reverso/i)
+    expect(
+      seleccionLineas.compareDocumentPosition(origen) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
   it('al confirmar exitosamente, cierra el modal (onClose)', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
@@ -434,5 +525,230 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+  })
+})
+
+/**
+ * PR3 (nc-parcial-devolver-dinero, apply-progress obs #4019): MISMO fix que
+ * PR2 (`nota-credito-pos-modal.tsx`), wireado en el modal administrativo —
+ * `debeUsarRefundTesoreria(origenReverso)` (PR1, capa pura) pasa a ser el
+ * UNICO criterio para renderizar `RefundTesoreriaForm`, sin importar
+ * `tipoNc`. Antes de este fix (obs #4013/#4007), PARCIAL + "Devolver dinero"
+ * caia en el boton interno de `SeleccionLineasNc` ("Confirmar Nota de
+ * Credito Parcial") con `modalidad:'AJUSTE_CXC'` (fallback de
+ * `resolverModalidadDesdeOrigen`), perdiendo el egreso real de tesoreria —
+ * a diferencia de POS, el admin NO tiene sesion de caja ni PIN: `emitirNc`/
+ * `emitirNcRefund` usan `entryPoint:'TRADICIONAL'` sin `sesionCajaActivaId`.
+ */
+describe('CrearNcrModal — PR3 (nc-parcial-devolver-dinero): PARCIAL + Devolver dinero enruta a RefundTesoreriaForm', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setup()
+  })
+
+  it('PARCIAL + "Devolver dinero" renderiza RefundTesoreriaForm en vez del boton "Confirmar Nota de Credito Parcial"', async () => {
+    const user = userEvent.setup()
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.type(screen.getByRole('spinbutton'), '2')
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeInTheDocument()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+  })
+
+  it('el monto disponible pasado a RefundTesoreriaForm refleja la SUMA de las lineas seleccionadas, no el total completo de la factura', async () => {
+    const user = userEvent.setup()
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(
+      <CrearNcrModal
+        isOpen
+        onClose={() => {}}
+        factura={baseFactura({ total_usd: '100.00', saldo_pend_usd: '0.00' })}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.type(screen.getByRole('spinbutton'), '2')
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+
+    // 2 unidades x $10.00 = $20.00 base + 16% IVA ($3.20) = $23.20 — MISMA
+    // formula pura que `previewMontoBsNc` ya usa (cero calculo paralelo).
+    // `total_usd` (100.00) NUNCA debe filtrarse aqui — regresion al bug de
+    // sobre-estimar el disponible.
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-monto-disponible-usd', '23.2')
+  })
+
+  it('sin lineas validas todavia (cantidad 0), "Confirmar reembolso" queda deshabilitado (disabledExterno); tras ingresar una cantidad valida se habilita', async () => {
+    const user = userEvent.setup()
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-disabled-externo', 'true')
+    expect(screen.getByRole('button', { name: /Confirmar reembolso \(mock\)/i })).toBeDisabled()
+
+    await user.type(screen.getByRole('spinbutton'), '2')
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-disabled-externo', 'false')
+    expect(screen.getByRole('button', { name: /Confirmar reembolso \(mock\)/i })).not.toBeDisabled()
+  })
+
+  it('TOTAL + "Devolver dinero" sigue sin disabledExterno (caracterizacion, comportamiento preexistente sin cambios)', async () => {
+    const user = userEvent.setup()
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-disabled-externo', 'false')
+  })
+
+  it('confirmar el reembolso invoca crearNotaCredito con entryPoint TRADICIONAL, modalidad REFUND_TESORERIA, tipo PARCIAL y las lineas seleccionadas (FIX obs #4013/#4007)', async () => {
+    const user = userEvent.setup()
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.type(screen.getByRole('spinbutton'), '2')
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+    await user.click(screen.getByRole('button', { name: /Confirmar reembolso \(mock\)/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
+      venta_id: 'venta-1',
+      entryPoint: 'TRADICIONAL',
+      modalidad: 'REFUND_TESORERIA',
+      tipo: 'PARCIAL',
+      lineas: [{ venta_det_id: 'vd-1', cantidadDevolver: '2.000' }],
+      egresoParams: [
+        { destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00', referencia: 'TRF-999' },
+      ],
+    })
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).not.toHaveProperty('sesionCajaActivaId')
+  })
+
+  it('TOTAL + "Devolver dinero" sigue emitiendo tipo TOTAL sin lineas (caracterizacion, comportamiento preexistente sin cambios)', async () => {
+    const user = userEvent.setup()
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+    await user.click(screen.getByRole('button', { name: /Confirmar reembolso \(mock\)/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
+      entryPoint: 'TRADICIONAL',
+      modalidad: 'REFUND_TESORERIA',
+      tipo: 'TOTAL',
+    })
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).not.toHaveProperty('lineas')
+  })
+})
+
+/** Fixture minima de `PagoFacturaCxc` (nc-reembolso-real-reverso-gasto) — evita el warning de `key` de React en `FacturaDetallePanel` (lee `metodo_cobro_id`). */
+function pagoFacturaFixture(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 'pago-1',
+    venta_id: 'venta-1',
+    metodo_cobro_id: 'metodo-1',
+    moneda_id: 'moneda-usd',
+    tasa: '40',
+    monto: '0',
+    monto_usd: '0',
+    referencia: null,
+    fecha: '2026-01-01T00:00:00Z',
+    created_by: null,
+    is_reversed: 0,
+    reversed_at: null,
+    reversed_by: null,
+    reversed_reason: null,
+    procesado_por_nombre: null,
+    metodo_nombre: 'Efectivo USD',
+    moneda_label: 'USD',
+    ...overrides,
+  } as never
+}
+
+/**
+ * nc-reembolso-real-reverso-gasto (Slice B, Design §Interfaces): el modal
+ * consulta `useGastoAbsorcionFactura` y, cuando existe un gasto de absorcion
+ * para la factura, topa `montoDisponible` (via `resolverVistaReversoNc` +
+ * su 3er param) al pago REAL del cliente en vez del remanente crudo — y
+ * pasa el gasto a `FacturaDetallePanel` para el desglose "Pagado/Asumido".
+ * Sin gasto (default de `setup()`, `gasto: null`), CERO cambio de
+ * comportamiento (ver el resto de la suite, todos con `gasto: null`).
+ */
+describe('CrearNcrModal — nc-reembolso-real-reverso-gasto (Slice B: tope de reembolso al pago real + desglose)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setup()
+  })
+
+  it('con gasto de absorcion: "Pendiente por reembolsar" muestra el pago REAL topado (490), no el remanente crudo (500)', async () => {
+    const user = userEvent.setup()
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [pagoFacturaFixture({ monto_usd: '490.00', monto: '490.00' })],
+      isLoading: false,
+    })
+    mockedUseGastoAbsorcionFactura.mockReturnValue({
+      gasto: { id: 'gasto-1', monto_usd: '10.00', descripcion: 'ABSORCION_DIFERENCIAL_POS', status: 'REGISTRADO' },
+      isLoading: false,
+    })
+    render(
+      <CrearNcrModal
+        isOpen
+        onClose={() => {}}
+        factura={baseFactura({ total_usd: '500.00', saldo_pend_usd: '0.00' })}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-monto-disponible-usd', '490')
+  })
+
+  it('con gasto de absorcion: FacturaDetallePanel muestra "Pagado"/"Asumido por el negocio" con los montos correctos', async () => {
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [pagoFacturaFixture({ monto_usd: '490.00', monto: '490.00' })],
+      isLoading: false,
+    })
+    mockedUseGastoAbsorcionFactura.mockReturnValue({
+      gasto: { id: 'gasto-1', monto_usd: '10.00', descripcion: 'ABSORCION_DIFERENCIAL_POS', status: 'REGISTRADO' },
+      isLoading: false,
+    })
+    render(
+      <CrearNcrModal
+        isOpen
+        onClose={() => {}}
+        factura={baseFactura({ total_usd: '500.00', saldo_pend_usd: '0.00' })}
+      />
+    )
+
+    expect(screen.getByText('Pagado')).toBeInTheDocument()
+    expect(screen.getByText('Asumido por el negocio')).toBeInTheDocument()
+  })
+
+  it('sin gasto de absorcion (default): "Pendiente por reembolsar" NO se topa — identico al comportamiento pre-existente', async () => {
+    const user = userEvent.setup()
+    render(
+      <CrearNcrModal
+        isOpen
+        onClose={() => {}}
+        factura={baseFactura({ total_usd: '500.00', saldo_pend_usd: '0.00' })}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-monto-disponible-usd', '500')
+    expect(screen.queryByText('Asumido por el negocio')).not.toBeInTheDocument()
   })
 })

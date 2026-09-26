@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js'
-import { bsToUsd, type DecimalInput } from '@/lib/currency'
+import { bsToUsd, usdToBs, type DecimalInput } from '@/lib/currency'
 
 /**
  * Modulo PURO (sin I/O, sin DB, sin React) para la modalidad
@@ -57,3 +57,41 @@ export function calcularRemanenteRefund(
 
   return { sumaUsd, remanenteSafc, excedeTope }
 }
+
+/**
+ * Tope de saldo disponible POR MONEDA (nc-admin-saldo-disponible-sesion,
+ * Design §Interfaces): `true` si `montoNativo` excede `saldoDisponible`,
+ * comparando SIEMPRE en la MISMA moneda (nunca number vs number, siempre
+ * via Decimal para preservar precision hasta 8 decimales, Regla de Oro
+ * CLAUDE.md #10). Tope NO-estricto: monto === saldo disponible no excede
+ * (permite usar el 100% del saldo).
+ */
+export function excedeSaldoDisponible(montoNativo: DecimalInput, saldoDisponible: DecimalInput): boolean {
+  return new Decimal(montoNativo).greaterThan(new Decimal(saldoDisponible))
+}
+
+/**
+ * Pendiente restante de la NC (en USD) disponible para UNA linea especifica
+ * (Ajuste UX post-QA #3, Opcion A): el tope total de la NC menos lo que YA
+ * consumen las OTRAS lineas del formulario — nunca negativo (floor en 0,
+ * mismo criterio que `calcularRemanenteRefund`). Sin esto, el tope de tipeo
+ * de una linea no puede recalcularse en vivo cuando el usuario agrega/edita
+ * otras lineas del mismo formulario.
+ */
+export function pendienteRestanteLineaUsd(
+  montoDisponibleUsd: DecimalInput,
+  sumaUsdOtrasLineas: DecimalInput
+): Decimal {
+  return Decimal.max(new Decimal(0), new Decimal(montoDisponibleUsd).minus(new Decimal(sumaUsdOtrasLineas)))
+}
+
+/**
+ * Convierte un tope expresado en USD (pendiente de la NC) a la moneda
+ * NATIVA de una linea — inverso de `nativoAUsd`, misma regla de oro: usa
+ * SIEMPRE `tasa_historica`, nunca la tasa vigente del sistema (Ajuste UX
+ * post-QA #3, Opcion A).
+ */
+export function usdACapNativo(capUsd: DecimalInput, esNativaBs: boolean, tasaHistorica: DecimalInput): Decimal {
+  return esNativaBs ? usdToBs(capUsd, tasaHistorica) : new Decimal(capUsd)
+}
+

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Minus, Plus } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import type { LineaNcSeleccionada } from '../hooks/use-notas-credito'
@@ -44,6 +44,44 @@ interface SeleccionLineasNcProps {
    * cantidades ya sean validas.
    */
   depositoInvalido?: boolean
+  /**
+   * QA fix (unificacion-modal-nc, Slice 3 adelantado — Design §D4): true
+   * cuando el llamador todavia no eligio el origen del reverso (Devolver
+   * dinero/Credito a favor). Total/Parcial es una decision de INVENTARIO,
+   * independiente de la gestion del vuelto — por eso esta seccion se
+   * muestra apenas se elige Parcial, sin esperar el origen. Este prop NO
+   * oculta la seccion: mismo patron que `depositoInvalido`, bloquea
+   * `puedeConfirmar` + muestra un mensaje inline para impedir confirmar
+   * antes de que el origen este elegido.
+   */
+  origenPendiente?: boolean
+  /**
+   * QA fix (unificacion-modal-nc, Fix 2 posicion boton POS): default
+   * `true` preserva el boton "Confirmar Nota de Credito Parcial" interno
+   * (comportamiento existente, usado por el modal admin). Cuando el
+   * llamador necesita fijar el boton en una posicion DISTINTA del modal
+   * (POS, seccion final, consistente con TOTAL), pasa `false` para ocultar
+   * el boton interno y usa `onEstadoConfirmarChange` para recibir
+   * `{ puedeConfirmar, confirmar }` y renderizar su propio trigger externo.
+   * La logica de habilitado/deshabilitado NUNCA se duplica — sigue
+   * calculada aqui, solo se expone hacia afuera.
+   */
+  mostrarBotonConfirmar?: boolean
+  /**
+   * Ver `mostrarBotonConfirmar`. Ampliado (nc-parcial-devolver-dinero, PR1,
+   * additive — sin cambio de comportamiento) con `lineasValidas` y
+   * `totalUsdPreview`: permite a un llamador que enrute "Devolver dinero" a
+   * `RefundTesoreriaForm` (PR2/PR3) conocer las lineas ya validadas y el
+   * monto de la NC PARCIAL (para `calcularMontoDisponibleRefund`) sin
+   * recalcular nada — MISMOS valores que este componente ya usa
+   * internamente para su propio boton/preview.
+   */
+  onEstadoConfirmarChange?: (estado: {
+    puedeConfirmar: boolean
+    confirmar: () => void
+    lineasValidas: LineaNcSeleccionada[]
+    totalUsdPreview: number
+  }) => void
 }
 
 /**
@@ -60,6 +98,9 @@ export function SeleccionLineasNc({
   onConfirm,
   loading = false,
   depositoInvalido = false,
+  origenPendiente = false,
+  mostrarBotonConfirmar = true,
+  onEstadoConfirmarChange,
 }: SeleccionLineasNcProps) {
   const [cantidades, setCantidades] = useState<Record<string, number>>({})
   // F6 QA fix (Slice 5c): estado de error POR LINEA cuando el usuario intenta
@@ -84,31 +125,72 @@ export function SeleccionLineasNc({
     setCantidades((prev) => ({ ...prev, [ventaDetId]: clamped }))
   }
 
-  const facturaLineasParaNc: LineaFacturaParaNc[] = lineas.map((l) => ({
-    venta_det_id: l.venta_det_id,
-    // El pure-function guard (`derivarLineasNcParcial`) recibe el REMANENTE
-    // como su "cantidadFacturada" — asi el tope de linea-ya-parcialmente-
-    // reversada se hace cumplir sin duplicar logica de validacion.
-    cantidadFacturada: cap(l),
-    esDecimal: l.esDecimal,
-  }))
-  const { lineas: lineasValidas, errores } = derivarLineasNcParcial(facturaLineasParaNc, cantidades)
+  // Loop fix (nc-parcial-devolver-dinero, apply): `facturaLineasParaNc`,
+  // `lineasValidas`/`errores` y `preview` se recalculaban con `.map`/objeto
+  // literal en CADA render, produciendo una referencia NUEVA aunque el
+  // contenido fuera identico. El `useEffect` de abajo depende de
+  // `lineasValidas`/`preview.totalUsd` — con referencias nuevas en cada
+  // render, el effect disparaba `onEstadoConfirmarChange` -> setState del
+  // padre -> re-render -> nueva referencia -> loop infinito (Maximum update
+  // depth exceeded). `useMemo` mantiene la MISMA referencia mientras las
+  // dependencias reales (`lineas`, `cantidades`, `factura`) no cambien —
+  // mismos valores devueltos, solo referencialmente estables.
+  const facturaLineasParaNc: LineaFacturaParaNc[] = useMemo(
+    () =>
+      lineas.map((l) => ({
+        venta_det_id: l.venta_det_id,
+        // El pure-function guard (`derivarLineasNcParcial`) recibe el REMANENTE
+        // como su "cantidadFacturada" — asi el tope de linea-ya-parcialmente-
+        // reversada se hace cumplir sin duplicar logica de validacion.
+        cantidadFacturada: cap(l),
+        esDecimal: l.esDecimal,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lineas],
+  )
+  const { lineas: lineasValidas, errores } = useMemo(
+    () => derivarLineasNcParcial(facturaLineasParaNc, cantidades),
+    [facturaLineasParaNc, cantidades],
+  )
 
-  const lineasSeleccionadas = lineas.filter((l) => (cantidades[l.venta_det_id] ?? 0) > 0)
-  const preview = previewMontoBsNc({
-    tipo: 'PARCIAL',
-    factura,
-    lineasSeleccionadas: lineasSeleccionadas.map((l) => ({
-      codigo: l.producto_codigo,
-      nombre: l.producto_nombre,
-      cantidad: String(cantidades[l.venta_det_id] ?? 0),
-      precioUnitarioUsd: String(l.precioUnitarioUsd),
-      tipoImpuesto: l.tipoImpuesto,
-      impuestoPct: l.impuestoPct,
-    })),
-  })
+  const lineasSeleccionadas = useMemo(
+    () => lineas.filter((l) => (cantidades[l.venta_det_id] ?? 0) > 0),
+    [lineas, cantidades],
+  )
+  const preview = useMemo(
+    () =>
+      previewMontoBsNc({
+        tipo: 'PARCIAL',
+        factura,
+        lineasSeleccionadas: lineasSeleccionadas.map((l) => ({
+          codigo: l.producto_codigo,
+          nombre: l.producto_nombre,
+          cantidad: String(cantidades[l.venta_det_id] ?? 0),
+          precioUnitarioUsd: String(l.precioUnitarioUsd),
+          tipoImpuesto: l.tipoImpuesto,
+          impuestoPct: l.impuestoPct,
+        })),
+      }),
+    [lineasSeleccionadas, cantidades, factura],
+  )
 
-  const puedeConfirmar = !loading && errores.length === 0 && !depositoInvalido
+  const puedeConfirmar = !loading && errores.length === 0 && !depositoInvalido && !origenPendiente
+
+  // QA fix (unificacion-modal-nc, Fix 2): expone `puedeConfirmar` + un
+  // trigger `confirmar()` hacia el llamador — el UNICO consumidor hoy es
+  // `nota-credito-pos-modal.tsx`, que oculta el boton interno
+  // (`mostrarBotonConfirmar={false}`) y renderiza su propio boton en la
+  // seccion final del modal. `onConfirm(lineasValidas)` es exactamente la
+  // misma invocacion que dispara el boton interno mas abajo.
+  useEffect(() => {
+    onEstadoConfirmarChange?.({
+      puedeConfirmar,
+      confirmar: () => onConfirm(lineasValidas),
+      lineasValidas,
+      totalUsdPreview: preview.totalUsd,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [puedeConfirmar, lineasValidas, preview.totalUsd])
 
   return (
     <div className="space-y-3">
@@ -245,21 +327,27 @@ export function SeleccionLineasNc({
         <p className="text-xs text-destructive">Debes seleccionar el deposito de reingreso.</p>
       )}
 
+      {origenPendiente && (
+        <p className="text-xs text-destructive">Debes elegir el origen del reverso antes de confirmar.</p>
+      )}
+
       <div className="flex items-center justify-between rounded-lg border bg-muted/30 p-2 text-sm">
-        <span className="text-muted-foreground">Total a devolver:</span>
+        <span className="text-muted-foreground">Valor de los articulos:</span>
         <span className="font-semibold">
           {formatUsd(preview.totalUsd)} / {formatBs(preview.totalBs)}
         </span>
       </div>
 
-      <button
-        type="button"
-        disabled={!puedeConfirmar}
-        onClick={() => onConfirm(lineasValidas)}
-        className="w-full px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {loading ? 'Procesando...' : 'Confirmar Nota de Credito Parcial'}
-      </button>
+      {mostrarBotonConfirmar && (
+        <button
+          type="button"
+          disabled={!puedeConfirmar}
+          onClick={() => onConfirm(lineasValidas)}
+          className="w-full px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading ? 'Procesando...' : 'Confirmar Nota de Credito Parcial'}
+        </button>
+      )}
     </div>
   )
 }

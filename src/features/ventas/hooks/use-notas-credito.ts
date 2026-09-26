@@ -19,6 +19,14 @@ import {
   type TipoImpuestoLineaNc,
 } from '@/features/ventas/utils/notas-credito-fiscal'
 import {
+  calcularReembolsoTopadoAlPago,
+  prorratearMontoPagado,
+  calcularEstadoReversoLineas,
+  type LineaConCantidadFacturada,
+  type NotaCreditoDetParaReverso,
+} from '@/features/ventas/utils/notas-credito-ui'
+import { reversarGastoEnTx } from '@/features/contabilidad/hooks/use-gastos'
+import {
   buildNotasCreditoFiltro,
   rangoMesActual,
 } from '@/features/ventas/utils/notas-credito-admin-filters'
@@ -118,21 +126,46 @@ export function esModalidadNoDesembolso(modalidad: LiquidacionModalidad): boolea
  * `_esBancoBS` en `use-cxc.ts`/`use-cxp.ts` — evita que un valor de UI
  * desincronizado con la cuenta produzca una conversion incorrecta.
  */
-export interface EgresoTesoreriaLinea {
-  destino: 'BANCO' | 'CAJA_FUERTE'
-  cuentaId: string
-  montoEnMonedaCuenta: string
-  /**
-   * Nota LIBRE y OPCIONAL por linea (nc-refund-tesoreria, UX rework):
-   * numero de transferencia, serial de un billete, o cualquier
-   * observacion sobre ESE egreso puntual. Persiste en la columna
-   * `referencia` YA EXISTENTE de `movimientos_bancarios`/`mov_caja_fuerte`
-   * (sin migracion). Cuando se omite, se escribe `null` — mismo criterio
-   * que `use-traspasos.ts` (`params.referencia ?? null`), NUNCA bloquea la
-   * confirmacion.
-   */
-  referencia?: string
-}
+/**
+ * Union discriminada por `destino` (nc-cuadre-sesion-fase2, Design
+ * §Interfaces). `'BANCO' | 'CAJA_FUERTE'` preserva la variante original
+ * (nc-refund-tesoreria): la cuenta real determina la moneda server-side
+ * (`leerCuentaTesoreriaEnTx`). `'SESION_CAJA'` es el tercer destino (Fase
+ * 2, egreso real de NC admin hacia una sesion de caja ACTIVA elegida por
+ * quien liquida): NO hay cuenta de tesoreria que resolver — `moneda` la
+ * elige explicitamente el usuario (no hay pago 1:1 que la derive, Design
+ * §1) y `metodoCobroId` es el metodo EFECTIVO ya resuelto para esa moneda
+ * (`useMetodosPagoActivos()`, mismo patron que
+ * INGRESO_MANUAL/EGRESO_MANUAL/AVANCE/PRESTAMO).
+ */
+export type EgresoTesoreriaLinea =
+  | {
+      destino: 'BANCO' | 'CAJA_FUERTE'
+      cuentaId: string
+      montoEnMonedaCuenta: string
+      /**
+       * Nota LIBRE y OPCIONAL por linea (nc-refund-tesoreria, UX rework):
+       * numero de transferencia, serial de un billete, o cualquier
+       * observacion sobre ESE egreso puntual. Persiste en la columna
+       * `referencia` YA EXISTENTE de `movimientos_bancarios`/`mov_caja_fuerte`
+       * (sin migracion). Cuando se omite, se escribe `null` — mismo criterio
+       * que `use-traspasos.ts` (`params.referencia ?? null`), NUNCA bloquea la
+       * confirmacion.
+       */
+      referencia?: string
+    }
+  | {
+      destino: 'SESION_CAJA'
+      /** FK a `sesiones_caja.id` — la sesion ACTIVA elegida por el admin (`useSesionesActivas()`), NO necesariamente `venta.sesion_caja_id` (cross-session permitido, Design §Decision 3 / explore.md §5.4). */
+      sesionCajaId: string
+      /** Metodo EFECTIVO resuelto para `moneda` — el `value` de la opcion de UI ES este id (Design §1), nunca un selector manual. */
+      metodoCobroId: string
+      /** Moneda NATIVA elegida para esta linea — determina que metodo EFECTIVO se resolvio y como se interpreta `montoEnMonedaCuenta` (sin conversion server-side, a diferencia de BANCO/CAJA_FUERTE). */
+      moneda: 'USD' | 'BS'
+      montoEnMonedaCuenta: string
+      /** Igual criterio que la variante BANCO/CAJA_FUERTE — nota libre y opcional, `null` si se omite. */
+      referencia?: string
+    }
 
 /** Array de lineas de egreso — reemplaza `EgresoCajaParams` (objeto unico). Solo lo consume el gate y la rama `REFUND_TESORERIA` de Step B — nunca dispara el egreso real de la Regla de Oro (ese se calcula internamente, ver `aplicaReglaDeOro`). */
 export type EgresoParams = EgresoTesoreriaLinea[]
@@ -248,7 +281,7 @@ export interface CrearNotaCreditoResult {
  */
 async function leerCuentaTesoreriaEnTx(
   tx: Transaction,
-  linea: EgresoTesoreriaLinea,
+  linea: Extract<EgresoTesoreriaLinea, { destino: 'BANCO' | 'CAJA_FUERTE' }>,
   empresa_id: string
 ): Promise<{ saldoAnt: Decimal; esCuentaBs: boolean }> {
   const tabla = linea.destino === 'BANCO' ? 'bancos_empresa' : 'caja_fuerte'
@@ -287,7 +320,7 @@ async function leerCuentaTesoreriaEnTx(
  */
 async function escribirEgresoTesoreriaEnTx(
   tx: Transaction,
-  linea: EgresoTesoreriaLinea,
+  linea: Extract<EgresoTesoreriaLinea, { destino: 'BANCO' | 'CAJA_FUERTE' }>,
   ncrId: string,
   nroNcr: string,
   empresa_id: string,
@@ -332,6 +365,77 @@ async function escribirEgresoTesoreriaEnTx(
     now,
     linea.cuentaId,
   ])
+}
+
+/**
+ * Escribe UNA linea de egreso real hacia una SESION DE CAJA activa, elegida
+ * libremente por quien liquida la NC (nc-cuadre-sesion-fase2, Design §3/§
+ * Interfaces) — tercer destino de `EgresoTesoreriaLinea`, paralelo a
+ * `escribirEgresoTesoreriaEnTx` pero hacia `movimientos_metodo_cobro` en vez
+ * de `movimientos_bancarios`/`mov_caja_fuerte`. Mismo INSERT que la Regla de
+ * Oro POS (`saldo_anterior=0, saldo_nuevo=0`, `origen='NCR'`, ya presente en
+ * el CHECK desde la migracion 0091 — Design §Decision 2, sin migracion
+ * nueva) pero con `sesion_caja_id` = la sesion ELEGIDA (`linea.sesionCajaId`),
+ * NUNCA `venta.sesion_caja_id` — el admin puede targetear una sesion
+ * distinta a la de la venta original (cross-session, Design §Decision 3 /
+ * explore.md §5.4).
+ *
+ * Guard de sesion ABIERTA (espejo del trigger Postgres `migrations/0041`,
+ * AUSENTE en SQLite/PowerSync local, explore.md §5): `SELECT status`
+ * ANTES del INSERT, en la MISMA transaccion — si la sesion no existe o no
+ * esta `'ABIERTA'`, lanza y el `db.writeTransaction` que envuelve toda la
+ * NC hace rollback automatico (ningun registro de esta NC llega a
+ * persistir, ni siquiera el header ya escrito en un paso previo).
+ *
+ * Sin guard de saldo suficiente en la sesion destino (decision explicita,
+ * Design §Interfaces / Open Questions): paridad con el UNICO precedente
+ * real de escritura NCR en `movimientos_metodo_cobro` (Regla de Oro POS),
+ * que tampoco lo valida — a diferencia de `EGRESO_MANUAL`, que si lo hace.
+ */
+async function escribirEgresoSesionCajaEnTx(
+  tx: Transaction,
+  linea: Extract<EgresoTesoreriaLinea, { destino: 'SESION_CAJA' }>,
+  ncrId: string,
+  nroNcr: string,
+  empresa_id: string,
+  usuario_id: string,
+  now: string
+): Promise<void> {
+  const sesionResult = await tx.execute(
+    'SELECT status FROM sesiones_caja WHERE id = ? AND empresa_id = ?',
+    [linea.sesionCajaId, empresa_id]
+  )
+  if (!sesionResult.rows || sesionResult.rows.length === 0) {
+    throw new Error(`Sesion de caja no encontrada: ${linea.sesionCajaId}`)
+  }
+  const sesion = sesionResult.rows.item(0) as { status: string }
+  if (sesion.status !== 'ABIERTA') {
+    throw new Error(
+      `La sesion de caja elegida no esta ABIERTA (status actual: ${sesion.status}). No se puede registrar el egreso.`
+    )
+  }
+
+  const montoNativo = new Decimal(linea.montoEnMonedaCuenta)
+
+  await tx.execute(
+    `INSERT INTO movimientos_metodo_cobro
+       (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+        doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+     VALUES (?, ?, ?, 'EGRESO', 'NCR', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      uuidv4(),
+      empresa_id,
+      linea.metodoCobroId,
+      toStorageString(montoNativo),
+      ncrId,
+      `NCR-${nroNcr}`,
+      `Devolucion NCR ${nroNcr} - Reembolso a sesion de caja`,
+      linea.sesionCajaId,
+      now,
+      now,
+      usuario_id,
+    ]
+  )
 }
 
 // ─── Listado de NCR ─────────────────────────────────────────
@@ -1050,6 +1154,30 @@ export async function crearNotaCredito(
       ])
     }
 
+    // 6a2. Step A' (nc-reembolso-real-reverso-gasto, Design §Data Flow): pago
+    //    REAL total de la factura — SIN el gate `tipoNc==='TOTAL'` de la
+    //    Regla de Oro (6c, mas abajo): dos concerns distintos, dos queries
+    //    (Design §Architecture Decisions #4). Prorrateado por
+    //    `totalUsdNc/venta.total_usd` para NC PARCIAL — ratio=1 en TOTAL
+    //    (`totalUsdNc === venta.total_usd` siempre para ese tipo), la propia
+    //    `prorratearMontoPagado` deja el valor sin cambios.
+    const pagosRealesResult = await tx.execute(
+      'SELECT monto_usd FROM pagos WHERE venta_id = ? AND is_reversed = 0',
+      [venta_id]
+    )
+    let montoPagadoRealUsd = new Decimal(0)
+    if (pagosRealesResult.rows) {
+      for (let i = 0; i < pagosRealesResult.rows.length; i++) {
+        const pagoRow = pagosRealesResult.rows.item(i) as { monto_usd: string }
+        montoPagadoRealUsd = montoPagadoRealUsd.plus(new Decimal(pagoRow.monto_usd || '0'))
+      }
+    }
+    const montoPagadoRealProrrateado = prorratearMontoPagado(
+      montoPagadoRealUsd,
+      totalUsdNc,
+      venta.total_usd
+    )
+
     // 6b. Si la factura tenía un diferencial cambiario aplicado, reversarlo también
     try {
       await reversarDiferencialEnTx(tx, {
@@ -1128,7 +1256,18 @@ export async function crearNotaCredito(
     //     escopeado a las lineas seleccionadas. EFECTIVO_REAL no entra a
     //     este switch: su liquidacion ES el egreso condicional de la Regla
     //     de Oro (paso 6c/10), no un movimiento de cuenta adicional.
-    const remanenteALiquidar = totalUsdNc.minus(montoAplicadoAPendiente)
+    // Step B topa al PAGO REAL (Spec "Tope de reembolso al pago real en
+    // Step B", nc-reembolso-real-reverso-gasto): nunca reembolsa mas de lo
+    // que el cliente efectivamente pago, aunque el remanente teorico
+    // (totalUsdNc - montoAplicadoAPendiente) sea mayor — caso tipico: gasto
+    // de absorcion de diferencial cambiario cubrio la diferencia. Envuelve
+    // TODOS los usos aguas abajo (gate `.gt('0.01')`, SALDO_FAVOR/
+    // COMPENSACION_VENTA, AJUSTE_CXC, REFUND_TESORERIA) — factura sin
+    // absorcion (pago real >= remanente) deja este cap como no-op.
+    const remanenteALiquidar = calcularReembolsoTopadoAlPago(
+      totalUsdNc.minus(montoAplicadoAPendiente),
+      montoPagadoRealProrrateado
+    )
 
     if (remanenteALiquidar.gt('0.01')) {
       if (modalidad === 'SALDO_FAVOR' || modalidad === 'COMPENSACION_VENTA') {
@@ -1252,9 +1391,16 @@ export async function crearNotaCredito(
         // ANTES de escribir cualquier registro — si excede, toda la NC se
         // rechaza (rollback automatico de `db.writeTransaction`, ninguna
         // linea llega a escribirse).
+        // Dispatcher de moneda (nc-cuadre-sesion-fase2, Design §Interfaces):
+        // `SESION_CAJA` no toca la DB para resolver la moneda — el admin ya
+        // la eligio explicitamente en la linea (`linea.moneda`); el resto
+        // (`BANCO`/`CAJA_FUERTE`) sigue leyendo la cuenta real, sin cambios.
         const lineasUsd: Decimal[] = []
         for (const linea of egresoParams) {
-          const { esCuentaBs } = await leerCuentaTesoreriaEnTx(tx, linea, empresa_id)
+          const esCuentaBs =
+            linea.destino === 'SESION_CAJA'
+              ? linea.moneda === 'BS'
+              : (await leerCuentaTesoreriaEnTx(tx, linea, empresa_id)).esCuentaBs
           lineasUsd.push(nativoAUsd(linea.montoEnMonedaCuenta, esCuentaBs, venta.tasa))
         }
 
@@ -1267,8 +1413,16 @@ export async function crearNotaCredito(
 
         // Escribir cada linea en el orden del array (Design §d "sin
         // prioridad entre cuentas — se escribe en el orden del array").
+        // Dispatcher de escritura (nc-cuadre-sesion-fase2): `SESION_CAJA`
+        // despacha a `escribirEgresoSesionCajaEnTx` (guard ABIERTA + INSERT
+        // en `movimientos_metodo_cobro`); `BANCO`/`CAJA_FUERTE` preserva el
+        // camino existente sin cambios.
         for (const linea of egresoParams) {
-          await escribirEgresoTesoreriaEnTx(tx, linea, ncrId, nroNcr, empresa_id, usuario_id, now)
+          if (linea.destino === 'SESION_CAJA') {
+            await escribirEgresoSesionCajaEnTx(tx, linea, ncrId, nroNcr, empresa_id, usuario_id, now)
+          } else {
+            await escribirEgresoTesoreriaEnTx(tx, linea, ncrId, nroNcr, empresa_id, usuario_id, now)
+          }
         }
 
         // Remanente no reembolsado por tesoreria -> SAFC (Spec "Remanente
@@ -1333,6 +1487,50 @@ export async function crearNotaCredito(
         toStorageString(nuevoSaldoPendVenta),
         venta_id,
       ])
+    }
+
+    // Step C (nc-reembolso-real-reverso-gasto, Design §Data Flow/Architecture
+    // Decisions #2/#3): si TODAS las lineas de la factura ya alcanzaron su
+    // cantidad facturada (acumulado de ESTA NC — ya insertada en el paso
+    // 5 — mas cualquier NC previa), reversar el/los gasto(s) de
+    // absorcion/diferencial asociados a la factura. Mismo computo
+    // `calcularEstadoReversoLineas` para TOTAL y PARCIAL (sin rama
+    // `tipoNc==='TOTAL' OR ...` — una NC TOTAL valida siempre deja
+    // `todasCompletas=true`, redundante distinguir el tipo). SIN try/catch:
+    // a diferencia de 6b/paso 9 (best-effort), un fallo aqui MUST abortar
+    // toda la NC (Spec "Atomicidad e inmutabilidad del reverso de gasto").
+    const lineasFacturadas: LineaConCantidadFacturada[] = ventaDetRows.map((row) => ({
+      venta_det_id: row.id,
+      cantidad_facturada: row.cantidad,
+    }))
+    const inPlaceholders = ventaDetRows.map(() => '?').join(',')
+    const notasCreditoDetAcumResult = ventaDetRows.length
+      ? await tx.execute(
+          `SELECT venta_det_id, cantidad FROM notas_credito_det WHERE empresa_id = ? AND venta_det_id IN (${inPlaceholders})`,
+          [empresa_id, ...ventaDetRows.map((row) => row.id)]
+        )
+      : null
+    const notasCreditoDetAcum: NotaCreditoDetParaReverso[] = []
+    if (notasCreditoDetAcumResult?.rows) {
+      for (let i = 0; i < notasCreditoDetAcumResult.rows.length; i++) {
+        notasCreditoDetAcum.push(
+          notasCreditoDetAcumResult.rows.item(i) as NotaCreditoDetParaReverso
+        )
+      }
+    }
+    const { todasCompletas } = calcularEstadoReversoLineas(lineasFacturadas, notasCreditoDetAcum)
+
+    if (todasCompletas) {
+      const gastosAbsorcionResult = await tx.execute(
+        `SELECT id FROM gastos WHERE empresa_id = ? AND nro_factura = ? AND descripcion IN ('ABSORCION_DIFERENCIAL_POS', 'DIFERENCIAL_CAMBIARIO_FALTANTE') AND status = 'REGISTRADO'`,
+        [empresa_id, venta.nro_factura]
+      )
+      if (gastosAbsorcionResult.rows) {
+        for (let i = 0; i < gastosAbsorcionResult.rows.length; i++) {
+          const gastoRow = gastosAbsorcionResult.rows.item(i) as { id: string }
+          await reversarGastoEnTx(tx, { gastoId: gastoRow.id, usuarioId: usuario_id }, now)
+        }
+      }
     }
 
     // 9. Generar asientos contables NCR
