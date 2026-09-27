@@ -19,6 +19,8 @@ type DataTableToolbarProps<TData> = {
       icon?: React.ComponentType<{ className?: string }>
     }[]
   }[]
+  /** Controles custom (ej. rango de fechas), renderizados junto al buscador. */
+  toolbarSlot?: React.ReactNode
 }
 
 export function DataTableToolbar<TData>({
@@ -26,6 +28,7 @@ export function DataTableToolbar<TData>({
   searchPlaceholder = 'Filtrar...',
   searchKey,
   filters = [],
+  toolbarSlot,
 }: DataTableToolbarProps<TData>) {
   const isFiltered =
     table.getState().columnFilters.length > 0 || table.getState().globalFilter
@@ -41,7 +44,7 @@ export function DataTableToolbar<TData>({
   return (
     <div className="flex flex-col gap-3 md:gap-4 w-full">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 w-full">
-        <div className="flex flex-1 min-w-0 items-center gap-2 md:gap-3">
+        <div className="flex flex-1 min-w-0 flex-wrap items-center gap-2 md:gap-3">
           <div className="relative w-full sm:w-[220px] lg:w-[280px] min-w-0 shrink-0">
             <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -55,6 +58,8 @@ export function DataTableToolbar<TData>({
               className="pl-9 h-8 md:h-9 text-xs md:text-sm"
             />
           </div>
+
+          {toolbarSlot}
 
           {hasSearchOrFilters && (
             <>
