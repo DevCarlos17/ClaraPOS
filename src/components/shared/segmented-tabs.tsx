@@ -26,7 +26,15 @@ export function SegmentedTabs<T extends string>({
     <div
       role="tablist"
       className={cn(
-        'inline-flex items-stretch rounded-t-lg border border-b-0 bg-white dark:bg-card shadow-sm overflow-hidden divide-x divide-border',
+        // `self-start` es necesario para ancho natural cuando el padre es un
+        // contenedor `flex` (p.ej. `notas-credito-page.tsx`): `align-items:
+        // stretch` es el default de flexbox y estira este div (flex ITEM del
+        // padre) a lo ancho completo pese a que su propio `display:
+        // inline-flex` solo afecta a SUS hijos, no a como el padre lo mide a
+        // el. En un padre `block` normal (Kardex, `cliente-detalle.tsx`,
+        // etc.) `self-start` no tiene efecto (`align-self` solo aplica
+        // dentro de flex/grid) — fix seguro para todos los consumidores.
+        'self-start inline-flex items-stretch rounded-t-lg border border-b-0 bg-white dark:bg-card shadow-sm overflow-hidden divide-x divide-border',
         className,
       )}
     >

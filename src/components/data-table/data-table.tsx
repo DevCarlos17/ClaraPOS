@@ -159,7 +159,7 @@ export function DataTable<TData, TValue>({
         </div>
       )}
 
-      <ScrollArea className="flex-1 min-h-0">
+      <ScrollArea className="flex-1 min-h-0" scrollbars="both">
         {isMobile && renderMobileCard ? (
           <div className="flex flex-col gap-3 p-4">
             {isLoading ? (
@@ -184,8 +184,31 @@ export function DataTable<TData, TValue>({
             )}
           </div>
         ) : (
-          <Table>
-            <TableHeader className="bg-muted/30 border-b">
+          <Table containerClassName="overflow-x-visible">
+            {/*
+              Sticky header (owner feedback, bug CRITICAL): `sticky top-0`
+              solo funciona si el `<thead>` no tiene un ancestro con overflow
+              propio MAS CERCANO que el scroll real. El wrapper de `Table`
+              (`ui/table.tsx`) por defecto es `overflow-x-auto` — que por la
+              regla de normalizacion CSS (overflow-x != visible => overflow-y
+              computa a 'auto', ver MDN /overflow-x) lo convierte en un
+              scroll-container VERTICAL propio pese a no tener altura fija
+              (nunca scrollea, scrollHeight === clientHeight). `position:
+              sticky` se ancla al ANCESTRO SCROLLEABLE MAS CERCANO sin
+              importar si realmente scrollea, asi que el sticky quedaria
+              "pegado" a ese div inerte en vez de a la `ScrollArea` real —
+              el header seguiria scrolleando junto con las filas (bug
+              reproducido por diseno, no una limitacion de Radix). Fix:
+              `containerClassName="overflow-x-visible"` neutraliza ese
+              scroll-container intermedio; el scroll horizontal se
+              recupera en el `ScrollBar` horizontal de la `ScrollArea`
+              exterior (`scrollbars="both"` arriba) - unico ancestro
+              scrolleable real, contra el que el sticky SI funciona.
+              `bg-card` (opaco, mismo token que el contenedor) evita que las
+              filas se transparenten bajo el header al scrollear — el
+              `bg-muted/30` original era semi-transparente.
+            */}
+            <TableHeader className="sticky top-0 z-10 bg-card border-b">
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id} className="hover:bg-transparent">
                   {headerGroup.headers.map((header) => (

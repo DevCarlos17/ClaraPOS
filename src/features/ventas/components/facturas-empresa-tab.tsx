@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
+import { CaretRight } from '@phosphor-icons/react'
 import { DataTable } from '@/components/data-table/data-table'
+import { DateRangeField } from '@/components/data-table/date-range-field'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Card } from '@/components/ui/card'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { rangoMesActual } from '../utils/notas-credito-admin-filters'
@@ -51,47 +52,6 @@ interface FiltrosFacturasEmpresaState {
 
 function filtrosIniciales(): FiltrosFacturasEmpresaState {
   return rangoMesActual()
-}
-
-interface FacturasEmpresaRangoFechaProps {
-  filtros: FiltrosFacturasEmpresaState
-  onChange: (filtros: FiltrosFacturasEmpresaState) => void
-}
-
-/** Presentacional: Desde/Hasta renderizados dentro del `toolbarSlot` del `DataTable` (WU2). */
-function FacturasEmpresaRangoFecha({ filtros, onChange }: FacturasEmpresaRangoFechaProps) {
-  function set<K extends keyof FiltrosFacturasEmpresaState>(key: K, value: FiltrosFacturasEmpresaState[K]) {
-    onChange({ ...filtros, [key]: value })
-  }
-
-  return (
-    <div className="flex items-end gap-2 shrink-0">
-      <div className="flex flex-col gap-1">
-        <label htmlFor="facturas-fecha-desde" className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          Desde
-        </label>
-        <input
-          id="facturas-fecha-desde"
-          type="date"
-          value={filtros.fechaDesde}
-          onChange={(e) => set('fechaDesde', e.target.value)}
-          className="h-8 md:h-9 rounded-md border border-input px-2 text-xs md:text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-      </div>
-      <div className="flex flex-col gap-1">
-        <label htmlFor="facturas-fecha-hasta" className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          Hasta
-        </label>
-        <input
-          id="facturas-fecha-hasta"
-          type="date"
-          value={filtros.fechaHasta}
-          onChange={(e) => set('fechaHasta', e.target.value)}
-          className="h-8 md:h-9 rounded-md border border-input px-2 text-xs md:text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-      </div>
-    </div>
-  )
 }
 
 /** Presentacional compartido: badges de estado de pago + reverso (columna desktop "estado" y card mobile, WU2). */
@@ -201,7 +161,12 @@ export interface FacturasEmpresaTableProps {
    * 3 llamadores no la pasan y siguen mostrando SIEMPRE la tabla desktop.
    */
   renderMobileCard?: (f: FacturaParaAnular) => ReactNode
-  /** Costura para adosar el `SegmentedTabs` (pestaña "Facturas emitidas") a la tarjeta de la tabla. Pass-through. */
+  /**
+   * Clase extra para el contenedor de la tarjeta del `DataTable`.
+   * Pass-through — `FacturasEmpresaTab` ya NO la usa (facturas-mobile-
+   * bottomsheet, Cambio 3: tabs estilo Kardex, tarjeta con esquinas
+   * redondeadas normales en vez de adosada a `SegmentedTabs`).
+   */
   containerClassName?: string
 }
 
@@ -340,31 +305,36 @@ export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}
     setModalOpen(true)
   }
 
-  // WU2: card mobile (`< lg`) — SOLO datos identificatorios (nro/cliente/
-  // total USD-Bs/fecha/badges), mismo `AplicarNcButton`/`FacturaEstadoBadges`
-  // que la columna desktop. `stopPropagation` (dentro de `AplicarNcButton`)
-  // evita que el tap en el boton dispare el `onClick` de la card (que abre
-  // `ConsultaFacturaModal` via `onRowClick={setFacturaConsulta}` abajo).
-  function renderFacturaMobileCard(f: FacturaParaAnular) {
+  /**
+   * facturas-mobile-bottomsheet: la card mobile (con `AplicarNcButton`
+   * propio) se reemplaza por una FILA compacta y clickeable — el tap abre
+   * el `BottomSheet` (via `onRowClick={setFacturaConsulta}`, sin cambios en
+   * el wrapper del `DataTable`) con el detalle completo + "Aplicar nota de
+   * credito" (ver `ConsultaFacturaModal`, prop `onAplicarNc`). Solo datos
+   * identificatorios (nro/cliente/total/fecha/estado) + un chevron ">" que
+   * senaliza "tap para detalle" — sin boton propio, para maximizar
+   * densidad (mas filas visibles por scroll).
+   */
+  function renderFacturaMobileRow(f: FacturaParaAnular) {
     return (
-      <Card className={`gap-2 p-3 ${filaFacturaAtenuada(f) ? 'text-muted-foreground/70' : ''}`}>
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="font-mono font-bold text-xs">#{f.nro_factura}</p>
-            <p className="text-sm font-medium truncate">{f.cliente_nombre}</p>
-            <p className="text-xs text-muted-foreground truncate">{f.cliente_identificacion}</p>
+      <div
+        className={`flex items-center gap-2 rounded-xl border bg-card px-3 py-2.5 shadow-sm ${
+          filaFacturaAtenuada(f) ? 'text-muted-foreground/70' : ''
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <p className="font-mono font-bold text-xs shrink-0">#{f.nro_factura}</p>
+            <FacturaEstadoBadges f={f} />
           </div>
-          <div className="text-right shrink-0">
-            <p className="font-bold text-sm">{formatUsd(f.total_usd)}</p>
-            <p className="text-xs text-muted-foreground">{formatBs(f.total_bs)}</p>
-          </div>
+          <p className="text-sm font-medium truncate">{f.cliente_nombre}</p>
         </div>
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-muted-foreground">{formatDateTime(f.fecha)}</span>
-          <FacturaEstadoBadges f={f} />
+        <div className="text-right shrink-0">
+          <p className="font-bold text-sm">{formatUsd(f.total_usd)}</p>
+          <p className="text-[11px] text-muted-foreground">{formatDateTime(f.fecha)}</p>
         </div>
-        <AplicarNcButton f={f} onAplicarNc={handleAplicarNc} className="w-full" />
-      </Card>
+        <CaretRight className="size-4 text-muted-foreground shrink-0" aria-hidden="true" />
+      </div>
     )
   }
 
@@ -377,11 +347,16 @@ export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}
         onRowClick={setFacturaConsulta}
         showToolbar
         showPagination
-        toolbarSlot={<FacturasEmpresaRangoFecha filtros={filtros} onChange={setFiltros} />}
+        toolbarSlot={
+          <DateRangeField
+            value={{ desde: filtros.fechaDesde, hasta: filtros.fechaHasta }}
+            onChange={(v) => setFiltros({ fechaDesde: v.desde, fechaHasta: v.hasta })}
+          />
+        }
         searchPlaceholder="Buscar por factura, cliente, RIF o estado (contado, crédito, abonada, reverso total/parcial)..."
         globalFilterFn={(f, term) => facturaEmpresaCoincideBusqueda(f, term)}
-        renderMobileCard={renderFacturaMobileCard}
-        containerClassName="rounded-t-none"
+        renderMobileCard={renderFacturaMobileRow}
+        containerClassName="rounded-tl-none"
       />
       <CrearNcrModal
         isOpen={modalOpen}
@@ -392,6 +367,7 @@ export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}
         venta={facturaConsulta}
         isOpen={!!facturaConsulta}
         onClose={() => setFacturaConsulta(null)}
+        onAplicarNc={handleAplicarNc}
       />
     </div>
   )

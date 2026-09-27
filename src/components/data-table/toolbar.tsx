@@ -43,9 +43,9 @@ export function DataTableToolbar<TData>({
 
   return (
     <div className="flex flex-col gap-3 md:gap-4 w-full">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 w-full">
+      <div className="flex flex-col md:flex-row md:flex-wrap items-stretch md:items-center justify-between gap-2 md:gap-3 w-full">
         <div className="flex flex-1 min-w-0 flex-wrap items-center gap-2 md:gap-3">
-          <div className="relative w-full sm:w-[220px] lg:w-[280px] min-w-0 shrink-0">
+          <div className="relative w-full md:flex-none md:w-[220px] lg:w-[280px] shrink">
             <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder={searchPlaceholder}
@@ -58,8 +58,6 @@ export function DataTableToolbar<TData>({
               className="pl-9 h-8 md:h-9 text-xs md:text-sm"
             />
           </div>
-
-          {toolbarSlot}
 
           {hasSearchOrFilters && (
             <>
@@ -111,6 +109,13 @@ export function DataTableToolbar<TData>({
 
           {filters.length > 0 && (
             <Separator orientation="vertical" className="h-5 md:h-6 hidden md:block" />
+          )}
+
+          {toolbarSlot && (
+            <>
+              <div className="flex items-center gap-2 flex-wrap">{toolbarSlot}</div>
+              <Separator orientation="vertical" className="h-5 md:h-6 hidden md:block" />
+            </>
           )}
 
           <div className="shrink-0">

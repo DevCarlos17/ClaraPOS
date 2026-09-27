@@ -47,6 +47,8 @@ export interface NotaCreditoRow {
   fecha: string
   nro_factura: string
   cliente_nombre: string
+  /** RIF/cedula del cliente (WU3, notas-credito-datatable) — mismo criterio que `FacturaParaAnular.cliente_identificacion`, usado por la columna Cliente y el buscador `notaCreditoCoincideBusqueda`. */
+  cliente_identificacion: string
 }
 
 export interface FacturaParaAnular {
@@ -499,7 +501,8 @@ export function useNotasCredito(filtros?: FiltroNotasCreditoHook) {
        nc.id, nc.nro_ncr, nc.venta_id, nc.cliente_id, nc.tipo, nc.motivo,
        nc.tasa_historica, nc.total_usd, nc.total_bs, nc.fecha,
        v.nro_factura,
-       c.nombre as cliente_nombre
+       c.nombre as cliente_nombre,
+       c.identificacion as cliente_identificacion
      FROM notas_credito nc
      JOIN ventas v ON nc.venta_id = v.id
      JOIN clientes c ON nc.cliente_id = c.id
