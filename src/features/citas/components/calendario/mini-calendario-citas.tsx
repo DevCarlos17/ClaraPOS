@@ -13,6 +13,7 @@ export function MiniCalendarioCitas({ selectedDate, onSelect }: Props) {
         mode="single"
         selected={selectedDate}
         onSelect={(date) => date && onSelect(date)}
+        captionLayout="label"
         className="rounded-xl border-0 p-0 w-full"
         classNames={{
           month_caption: 'flex justify-center pt-1 relative items-center mb-2',

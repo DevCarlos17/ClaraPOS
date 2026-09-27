@@ -14,8 +14,8 @@ describe('PAGE_SIZE_OPTIONS', () => {
 })
 
 describe('DEFAULT_PAGE_SIZE', () => {
-  it('es el primer valor de PAGE_SIZE_OPTIONS', () => {
-    expect(DEFAULT_PAGE_SIZE).toBe(10)
+  it('es 50 (PAGE_SIZE_OPTIONS[2]) — default de filas por pagina', () => {
+    expect(DEFAULT_PAGE_SIZE).toBe(50)
   })
 })
 

@@ -226,7 +226,8 @@ export function buildNotasCreditoFiltro(f: FiltroNotasCredito): SqlFiltroResult 
        nc.id, nc.nro_ncr, nc.venta_id, nc.cliente_id, nc.tipo, nc.motivo,
        nc.tasa_historica, nc.total_usd, nc.total_bs, nc.fecha,
        v.nro_factura,
-       c.nombre as cliente_nombre
+       c.nombre as cliente_nombre,
+       c.identificacion as cliente_identificacion
      FROM notas_credito nc
      JOIN ventas v ON nc.venta_id = v.id
      JOIN clientes c ON nc.cliente_id = c.id
