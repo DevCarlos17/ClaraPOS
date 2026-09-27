@@ -24,6 +24,8 @@ vi.mock('@/features/contabilidad/lib/generar-asientos', () => ({
 
 import type { Transaction } from '@powersync/common'
 import { db } from '@/core/db/powersync/db'
+import { toStorageString } from '@/lib/currency'
+import { calcularCierreVentaConSaf } from '../../lib/calcular-cierre-venta-saf'
 import {
   buscarProductoPorCodigoBarras,
   crearVenta,
@@ -148,6 +150,16 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
     inventarioStock?: Record<string, string>
     /** key servicio_id (producto tipo 'S') -> ingredientes de su receta. `stock` = productos.stock GLOBAL del ingrediente. */
     recetas?: Record<string, Array<{ producto_id: string; cantidad: string; stock: string; nombre: string }>>
+    /** `clientes.saldo_actual` leido por el bloque CxC (FAC) y por el consumo de SAF. Default '0'. */
+    clienteSaldoActual?: string
+    /** `movimientos_cuenta` SUM(SAFC)-SUM(SAF) del cliente, leido cuando `safEntry` esta presente. Default creado=0/consumido=0. */
+    safCredito?: { creado: number; consumido: number }
+    /**
+     * `cuentas_config.cuenta_contable_id` por `clave`, leido por ABSORBER/DIFERENCIAL_FALTANTE
+     * para resolver la cuenta del gasto compensatorio (con fallback cruzado entre claves).
+     * Ausente/clave sin valor = sin fila (dispara `throw new Error('sin-cuenta')`).
+     */
+    cuentasConfig?: { gastos_generales?: string; PERDIDA_DIFERENCIAL_CAMBIARIO?: string }
   }
 
   /**
@@ -224,6 +236,25 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
             const servicioId = params[0] as string
             const ingredientes = opts.recetas?.[servicioId] ?? []
             return { rows: { length: ingredientes.length, item: (i: number) => ingredientes[i] } }
+          }
+          if (sql.includes("WHEN tipo = 'SAFC'")) {
+            const credito = opts.safCredito ?? { creado: 0, consumido: 0 }
+            return { rows: { length: 1, item: () => credito } }
+          }
+          if (sql.startsWith('SELECT saldo_actual FROM clientes')) {
+            return { rows: { length: 1, item: () => ({ saldo_actual: opts.clienteSaldoActual ?? '0' }) } }
+          }
+          if (sql.includes('FROM cuentas_config') && sql.includes("clave = 'gastos_generales'")) {
+            const id = opts.cuentasConfig?.gastos_generales
+            return id
+              ? { rows: { length: 1, item: () => ({ cuenta_contable_id: id }) } }
+              : { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.includes('FROM cuentas_config') && sql.includes("clave = 'PERDIDA_DIFERENCIAL_CAMBIARIO'")) {
+            const id = opts.cuentasConfig?.PERDIDA_DIFERENCIAL_CAMBIARIO
+            return id
+              ? { rows: { length: 1, item: () => ({ cuenta_contable_id: id }) } }
+              : { rows: { length: 0, item: () => undefined } }
           }
 
           return { rows: { length: 0, item: () => undefined } }
@@ -492,10 +523,17 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       expect(params[5]).not.toBeNull() // saldo_nuevo provisto
       expect(params[5]).toBe('-5.00000000') // saldo_anterior(0, sin fila previa) - 5
 
-      // Unica actualizacion de saldo_pend_usd: la de la propia venta (paso 6).
+      // Escritura unica (venta-saldo-pend-single-write-p0001): saldo_pend_usd de la
+      // propia venta ya se escribio en el INSERT — cero UPDATE posteriores.
       // Paso B (creacion de SAFC) jamas toca ventas.saldo_pend_usd de NINGUNA factura.
       const ventaSaldoUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
-      expect(ventaSaldoUpdates).toHaveLength(1)
+      expect(ventaSaldoUpdates).toHaveLength(0)
+
+      // El INSERT ya lleva el saldo final (factura de contado, cubierta por el pago
+      // de $15 sobre $10 -> saldo_pend_usd = 0), no el `totalUsd` provisional.
+      const ventaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO ventas ('))
+      expect(ventaInsert).toBeDefined()
+      expect(ventaInsert!.params[14]).toBe('0.00000000')
     })
   })
 
@@ -506,6 +544,7 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
         principalDepositoId: 'dep-principal',
         productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
         inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        cuentasConfig: { gastos_generales: 'cuenta-abs-1' },
       })
 
       await crearVenta(
@@ -526,10 +565,24 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       const tipoUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET tipo'))
       expect(tipoUpdates).toHaveLength(0)
 
-      // El caso 'ABSORBER' del switch de discrepancia (7c) zerea saldo_pend_usd
-      // incondicionalmente — la venta queda liquidada.
+      // El INSERT ya escribe el `tipo` original del param ('CONTADO'), no
+      // `cierre.tipo` ('CREDITO') — exclusion aplicada ANTES del INSERT
+      // (venta-saldo-pend-single-write-p0001), no via UPDATE posterior.
+      const ventaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO ventas ('))
+      expect(ventaInsert!.params[15]).toBe('CONTADO')
+
+      // `saldo_pend_usd` ya queda en '0.00000000' desde el INSERT (saldoPendFinal) —
+      // cero UPDATE de saldo posterior (venta-saldo-pend-single-write-p0001, Fase 4:
+      // cierra el invariante de escritura unica tambien para ABSORBER).
+      expect(ventaInsert!.params[14]).toBe('0.00000000')
       const saldoUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
-      expect(saldoUpdates.at(-1)!.params[0]).toBe('0.00')
+      expect(saldoUpdates).toHaveLength(0)
+
+      // El gasto compensatorio se registra atomicamente en la misma transaccion.
+      const gastoInsert = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO gastos') && c.sql.includes('ABSORCION_DIFERENCIAL_POS')
+      )
+      expect(gastoInsert).toBeDefined()
 
       // No debe crearse CxC (movimiento tipo='FAC') para una venta absorbida.
       const facInserts = calls.filter(
@@ -538,12 +591,39 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       expect(facInserts).toHaveLength(0)
     })
 
+    it('ABSORBER: si NINGUNA cuenta contable esta configurada, el INSERT INTO gastos lanza error y crearVenta rechaza — la transaccion aborta sin dejar una factura zereada sin gasto de respaldo', async () => {
+      mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        // Sin `cuentasConfig`: ambas SELECT (gastos_generales / PERDIDA_DIFERENCIAL_CAMBIARIO)
+        // devuelven fila vacia -> `throw new Error('sin-cuenta')` ya NO es tragado por
+        // un catch (Fase 4 elimino el try/catch) -> el callback de writeTransaction
+        // rechaza, que es la señal de que la transaccion real abortaria.
+      })
+
+      await expect(
+        crearVenta(
+          baseParams({
+            tipo: 'CONTADO',
+            tasa: 40,
+            sesion_caja_id: 'sesion-1',
+            lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+            pagos: [pago({ metodo_cobro_id: 'metodo-1', moneda: 'USD', monto: 9 })],
+            discrepancy: { mode: 'ABSORBER', montoUsd: 1, montoBs: 40 },
+          })
+        )
+      ).rejects.toThrow('sin-cuenta')
+    })
+
     it('DIFERENCIAL_FALTANTE: mismo guard — cierre.tipo=CREDITO no debe sobreescribir el tipo CONTADO forzado por el frontend', async () => {
       const calls = mockCrearVentaTx({
         cajaDepositoRow: { deposito_id: 'dep-caja-A' },
         principalDepositoId: 'dep-principal',
         productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
         inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        cuentasConfig: { PERDIDA_DIFERENCIAL_CAMBIARIO: 'cuenta-diff-1' },
       })
 
       await crearVenta(
@@ -559,6 +639,201 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
 
       const tipoUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET tipo'))
       expect(tipoUpdates).toHaveLength(0)
+
+      const ventaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO ventas ('))
+      expect(ventaInsert!.params[15]).toBe('CONTADO')
+
+      // `saldo_pend_usd` ya queda en '0.00000000' desde el INSERT — cero UPDATE de
+      // saldo posterior (venta-saldo-pend-single-write-p0001, Fase 4).
+      expect(ventaInsert!.params[14]).toBe('0.00000000')
+      const saldoUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
+      expect(saldoUpdates).toHaveLength(0)
+
+      // El gasto compensatorio se registra atomicamente en la misma transaccion.
+      const gastoInsert = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO gastos') && c.sql.includes('DIFERENCIAL_CAMBIARIO_FALTANTE')
+      )
+      expect(gastoInsert).toBeDefined()
+    })
+
+    it('DIFERENCIAL_FALTANTE: si NINGUNA cuenta contable esta configurada, el INSERT INTO gastos lanza error y crearVenta rechaza — la transaccion aborta sin dejar una factura zereada sin gasto de respaldo', async () => {
+      mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        // Sin `cuentasConfig`: ambas SELECT devuelven fila vacia -> `throw new
+        // Error('sin-cuenta')` propaga (Fase 4 elimino el try/catch que lo tragaba).
+      })
+
+      await expect(
+        crearVenta(
+          baseParams({
+            tipo: 'CONTADO',
+            tasa: 40,
+            sesion_caja_id: 'sesion-1',
+            lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+            pagos: [pago({ metodo_cobro_id: 'metodo-1', moneda: 'USD', monto: 9 })],
+            discrepancy: { mode: 'DIFERENCIAL_FALTANTE', montoUsd: 1, montoBs: 40 },
+          })
+        )
+      ).rejects.toThrow('sin-cuenta')
+    })
+  })
+
+  describe('venta-saldo-pend-single-write-p0001 — escritura unica de saldo_pend_usd/tipo en el INSERT', () => {
+    it('100% contado: el INSERT escribe saldo_pend_usd=0 y cero UPDATE de ventas la modifica despues', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [pago({ monto: 10 })],
+        })
+      )
+
+      const ventaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO ventas ('))
+      expect(ventaInsert).toBeDefined()
+      expect(ventaInsert!.params[14]).toBe('0.00000000')
+      expect(ventaInsert!.params[15]).toBe('CONTADO')
+
+      expect(calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))).toHaveLength(0)
+      expect(calls.filter((c) => c.sql.startsWith('UPDATE ventas SET tipo'))).toHaveLength(0)
+    })
+
+    it('100% credito: el INSERT escribe saldo_pend_usd=totalUsd y cero UPDATE de ventas la modifica despues', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        clienteSaldoActual: '0',
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CREDITO',
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [],
+        })
+      )
+
+      const ventaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO ventas ('))
+      expect(ventaInsert).toBeDefined()
+      expect(ventaInsert!.params[14]).toBe('10.00000000')
+      expect(ventaInsert!.params[15]).toBe('CREDITO')
+
+      expect(calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))).toHaveLength(0)
+      expect(calls.filter((c) => c.sql.startsWith('UPDATE ventas SET tipo'))).toHaveLength(0)
+    })
+
+    it('pago mixto ($1.00 total, $0.40 efectivo, $0.60 pendiente a credito): el INSERT escribe saldo_pend_usd=0.60 y cero UPDATE de ventas la modifica despues', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        clienteSaldoActual: '0',
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 1 })],
+          pagos: [pago({ monto: 0.4 })],
+        })
+      )
+
+      const ventaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO ventas ('))
+      expect(ventaInsert).toBeDefined()
+      expect(ventaInsert!.params[14]).toBe('0.60000000')
+      expect(ventaInsert!.params[15]).toBe('CREDITO')
+
+      expect(calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))).toHaveLength(0)
+      expect(calls.filter((c) => c.sql.startsWith('UPDATE ventas SET tipo'))).toHaveLength(0)
+    })
+
+    it('SAF aplicado (safEntry): el INSERT escribe saldo_pend_usd ya neto del SAF, y el consumo de SAF (movimientos_cuenta tipo=SAF) se escribe DESPUES del INSERT de ventas (orden pos-aplicar-saf-checkout preservado)', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        clienteSaldoActual: '0',
+        safCredito: { creado: 15, consumido: 0 }, // credito disponible = 15
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          cliente_id: 'cliente-1',
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [],
+          safEntry: { clienteId: 'cliente-1', montoUsd: 6 },
+        })
+      )
+
+      // totalUsd=10, tasa=40, sin pagos, SAF solicitado=6 (disponible=15) -> saldoPend = $4
+      const ventaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO ventas ('))
+      expect(ventaInsert).toBeDefined()
+      expect(ventaInsert!.params[14]).toBe('4.00000000')
+
+      expect(calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))).toHaveLength(0)
+
+      const ventaInsertIdx = calls.findIndex((c) => c.sql.startsWith('INSERT INTO ventas ('))
+      const safConsumoIdx = calls.findIndex(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAF',")
+      )
+      expect(safConsumoIdx).toBeGreaterThan(-1)
+      expect(safConsumoIdx).toBeGreaterThan(ventaInsertIdx)
+    })
+
+    it('idempotencia de replay: el saldo_pend_usd escrito en el INSERT coincide exactamente con el resultado de `calcularCierreVentaConSaf` (mismos inputs) — un reintento de PowerSync reenviaria el mismo valor, NEW == OLD, sin disparar P0001', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        clienteSaldoActual: '0',
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 1 })],
+          pagos: [pago({ monto: 0.4 })],
+        })
+      )
+
+      const ventaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO ventas ('))
+      expect(ventaInsert).toBeDefined()
+      const saldoEnInsert = ventaInsert!.params[14]
+
+      const cierreEsperado = calcularCierreVentaConSaf({
+        totalUsd: 1,
+        tasa: 40,
+        abonadoBsNativo: 0,
+        abonadoUsdNativo: 0.4,
+        safSolicitadoUsd: 0,
+        creditoDisponibleUsd: 0,
+        respetarEleccionCredito: false,
+      })
+      expect(saldoEnInsert).toBe(toStorageString(cierreEsperado.saldoPendUsd))
+
+      // Ningun UPDATE posterior toca saldo_pend_usd: el valor del INSERT ES el final,
+      // por lo que un reintento que reenvie el mismo INSERT es NEW == OLD.
+      expect(calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))).toHaveLength(0)
     })
   })
 })

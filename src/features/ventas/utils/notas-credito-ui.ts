@@ -483,6 +483,206 @@ export function filaFacturaAtenuada(f: { tiene_reverso_total?: number }): boolea
   return f.tiene_reverso_total === 1
 }
 
+// =============================================
+// resolverModalidadDesdeOrigen — Slice 3 (unificacion-modal-nc, Design §D2)
+// =============================================
+
+/**
+ * Origen del reverso — "Devolver dinero"/"Credito a favor" (compartido
+ * entre `crear-ncr-modal.tsx` y `nota-credito-pos-modal.tsx` via
+ * `OrigenReversoSelector`). Tipo movido aqui (capa pura) para que ambos
+ * consumidores — el componente de presentacion y esta misma funcion —
+ * importen la MISMA definicion, sin duplicarla.
+ */
+export type OrigenReverso = 'DEVOLVER_DINERO' | 'CREDITO_A_FAVOR'
+
+/**
+ * Mapeo Origen del reverso -> modalidad para el camino NO-refund (Design
+ * §D2), copiado VERBATIM del ternario que ya existia en
+ * `crear-ncr-modal.tsx:230` (antes de esta extraccion). `TOTAL +
+ * DEVOLVER_DINERO` NUNCA pasa por esta funcion — sigue hardcodeado a
+ * `'REFUND_TESORERIA'` en `emitirNcRefund` (admin) / diferido a Slice 4
+ * (POS). El fallback `AJUSTE_CXC` para `DEVOLVER_DINERO` es intencional:
+ * cubre `PARCIAL + DEVOLVER_DINERO`, alcanzable en admin (sin UI dedicada,
+ * riesgo preservado a proposito) y ahora tambien en POS (combinacion real
+ * elegible, ver Nota resuelta de `tasks.md` — NO requiere logica especial).
+ */
+export function resolverModalidadDesdeOrigen(origenReverso: OrigenReverso): 'SALDO_FAVOR' | 'AJUSTE_CXC' {
+  return origenReverso === 'CREDITO_A_FAVOR' ? 'SALDO_FAVOR' : 'AJUSTE_CXC'
+}
+
+// =============================================
+// debeUsarRefundTesoreria / calcularMontoDisponibleRefund — PR1
+// (nc-parcial-devolver-dinero, Design §Routing/testable unit)
+// =============================================
+
+/**
+ * Gate REFUND_TESORERIA — "Devolver dinero" SIEMPRE enruta a
+ * `RefundTesoreriaForm`, independiente de `tipoNc` (TOTAL o PARCIAL). Antes
+ * del fix, ambos modales gateaban este componente ADEMAS a
+ * `tipoNc === 'TOTAL'` (obs #4013, sintomas confirmados #4007): una NC
+ * PARCIAL con "Devolver dinero" nunca invocaba `emitirNcRefund`, saltandose
+ * el egreso real de tesoreria/sesion aunque la parte fiscal se escribiera
+ * igual. Esta funcion es el UNICO criterio de ese gate — extraida a capa
+ * pura para hacerlo testeable sin montar los modales de 900+/400+ lineas.
+ */
+export function debeUsarRefundTesoreria(origen: OrigenReverso | null): boolean {
+  return origen === 'DEVOLVER_DINERO'
+}
+
+/**
+ * Monto disponible para reembolsar via Tesoreria/Sesion — formaliza en
+ * Decimal (Regla de negocio #10: nunca `float`/`Number` en computo
+ * financiero) la MISMA formula ya usada por el motor (Step A,
+ * `use-notas-credito.ts:1106-1108`) y duplicada inline en ambos modales
+ * (`nota-credito-pos-modal.tsx`, `crear-ncr-modal.tsx`): el monto de esta NC
+ * se aplica primero contra la deuda YA pendiente de la factura
+ * (`saldoPendVenta`), topeado a ambos limites; lo que sobra queda
+ * disponible para reembolso por tesoreria.
+ *
+ * `totalUsdNc` es el valor de ESTA nota de credito — para TOTAL, el total
+ * completo de la factura; para PARCIAL, la SUMA de solo las lineas
+ * seleccionadas (nunca `factura.total_usd`, que sobre-estimaria el monto
+ * disponible). Esta funcion no distingue el caso: el caller decide que
+ * monto pasarle.
+ */
+export function calcularMontoDisponibleRefund(
+  totalUsdNc: DecimalInput,
+  saldoPendVenta: DecimalInput
+): Decimal {
+  const total = new Decimal(totalUsdNc)
+  const saldoPend = new Decimal(saldoPendVenta)
+  const montoAplicadoAPendiente = Decimal.min(saldoPend, total)
+  return Decimal.max(new Decimal(0), total.minus(montoAplicadoAPendiente))
+}
+
+// =============================================
+// resolverVistaReversoNc — nc-factura-credito-ux (Design §Interfaces)
+// =============================================
+
+/**
+ * Vista pre-calculada para decidir que renderiza `OrigenReversoSelector`:
+ * cuando el remanente disponible para reembolso es cero (o por debajo del
+ * umbral), la NC solo cancela deuda pendiente y no tiene sentido ofrecer
+ * "Devolver dinero"/"Credito a favor" — la vista pasa a solo-confirmacion.
+ * Los 3 campos numericos quedan en `Decimal` (nunca `.toNumber()` aqui,
+ * Regla de negocio #10: redondear solo al final) — `formatUsd` ya acepta
+ * `Decimal` directamente (`DecimalInput`, `src/lib/currency.ts:7`).
+ */
+export interface VistaReversoNc {
+  totalUsdNc: Decimal
+  montoAplicadoADeuda: Decimal
+  montoDisponible: Decimal
+  soloCancelaDeuda: boolean
+}
+
+/**
+ * Reusa `calcularMontoDisponibleRefund` (no reimplementa la formula) y usa
+ * el MISMO umbral `0.01` que el gate del motor (`use-notas-credito.ts:1229`,
+ * `remanenteALiquidar.gt('0.01')`) para decidir `soloCancelaDeuda` — si la UI
+ * usara un umbral distinto, podria prometer un desglose+opciones para un
+ * remanente que el motor trata como no-op, o viceversa.
+ */
+/**
+ * 3er param opcional `montoPagadoRealUsd` (nc-reembolso-real-reverso-gasto,
+ * Design §Interfaces) — SIN el param, comportamiento identico al existente
+ * (regresion garantizada, mismos 2 argumentos que antes). CON el param,
+ * `montoAplicadoADeuda` se sigue computando ANTES del tope (Step A puro,
+ * sobre el remanente crudo) — solo `montoDisponible` (y por lo tanto
+ * `soloCancelaDeuda`) refleja el tope real via `calcularReembolsoTopadoAlPago`.
+ * El caller (los modales de NC) es responsable de prorratear
+ * `montoPagadoRealUsd` para NC PARCIAL antes de pasarlo aqui
+ * (`prorratearMontoPagado`) — esta funcion no distingue TOTAL/PARCIAL.
+ */
+export function resolverVistaReversoNc(
+  totalUsdNc: DecimalInput,
+  saldoPendVenta: DecimalInput,
+  montoPagadoRealUsd?: DecimalInput
+): VistaReversoNc {
+  const total = new Decimal(totalUsdNc)
+  const montoDisponibleCrudo = calcularMontoDisponibleRefund(total, saldoPendVenta)
+  const montoAplicadoADeuda = total.minus(montoDisponibleCrudo)
+  const montoDisponible =
+    montoPagadoRealUsd === undefined
+      ? montoDisponibleCrudo
+      : calcularReembolsoTopadoAlPago(montoDisponibleCrudo, montoPagadoRealUsd)
+  return {
+    totalUsdNc: total,
+    montoAplicadoADeuda,
+    montoDisponible,
+    soloCancelaDeuda: montoDisponible.lte('0.01'),
+  }
+}
+
+// =============================================
+// calcularReembolsoTopadoAlPago / prorratearMontoPagado —
+// nc-reembolso-real-reverso-gasto (Design §Interfaces)
+// =============================================
+
+/**
+ * Tope de reembolso al PAGO REAL del cliente (Spec "Tope de reembolso al
+ * pago real en Step B"): el remanente disponible para reembolsar por
+ * tesoreria/SAFC/AJUSTE_CXC nunca puede exceder lo que el cliente
+ * efectivamente pago (`SUM(pagos.monto_usd)`), aunque `remanente` (derivado
+ * de `totalUsdNc`/`saldoPendVenta`, funcion sibling
+ * `calcularMontoDisponibleRefund`) sea mayor — caso tipico: gasto de
+ * absorcion de diferencial cambiario (`ABSORCION_DIFERENCIAL_POS`/
+ * `DIFERENCIAL_CAMBIARIO_FALTANTE`) cubrio la diferencia entre lo cobrado y
+ * el total de la factura. Funcion *sibling* de `calcularMontoDisponibleRefund`
+ * (Design §Architecture Decisions #1) — NUNCA le agrega un 3er parametro,
+ * para no mezclar "calculo de remanente" con "tope de pago real".
+ */
+export function calcularReembolsoTopadoAlPago(
+  remanente: DecimalInput,
+  montoPagadoRealUsd: DecimalInput
+): Decimal {
+  const remanenteClamp = Decimal.max(new Decimal(0), new Decimal(remanente))
+  const pagadoClamp = Decimal.max(new Decimal(0), new Decimal(montoPagadoRealUsd))
+  return Decimal.min(remanenteClamp, pagadoClamp)
+}
+
+/**
+ * Prorratea el pago real total de la factura al subconjunto que representa
+ * una NC `PARCIAL` (Spec "NC parcial prorratea el pago real"): el pago real
+ * es de TODA la factura, pero `calcularReembolsoTopadoAlPago` necesita el
+ * pago real correspondiente SOLO a las lineas de esta NC —
+ * `montoPagadoRealUsd * (totalUsdNc / totalFacturaUsd)`. En NC `TOTAL`
+ * (`totalUsdNc === totalFacturaUsd`) el ratio es 1, retorna
+ * `montoPagadoRealUsd` sin cambios. Guard `totalFacturaUsd <= 0` (defensivo,
+ * no deberia ocurrir por invariante de `ventas`): retorna
+ * `montoPagadoRealUsd` SIN aplicar ratio, evitando division por cero.
+ */
+export function prorratearMontoPagado(
+  montoPagadoRealUsd: DecimalInput,
+  totalUsdNc: DecimalInput,
+  totalFacturaUsd: DecimalInput
+): Decimal {
+  const pagado = new Decimal(montoPagadoRealUsd)
+  const totalFactura = new Decimal(totalFacturaUsd)
+  if (totalFactura.lte(0)) return pagado
+  const ratio = new Decimal(totalUsdNc).dividedBy(totalFactura)
+  return pagado.times(ratio)
+}
+
+/**
+ * Suma el pago real de una factura a partir de las filas crudas de
+ * `usePagosFactura` (nc-reembolso-real-reverso-gasto, Design §Interfaces) —
+ * SOLO UI: `usePagosFactura` trae TODAS las filas (incluidas las
+ * reversadas), a diferencia del SELECT del motor
+ * (`use-notas-credito.ts`, Step A') que ya filtra `is_reversed = 0` en SQL.
+ * `is_reversed` llega como `number` (PowerSync boolean-as-integer) desde
+ * `usePagosFactura`, pero se acepta `boolean` tambien para uso directo en
+ * tests/otros callers.
+ */
+export function sumarPagosRealesUsd(
+  pagos: Array<{ monto_usd: DecimalInput; is_reversed: number | boolean }>
+): Decimal {
+  return pagos.reduce((acc, p) => {
+    const reversado = typeof p.is_reversed === 'boolean' ? p.is_reversed : p.is_reversed !== 0
+    return reversado ? acc : acc.plus(new Decimal(p.monto_usd))
+  }, new Decimal(0))
+}
+
 export function agruparReversosPorNc(rows: ReversoFacturaRowInput[]): ReversoAplicado[] {
   const porId = new Map<string, ReversoAplicado>()
   for (const row of rows) {

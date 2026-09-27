@@ -205,3 +205,63 @@ describe('SeleccionLineasNc (Design §Decision 7, Spec notas-credito-pos: Selecc
     expect(screen.getByText(/464/)).toBeInTheDocument()
   })
 })
+
+describe('onEstadoConfirmarChange payload (nc-parcial-devolver-dinero, PR1: lineasValidas + totalUsdPreview, additive — sin cambio de comportamiento)', () => {
+  it('reporta lineasValidas vacio y totalUsdPreview=0 cuando ninguna cantidad fue ingresada', () => {
+    const onEstadoConfirmarChange = vi.fn()
+    render(
+      <SeleccionLineasNc
+        lineas={[lineaGravable()]}
+        factura={facturaHistorica}
+        onConfirm={vi.fn()}
+        onEstadoConfirmarChange={onEstadoConfirmarChange}
+      />
+    )
+
+    expect(onEstadoConfirmarChange).toHaveBeenCalledWith(
+      expect.objectContaining({ lineasValidas: [], totalUsdPreview: 0 })
+    )
+  })
+
+  it('reporta lineasValidas mapeada al contrato de crearNotaCredito + totalUsdPreview con IVA aplicado al ingresar una cantidad valida', async () => {
+    const user = userEvent.setup()
+    const onEstadoConfirmarChange = vi.fn()
+    render(
+      <SeleccionLineasNc
+        lineas={[lineaGravable({ precioUnitarioUsd: 10, impuestoPct: 16, tipoImpuesto: 'Gravable' })]}
+        factura={facturaHistorica}
+        onConfirm={vi.fn()}
+        onEstadoConfirmarChange={onEstadoConfirmarChange}
+      />
+    )
+
+    await user.type(screen.getByRole('spinbutton'), '1')
+
+    // 10 USD + 16% IVA = 11.60 USD — MISMO preview que ya se muestra en pantalla.
+    expect(onEstadoConfirmarChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        lineasValidas: [{ venta_det_id: 'vd-1', cantidadDevolver: '1.000' }],
+        totalUsdPreview: 11.6,
+      })
+    )
+  })
+
+  it('preserva el payload previo (puedeConfirmar + confirmar) sin romper el contrato existente — additive, no reemplazo', async () => {
+    const user = userEvent.setup()
+    const onEstadoConfirmarChange = vi.fn()
+    render(
+      <SeleccionLineasNc
+        lineas={[lineaGravable()]}
+        factura={facturaHistorica}
+        onConfirm={vi.fn()}
+        onEstadoConfirmarChange={onEstadoConfirmarChange}
+      />
+    )
+
+    await user.type(screen.getByRole('spinbutton'), '2')
+
+    const ultimoPayload = onEstadoConfirmarChange.mock.calls.at(-1)![0]
+    expect(ultimoPayload.puedeConfirmar).toBe(true)
+    expect(typeof ultimoPayload.confirmar).toBe('function')
+  })
+})

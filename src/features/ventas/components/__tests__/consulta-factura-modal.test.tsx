@@ -11,6 +11,8 @@ import {
   type ReciboData,
 } from '../../utils/factura-export'
 import type { FacturaParaAnular } from '../../hooks/use-notas-credito'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useGastoAbsorcionFactura } from '@/features/contabilidad/hooks/use-gastos'
 
 // PR3b (reimpresion-factura-fiscal): la logica de reconstruccion de recibo
 // (useReciboDesdeFactura) ya tiene su propia suite (recibo-desde-factura.test.ts).
@@ -24,18 +26,36 @@ vi.mock('../../utils/factura-export', async (importOriginal) => {
 
 // `FacturaDetallePanel` tiene su propia suite; aqui se mockea SHALLOW para
 // probar solo que el modal le pasa el `recibo` correcto (Design §Data Flow).
+// nc-reembolso-real-reverso-gasto (Slice B): expone `gastoAbsorbido` como
+// data-attribute para probar el wiring de este modal sin re-mockear
+// `FacturaDetallePanel` por completo (mismo criterio que los otros mocks
+// de esta suite).
 vi.mock('../factura-detalle-panel', () => ({
-  FacturaDetallePanel: ({ recibo }: { recibo: ReciboData | null }) => (
-    <div data-testid="factura-detalle-panel" data-nro-factura={recibo?.nroFactura ?? ''} />
+  FacturaDetallePanel: ({
+    recibo,
+    gastoAbsorbido,
+  }: {
+    recibo: ReciboData | null
+    gastoAbsorbido?: { montoUsd: string; tipo: string } | null
+  }) => (
+    <div
+      data-testid="factura-detalle-panel"
+      data-nro-factura={recibo?.nroFactura ?? ''}
+      data-gasto-absorbido-monto={gastoAbsorbido?.montoUsd ?? ''}
+    />
   ),
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
+vi.mock('@/features/contabilidad/hooks/use-gastos', () => ({ useGastoAbsorcionFactura: vi.fn() }))
 
 const mockedUseReciboDesdeFactura = vi.mocked(useReciboDesdeFactura)
 const mockedDescargarReciboPdf = vi.mocked(descargarReciboPdf)
 const mockedCompartirReciboImagen = vi.mocked(compartirReciboImagen)
 const mockedToastError = vi.mocked(toast.error)
+const mockedUseCurrentUser = vi.mocked(useCurrentUser)
+const mockedUseGastoAbsorcionFactura = vi.mocked(useGastoAbsorcionFactura)
 
 function baseInput(overrides: Partial<BuildReciboDataInput> = {}): BuildReciboDataInput {
   return {
@@ -83,6 +103,11 @@ const VENTA: FacturaParaAnular = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockedUseCurrentUser.mockReturnValue({
+    user: { id: 'user-1', email: 'a@a.com', nombre: 'Admin', level: 1, rol_id: 'rol-1', rol_nombre: 'Propietario', empresa_id: 'emp-1' },
+    loading: false,
+  })
+  mockedUseGastoAbsorcionFactura.mockReturnValue({ gasto: null, isLoading: false })
 })
 
 afterEach(() => {
@@ -188,5 +213,42 @@ describe('ConsultaFacturaModal — sin navigator.share', () => {
 
     expect(screen.getByRole('button', { name: /descargar pdf/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /compartir/i })).not.toBeInTheDocument()
+  })
+})
+
+// ─── nc-reembolso-real-reverso-gasto (Slice B): este modal es SOLO
+// consulta/reimpresion (sin emision de NC) — unicamente consulta el gasto
+// de absorcion y lo pasa a `FacturaDetallePanel` para el desglose, SIN
+// ningun wiring de tope/reembolso (eso vive en los 2 modales de NC). ────
+
+describe('ConsultaFacturaModal — nc-reembolso-real-reverso-gasto (Slice B: pasa gastoAbsorbido al panel, solo lectura)', () => {
+  it('con gasto de absorcion encontrado (useGastoAbsorcionFactura): pasa gastoAbsorbido a FacturaDetallePanel', () => {
+    const recibo = reciboFixture()
+    mockedUseReciboDesdeFactura.mockReturnValue({ recibo, isLoading: false })
+    mockedUseGastoAbsorcionFactura.mockReturnValue({
+      gasto: { id: 'gasto-1', monto_usd: '10.00', descripcion: 'ABSORCION_DIFERENCIAL_POS', status: 'REGISTRADO' },
+      isLoading: false,
+    })
+
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+
+    expect(screen.getByTestId('factura-detalle-panel')).toHaveAttribute('data-gasto-absorbido-monto', '10.00')
+  })
+
+  it('sin gasto de absorcion (default null): NO pasa gastoAbsorbido (regresion, comportamiento actual)', () => {
+    const recibo = reciboFixture()
+    mockedUseReciboDesdeFactura.mockReturnValue({ recibo, isLoading: false })
+
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+
+    expect(screen.getByTestId('factura-detalle-panel')).toHaveAttribute('data-gasto-absorbido-monto', '')
+  })
+
+  it('consulta el gasto por nro_factura + empresa_id del usuario actual', () => {
+    mockedUseReciboDesdeFactura.mockReturnValue({ recibo: null, isLoading: true })
+
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+
+    expect(mockedUseGastoAbsorcionFactura).toHaveBeenCalledWith(VENTA.nro_factura, 'emp-1')
   })
 })

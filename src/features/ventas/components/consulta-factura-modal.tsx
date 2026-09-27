@@ -6,6 +6,8 @@ import { FacturaDetallePanel } from './factura-detalle-panel'
 import { useReciboDesdeFactura } from '../utils/recibo-desde-factura'
 import { descargarReciboPdf, compartirReciboImagen } from '../utils/factura-export'
 import type { FacturaParaAnular } from '../hooks/use-notas-credito'
+import { useGastoAbsorcionFactura } from '@/features/contabilidad/hooks/use-gastos'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 /**
  * Consulta de una factura guardada (Design §Decision 5, §Data Flow).
@@ -34,6 +36,18 @@ export function ConsultaFacturaModal({ venta, isOpen, onClose, portalContainer }
     esReimpresion: true,
     derivarMonedaPresentacion: true,
   })
+
+  // Desglose "Pagado/Asumido por el negocio" (nc-reembolso-real-reverso-gasto,
+  // Slice B): superficie de solo lectura, mismo predicado que Step C del motor
+  // (`nro_factura`). Solo alimenta el display; esta pantalla no emite NC.
+  const { user } = useCurrentUser()
+  const { gasto: gastoAbsorbidoRaw } = useGastoAbsorcionFactura(
+    venta?.nro_factura ?? null,
+    user?.empresa_id ?? null
+  )
+  const gastoAbsorbido = gastoAbsorbidoRaw
+    ? { montoUsd: gastoAbsorbidoRaw.monto_usd, tipo: gastoAbsorbidoRaw.descripcion }
+    : null
 
   // Evaluado en cada render (no module-level, a diferencia de
   // `venta-exitosa-modal.tsx`) para que el boton reaccione si el entorno
@@ -78,7 +92,7 @@ export function ConsultaFacturaModal({ venta, isOpen, onClose, portalContainer }
           </div>
         ) : (
           <>
-            <FacturaDetallePanel recibo={recibo} />
+            <FacturaDetallePanel recibo={recibo} gastoAbsorbido={gastoAbsorbido} />
             <div className={puedeCompartir ? 'grid grid-cols-2 gap-2' : ''}>
               <Button
                 className="w-full border-slate-300"
