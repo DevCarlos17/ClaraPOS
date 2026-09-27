@@ -1,11 +1,13 @@
-import { useState } from 'react'
-import { FileX, MagnifyingGlass } from '@phosphor-icons/react'
-import { Input } from '@/components/ui/input'
+import { useState, type ReactNode } from 'react'
+import { type ColumnDef } from '@tanstack/react-table'
+import { DataTable } from '@/components/data-table/data-table'
+import { DateRangeField } from '@/components/data-table/date-range-field'
+import { Card } from '@/components/ui/card'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
-import { coincideBusquedaMultiCampo } from '@/lib/search'
-import { useNotasCredito } from '../hooks/use-notas-credito'
+import { useNotasCredito, type NotaCreditoRow } from '../hooks/use-notas-credito'
 import { rangoMesActual } from '../utils/notas-credito-admin-filters'
+import { notaCreditoCoincideBusqueda } from '../utils/notas-credito-ui'
 
 /**
  * Pestana secundaria de "Facturas emitidas" (Slice C3b — design.md
@@ -26,191 +28,177 @@ import { rangoMesActual } from '../utils/notas-credito-admin-filters'
  * "Estado" (Reverso Total/Reverso Parcial) agregado en E.3 se RETIRA por
  * completo — a diferencia de la pestaña Facturas, el estado de NC NO se
  * folded en la busqueda, simplemente deja de ser un filtro disponible.
+ *
+ * WU3 (notas-credito-datatable): migra el `<table>` hand-rolled a
+ * `<DataTable>` (mismo patron que `facturas-empresa-tab.tsx`, WU2) —
+ * toolbar/paginacion internos, sticky header, card mobile (`< lg`), y
+ * Desde/Hasta compartidos via `DateRangeField`. El buscador pasa de
+ * server-side (SQL `busqueda`) a client-side sobre el rango ya cargado
+ * (`globalFilterFn={notaCreditoCoincideBusqueda}`) — el hook deja de
+ * recibir `busqueda`, Desde/Hasta se mantienen server-side sin cambios.
+ * Modo `scopedToCliente` (cliente-detalle.tsx) preserva su comportamiento:
+ * oculta la columna Cliente y sigue filtrando client-side, ahora sobre el
+ * MISMO buscador unico del `DataTable` en vez de un input separado.
  */
 
 interface FiltrosNotasCreditoState {
   fechaDesde: string
   fechaHasta: string
-  busqueda: string
 }
 
 function filtrosIniciales(): FiltrosNotasCreditoState {
-  return { ...rangoMesActual(), busqueda: '' }
+  return rangoMesActual()
 }
 
 interface NotasCreditoTabProps {
   /**
    * Filtro por cliente (cliente-detalle-pantalla, PR1). Cuando esta
-   * presente, la pestaña queda ESCOPEADA a ese cliente: se oculta el input
-   * de busqueda (redundante — ya hay un solo cliente en juego) y se pasa
-   * `clienteId` al hook. Cuando se omite, el comportamiento es identico al
-   * previo (uso empresa-wide en `notas-credito-page.tsx`).
+   * presente, la pestaña queda ESCOPEADA a ese cliente: se oculta la
+   * columna "Cliente" (redundante — ya hay un solo cliente en juego) y se
+   * pasa `clienteId` al hook. Cuando se omite, el comportamiento es
+   * empresa-wide (uso en `notas-credito-page.tsx`).
    */
   clienteId?: string
 }
 
+export interface NotasCreditoTableProps {
+  notas: NotaCreditoRow[]
+  isLoading: boolean
+  /** Oculta la columna/card "Cliente" cuando la pestaña esta escopeada a un cliente conocido (`scopedToCliente`). Default `true`. */
+  mostrarCliente?: boolean
+  toolbarSlot?: ReactNode
+  containerClassName?: string
+}
+
+/** Presentacional: recibe data via props, sin conocer el hook ni el estado de filtros. */
+export function NotasCreditoTable({
+  notas,
+  isLoading,
+  mostrarCliente = true,
+  toolbarSlot,
+  containerClassName,
+}: NotasCreditoTableProps) {
+  const columns: ColumnDef<NotaCreditoRow>[] = [
+    {
+      accessorKey: 'fecha',
+      header: 'Fecha',
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground">{formatDateTime(row.original.fecha)}</span>
+      ),
+    },
+    {
+      accessorKey: 'nro_ncr',
+      header: 'Nro NCR',
+      cell: ({ row }) => <span className="font-mono font-bold text-xs">{row.original.nro_ncr}</span>,
+    },
+    {
+      accessorKey: 'nro_factura',
+      header: 'Factura',
+      cell: ({ row }) => <span className="font-mono text-xs">#{row.original.nro_factura}</span>,
+    },
+    ...(mostrarCliente
+      ? [
+          {
+            id: 'cliente',
+            header: 'Cliente',
+            cell: ({ row }: { row: { original: NotaCreditoRow } }) => (
+              <div>
+                <p className="text-sm font-medium">{row.original.cliente_nombre}</p>
+                <p className="text-xs text-muted-foreground">{row.original.cliente_identificacion}</p>
+              </div>
+            ),
+          } satisfies ColumnDef<NotaCreditoRow>,
+        ]
+      : []),
+    {
+      accessorKey: 'total_usd',
+      header: 'Monto USD',
+      cell: ({ row }) => <span className="font-bold">{formatUsd(row.original.total_usd)}</span>,
+    },
+    {
+      accessorKey: 'total_bs',
+      header: 'Monto Bs',
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{formatBs(row.original.total_bs)}</span>
+      ),
+    },
+    {
+      accessorKey: 'motivo',
+      header: 'Motivo',
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground truncate max-w-[200px] block">
+          {row.original.motivo}
+        </span>
+      ),
+    },
+  ]
+
+  function renderMobileCard(n: NotaCreditoRow) {
+    return (
+      <Card className="gap-2 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="font-mono font-bold text-xs">{n.nro_ncr}</p>
+            <p className="font-mono text-xs text-muted-foreground">#{n.nro_factura}</p>
+            {mostrarCliente && (
+              <>
+                <p className="text-sm font-medium truncate">{n.cliente_nombre}</p>
+                <p className="text-xs text-muted-foreground truncate">{n.cliente_identificacion}</p>
+              </>
+            )}
+          </div>
+          <div className="text-right shrink-0">
+            <p className="font-bold text-sm">{formatUsd(n.total_usd)}</p>
+            <p className="text-xs text-muted-foreground">{formatBs(n.total_bs)}</p>
+          </div>
+        </div>
+        <span className="text-xs text-muted-foreground">{formatDateTime(n.fecha)}</span>
+      </Card>
+    )
+  }
+
+  return (
+    <DataTable
+      columns={columns}
+      data={notas}
+      isLoading={isLoading}
+      emptyMessage="No hay notas de credito para el periodo o filtros seleccionados."
+      showToolbar
+      showPagination
+      toolbarSlot={toolbarSlot}
+      searchPlaceholder="Buscar por NCR, cliente o RIF..."
+      globalFilterFn={(n, term) => notaCreditoCoincideBusqueda(n, term)}
+      renderMobileCard={renderMobileCard}
+      containerClassName={containerClassName}
+    />
+  )
+}
+
+/** Contenedor: mantiene el estado de filtros + el hook, delega el render a `NotasCreditoTable`. */
 export function NotasCreditoTab({ clienteId }: NotasCreditoTabProps = {}) {
   const [filtros, setFiltros] = useState<FiltrosNotasCreditoState>(filtrosIniciales)
   const scopedToCliente = !!clienteId
-  // cliente-detalle-tablas-pestanas: busqueda CLIENT-SIDE, solo usada cuando
-  // `scopedToCliente` — el rango de fecha sigue siendo el unico filtro SQL
-  // en ese caso (busqueda SQL de `filtros.busqueda` queda sin uso/oculta).
-  const [busquedaLocal, setBusquedaLocal] = useState('')
 
   const { notas, isLoading: loadingNotas } = useNotasCredito({
     fechaDesde: filtros.fechaDesde,
     fechaHasta: filtros.fechaHasta,
-    busqueda: filtros.busqueda,
     clienteId,
   })
 
-  const notasFiltradas = scopedToCliente
-    ? notas.filter((n) =>
-        coincideBusquedaMultiCampo(
-          [n.nro_ncr, n.nro_factura, n.total_usd, n.total_bs, formatDateTime(n.fecha), n.motivo],
-          busquedaLocal
-        )
-      )
-    : notas
-
-  function set<K extends keyof FiltrosNotasCreditoState>(key: K, value: FiltrosNotasCreditoState[K]) {
-    setFiltros((prev) => ({ ...prev, [key]: value }))
-  }
-
   return (
-    <div className="space-y-6">
-      {/* Filtros */}
-      <div className="rounded-2xl bg-card shadow-lg p-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1">
-            <label htmlFor="nc-fecha-desde" className="text-xs text-muted-foreground">
-              Desde
-            </label>
-            <input
-              id="nc-fecha-desde"
-              type="date"
-              value={filtros.fechaDesde}
-              onChange={(e) => set('fechaDesde', e.target.value)}
-              className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label htmlFor="nc-fecha-hasta" className="text-xs text-muted-foreground">
-              Hasta
-            </label>
-            <input
-              id="nc-fecha-hasta"
-              type="date"
-              value={filtros.fechaHasta}
-              onChange={(e) => set('fechaHasta', e.target.value)}
-              className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          {scopedToCliente ? (
-            <div className="flex flex-col gap-1 min-w-[240px] flex-1">
-              <label htmlFor="nc-busqueda-local" className="text-xs text-muted-foreground">
-                Buscar
-              </label>
-              <div className="relative">
-                <MagnifyingGlass
-                  size={16}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                />
-                <Input
-                  id="nc-busqueda-local"
-                  value={busquedaLocal}
-                  placeholder="NCR, factura, monto o motivo..."
-                  onChange={(e) => setBusquedaLocal(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1 min-w-[240px] flex-1">
-              <label htmlFor="nc-busqueda" className="text-xs text-muted-foreground">
-                Buscar
-              </label>
-              <div className="relative">
-                <MagnifyingGlass
-                  size={16}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                />
-                <Input
-                  id="nc-busqueda"
-                  value={filtros.busqueda}
-                  placeholder="NC, cliente o RIF..."
-                  onChange={(e) => set('busqueda', e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Tabla de NCR existentes */}
-      <div className="rounded-2xl bg-card shadow-lg">
-        {loadingNotas ? (
-          <div className="space-y-2 p-4">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="h-12 bg-muted rounded animate-pulse" />
-            ))}
-          </div>
-        ) : notas.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">
-            <FileX className="h-10 w-10 mx-auto mb-3 opacity-40" />
-            <p className="text-sm">No hay notas de credito para el periodo o filtros seleccionados</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="text-left px-4 py-3 font-medium">Fecha</th>
-                  <th className="text-left px-4 py-3 font-medium">Nro NCR</th>
-                  <th className="text-left px-4 py-3 font-medium">Factura</th>
-                  {!scopedToCliente && <th className="text-left px-4 py-3 font-medium">Cliente</th>}
-                  <th className="text-right px-4 py-3 font-medium">Monto USD</th>
-                  <th className="text-right px-4 py-3 font-medium">Monto Bs</th>
-                  <th className="text-left px-4 py-3 font-medium">Motivo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {notasFiltradas.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={scopedToCliente ? 6 : 7}
-                      className="text-center py-8 text-muted-foreground"
-                    >
-                      No hay notas de credito que coincidan con la busqueda
-                    </td>
-                  </tr>
-                ) : (
-                  notasFiltradas.map((n) => (
-                    <tr key={n.id} className="border-b border-muted hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-3 text-xs text-muted-foreground">
-                        {formatDateTime(n.fecha)}
-                      </td>
-                      <td className="px-4 py-3 font-mono font-bold text-xs">{n.nro_ncr}</td>
-                      <td className="px-4 py-3 font-mono text-xs">#{n.nro_factura}</td>
-                      {!scopedToCliente && <td className="px-4 py-3 text-sm">{n.cliente_nombre}</td>}
-                      <td className="px-4 py-3 text-right font-bold">
-                        {formatUsd(n.total_usd)}
-                      </td>
-                      <td className="px-4 py-3 text-right text-muted-foreground">
-                        {formatBs(n.total_bs)}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground truncate max-w-[200px]">
-                        {n.motivo}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+    <div className="h-full flex flex-col min-h-0">
+      <NotasCreditoTable
+        notas={notas}
+        isLoading={loadingNotas}
+        mostrarCliente={!scopedToCliente}
+        toolbarSlot={
+          <DateRangeField
+            value={{ desde: filtros.fechaDesde, hasta: filtros.fechaHasta }}
+            onChange={(v) => setFiltros({ fechaDesde: v.desde, fechaHasta: v.hasta })}
+          />
+        }
+        containerClassName="rounded-t-none"
+      />
     </div>
   )
 }

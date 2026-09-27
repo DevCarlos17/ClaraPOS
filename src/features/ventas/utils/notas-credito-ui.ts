@@ -152,6 +152,36 @@ export function facturaEmpresaCoincideBusqueda(f: FacturaEmpresaBuscable, query:
 }
 
 // =============================================
+// notaCreditoCoincideBusqueda — WU3 (notas-credito-datatable)
+// =============================================
+
+export interface NotaCreditoBuscable {
+  nro_ncr: string
+  cliente_nombre: string
+  cliente_identificacion: string
+}
+
+/**
+ * Predicado PURO usado como `globalFilterFn` de la pestana "Notas de
+ * credito" (`notas-credito-tab.tsx`, WU3) al mover el buscador de
+ * server-side (SQL `busqueda` de `buildNotasCreditoFiltro`) a client-side
+ * sobre el rango de fecha ya cargado — mismo patron que
+ * `facturaEmpresaCoincideBusqueda` (arriba). Mirror del OR de la clausula
+ * `busqueda` de `buildNotasCreditoFiltro` (`notas-credito-admin-filters.ts`):
+ * substring case/acento-insensitive sobre `nro_ncr`/`cliente_nombre`/
+ * `cliente_identificacion` (RIF) — a diferencia de Facturas, esta pestana NO
+ * tiene rama de "estado" (Slice E.b: el filtro de estado se retiro por
+ * completo de NC, nunca se folded en la busqueda).
+ */
+export function notaCreditoCoincideBusqueda(nc: NotaCreditoBuscable, query: string): boolean {
+  const q = normalizarBusqueda(query.trim())
+  if (!q) return true
+  return [nc.nro_ncr, nc.cliente_nombre, nc.cliente_identificacion].some((campo) =>
+    normalizarBusqueda(campo).includes(q)
+  )
+}
+
+// =============================================
 // previewMontoBsNc — Design §Decision 8 (INVARIANTE BIMONETARIA)
 // =============================================
 

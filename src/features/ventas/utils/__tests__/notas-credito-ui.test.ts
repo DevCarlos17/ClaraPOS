@@ -4,6 +4,7 @@ import {
   huboAfectacionCxc,
   facturaCoincideBusqueda,
   facturaEmpresaCoincideBusqueda,
+  notaCreditoCoincideBusqueda,
   previewMontoBsNc,
   derivarLineasNcParcial,
   puedeEmitirNcAdicional,
@@ -157,6 +158,42 @@ describe('facturaEmpresaCoincideBusqueda (WU2: globalFilterFn de Facturas emitid
 
   it('no coincide si ningun campo ni palabra clave matchea', () => {
     expect(facturaEmpresaCoincideBusqueda(base, 'xyz-no-existe')).toBe(false)
+  })
+})
+
+// ─── notaCreditoCoincideBusqueda (notas-credito-datatable, WU3) ────
+// globalFilterFn de la pestana "Notas de credito" — DEBE producir los MISMOS
+// resultados que el SQL que reemplaza (buildNotasCreditoFiltro,
+// notas-credito-admin-filters.ts): substring sobre nro_ncr/cliente_nombre/
+// cliente_identificacion (RIF). A diferencia de Facturas, esta pestana NO
+// tiene rama de "estado" (Slice E.b: el filtro de estado se retiro por
+// completo de NC, nunca se folded en la busqueda).
+
+describe('notaCreditoCoincideBusqueda (WU3: globalFilterFn de Notas de credito, mismo OR-semantics que buildNotasCreditoFiltro)', () => {
+  const base = {
+    nro_ncr: 'NCR-000012',
+    cliente_nombre: 'Maria Perez',
+    cliente_identificacion: 'V-12345678',
+  }
+
+  it('query vacio coincide con cualquier NC', () => {
+    expect(notaCreditoCoincideBusqueda(base, '')).toBe(true)
+  })
+
+  it('coincide por substring de nro_ncr, case-insensitive', () => {
+    expect(notaCreditoCoincideBusqueda(base, 'ncr-0000')).toBe(true)
+  })
+
+  it('coincide por substring de cliente_nombre', () => {
+    expect(notaCreditoCoincideBusqueda(base, 'MARIA')).toBe(true)
+  })
+
+  it('coincide por substring de cliente_identificacion (RIF)', () => {
+    expect(notaCreditoCoincideBusqueda(base, '12345678')).toBe(true)
+  })
+
+  it('no coincide si ningun campo matchea', () => {
+    expect(notaCreditoCoincideBusqueda(base, 'xyz-no-existe')).toBe(false)
   })
 })
 
