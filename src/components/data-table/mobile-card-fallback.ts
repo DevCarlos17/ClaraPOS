@@ -23,14 +23,30 @@ function tieneHeaderTextoValido(
 }
 
 /**
+ * `undefined`/`null`/string-vacio se consideran "sin valor" (ej. columnas
+ * `id:` sin `accessorKey`, donde `cell.getValue()` no resuelve nada). `0` y
+ * `false` SI son valores validos — no se omiten pese a ser falsy.
+ */
+function tieneValorNoVacio(columna: MobileCardColumn): boolean {
+  if (columna.value === undefined || columna.value === null) return false
+  if (typeof columna.value === 'string' && columna.value.trim().length === 0) return false
+  return true
+}
+
+/**
  * Deriva pares label/valor de las columnas visibles de una fila, para usarlos
  * como fallback de la card mobile cuando el consumidor no pasa `renderMobileCard`.
  * Omite columnas cuyo header no sea un string plano o sea un string vacio
- * (ej. columnas de acciones con header render-function o sin header).
+ * (ej. columnas de acciones con header render-function o sin header), y
+ * columnas cuyo valor sea undefined/null/string-vacio (ej. columnas `id:`
+ * sin `accessorKey` — `cell.getValue()` no tiene de donde derivar el dato).
  */
 export function derivarCamposMobile(columnas: MobileCardColumn[]): MobileCardField[] {
-  return columnas.filter(tieneHeaderTextoValido).map((columna) => ({
-    label: columna.header,
-    value: columna.value,
-  }))
+  return columnas
+    .filter(tieneHeaderTextoValido)
+    .filter(tieneValorNoVacio)
+    .map((columna) => ({
+      label: columna.header,
+      value: columna.value,
+    }))
 }
