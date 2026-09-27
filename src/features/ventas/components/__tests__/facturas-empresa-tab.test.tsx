@@ -48,7 +48,7 @@ vi.mock('../consulta-factura-modal', () => ({
     ) : null,
 }))
 
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useFacturasEmpresa } from '../../hooks/use-facturas-empresa'
 import { FacturasEmpresaTab, FacturasEmpresaTable } from '../facturas-empresa-tab'
@@ -103,17 +103,30 @@ describe('FacturasEmpresaTab (Slice C3b) — listado empresa-wide con filtros', 
     vi.useRealTimers()
   })
 
-  it('Slice E.2: input de busqueda UNIFICADO (unico) actualiza el argumento `busqueda` pasado al hook', async () => {
+  it('WU2: el buscador es el UNICO del toolbar del DataTable — ya NO pasa `busqueda` al hook (filtrado paso a client-side)', async () => {
     const user = userEvent.setup()
     render(<FacturasEmpresaTab />)
 
-    await user.type(screen.getByLabelText(/buscar/i), 'C01-0042')
+    await user.type(screen.getByPlaceholderText(/buscar por factura, cliente, rif/i), 'C01-0042')
 
-    await waitFor(() => {
-      expect(mockedUseFacturasEmpresa).toHaveBeenLastCalledWith(
-        expect.objectContaining({ busqueda: 'C01-0042' })
-      )
+    // El hook solo recibe fechaDesde/fechaHasta (server-side) — nunca `busqueda`.
+    expect(mockedUseFacturasEmpresa).not.toHaveBeenCalledWith(
+      expect.objectContaining({ busqueda: expect.anything() })
+    )
+  })
+
+  it('WU2: el buscador del toolbar filtra client-side por nro_factura sobre las facturas ya cargadas', async () => {
+    const user = userEvent.setup()
+    mockedUseFacturasEmpresa.mockReturnValue({
+      facturas: [factura({ id: 'v1', nro_factura: 'C01-000001' }), factura({ id: 'v2', nro_factura: 'C01-000002' })],
+      isLoading: false,
     })
+    render(<FacturasEmpresaTab />)
+
+    await user.type(screen.getByPlaceholderText(/buscar por factura, cliente, rif/i), '000002')
+
+    expect(screen.queryByText('#C01-000001')).not.toBeInTheDocument()
+    expect(screen.getByText('#C01-000002')).toBeInTheDocument()
   })
 
   it('Slice E.2: los 3 inputs separados (nro factura, cliente, RIF) YA NO existen', () => {
@@ -128,17 +141,21 @@ describe('FacturasEmpresaTab (Slice C3b) — listado empresa-wide con filtros', 
     expect(screen.queryByLabelText(/^estado$/i)).not.toBeInTheDocument()
   })
 
-  it('Slice E.b: escribir "abonada" en el input de busqueda pasa busqueda="abonada" al hook (la deteccion de keyword vive en el builder puro, no en el componente)', async () => {
+  it('WU2: escribir "abonada" filtra client-side (globalFilterFn=facturaEmpresaCoincideBusqueda) por el estado derivado, no via el hook', async () => {
     const user = userEvent.setup()
+    mockedUseFacturasEmpresa.mockReturnValue({
+      facturas: [
+        factura({ id: 'v1', nro_factura: 'C01-000001', total_usd: '100.00', saldo_pend_usd: '0.00' }), // CONTADO
+        factura({ id: 'v2', nro_factura: 'C01-000002', total_usd: '100.00', saldo_pend_usd: '40.00' }), // ABONADA
+      ],
+      isLoading: false,
+    })
     render(<FacturasEmpresaTab />)
 
-    await user.type(screen.getByLabelText(/buscar/i), 'abonada')
+    await user.type(screen.getByPlaceholderText(/buscar por factura, cliente, rif/i), 'abonada')
 
-    await waitFor(() => {
-      expect(mockedUseFacturasEmpresa).toHaveBeenLastCalledWith(
-        expect.objectContaining({ busqueda: 'abonada' })
-      )
-    })
+    expect(screen.queryByText('#C01-000001')).not.toBeInTheDocument()
+    expect(screen.getByText('#C01-000002')).toBeInTheDocument()
   })
 
   it('estado vacio: sin facturas, sin error, muestra mensaje explicito', () => {
