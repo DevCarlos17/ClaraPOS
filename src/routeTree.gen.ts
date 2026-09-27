@@ -18,8 +18,8 @@ import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
 import { Route as AppCxcRouteImport } from './routes/_app/cxc'
 import { Route as AppClinicaRouteImport } from './routes/_app/clinica'
 import { Route as AppClientesRouteImport } from './routes/_app/clientes'
-import { Route as authRegisterRouteImport } from './routes/(auth)/register'
 import { Route as authLoginRouteImport } from './routes/(auth)/login'
+import { Route as authAltaClara9r7kRouteImport } from './routes/(auth)/alta-clara-9r7k'
 import { Route as AppCitasRouteRouteImport } from './routes/_app/citas/route'
 import { Route as AppTesoreriaIndexRouteImport } from './routes/_app/tesoreria/index'
 import { Route as AppClientesIndexRouteImport } from './routes/_app/clientes/index'
@@ -123,14 +123,14 @@ const AppClientesRoute = AppClientesRouteImport.update({
   path: '/clientes',
   getParentRoute: () => AppRouteRoute,
 } as any)
-const authRegisterRoute = authRegisterRouteImport.update({
-  id: '/register',
-  path: '/register',
-  getParentRoute: () => authRouteRoute,
-} as any)
 const authLoginRoute = authLoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => authRouteRoute,
+} as any)
+const authAltaClara9r7kRoute = authAltaClara9r7kRouteImport.update({
+  id: '/alta-clara-9r7k',
+  path: '/alta-clara-9r7k',
   getParentRoute: () => authRouteRoute,
 } as any)
 const AppCitasRouteRoute = AppCitasRouteRouteImport.update({
@@ -452,8 +452,8 @@ const AppConfiguracionUsuariosUsuarioIdEditarRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/citas': typeof AppCitasRouteRouteWithChildren
+  '/alta-clara-9r7k': typeof authAltaClara9r7kRoute
   '/login': typeof authLoginRoute
-  '/register': typeof authRegisterRoute
   '/clientes': typeof AppClientesRouteWithChildren
   '/clinica': typeof AppClinicaRoute
   '/cxc': typeof AppCxcRoute
@@ -521,8 +521,8 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/alta-clara-9r7k': typeof authAltaClara9r7kRoute
   '/login': typeof authLoginRoute
-  '/register': typeof authRegisterRoute
   '/clinica': typeof AppClinicaRoute
   '/cxc': typeof AppCxcRoute
   '/dashboard': typeof AppDashboardRoute
@@ -591,8 +591,8 @@ export interface FileRoutesById {
   '/(auth)': typeof authRouteRouteWithChildren
   '/_app': typeof AppRouteRouteWithChildren
   '/_app/citas': typeof AppCitasRouteRouteWithChildren
+  '/(auth)/alta-clara-9r7k': typeof authAltaClara9r7kRoute
   '/(auth)/login': typeof authLoginRoute
-  '/(auth)/register': typeof authRegisterRoute
   '/_app/clientes': typeof AppClientesRouteWithChildren
   '/_app/clinica': typeof AppClinicaRoute
   '/_app/cxc': typeof AppCxcRoute
@@ -663,8 +663,8 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/citas'
+    | '/alta-clara-9r7k'
     | '/login'
-    | '/register'
     | '/clientes'
     | '/clinica'
     | '/cxc'
@@ -732,8 +732,8 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/alta-clara-9r7k'
     | '/login'
-    | '/register'
     | '/clinica'
     | '/cxc'
     | '/dashboard'
@@ -801,8 +801,8 @@ export interface FileRouteTypes {
     | '/(auth)'
     | '/_app'
     | '/_app/citas'
+    | '/(auth)/alta-clara-9r7k'
     | '/(auth)/login'
-    | '/(auth)/register'
     | '/_app/clientes'
     | '/_app/clinica'
     | '/_app/cxc'
@@ -940,18 +940,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppClientesRouteImport
       parentRoute: typeof AppRouteRoute
     }
-    '/(auth)/register': {
-      id: '/(auth)/register'
-      path: '/register'
-      fullPath: '/register'
-      preLoaderRoute: typeof authRegisterRouteImport
-      parentRoute: typeof authRouteRoute
-    }
     '/(auth)/login': {
       id: '/(auth)/login'
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof authLoginRouteImport
+      parentRoute: typeof authRouteRoute
+    }
+    '/(auth)/alta-clara-9r7k': {
+      id: '/(auth)/alta-clara-9r7k'
+      path: '/alta-clara-9r7k'
+      fullPath: '/alta-clara-9r7k'
+      preLoaderRoute: typeof authAltaClara9r7kRouteImport
       parentRoute: typeof authRouteRoute
     }
     '/_app/citas': {
@@ -1371,13 +1371,13 @@ declare module '@tanstack/react-router' {
 }
 
 interface authRouteRouteChildren {
+  authAltaClara9r7kRoute: typeof authAltaClara9r7kRoute
   authLoginRoute: typeof authLoginRoute
-  authRegisterRoute: typeof authRegisterRoute
 }
 
 const authRouteRouteChildren: authRouteRouteChildren = {
+  authAltaClara9r7kRoute: authAltaClara9r7kRoute,
   authLoginRoute: authLoginRoute,
-  authRegisterRoute: authRegisterRoute,
 }
 
 const authRouteRouteWithChildren = authRouteRoute._addFileChildren(
