@@ -53,12 +53,17 @@ El body MUST usar `ScrollArea`; toolbar/footer `shrink-0`. `<main>` -> pagina ->
 
 ### Requirement: Vista mobile en cards bajo `lg` (WU1)
 
-Bajo `lg` (`lg:hidden`) MUST mostrar `Card` por fila; en `lg+` (`hidden lg:block`) la `<Table>` normal, via CSS puro. `renderMobileCard?` tiene precedencia; sin el, fallback deriva pares label/valor de columnas visibles. Tap MUST disparar el mismo `onRowClick` que la fila desktop.
+La vista mobile en cards es OPT-IN: `DataTable` MUST renderizar `Card` por fila bajo `lg` (via el hook `useMobile(1024)`) SOLO cuando el consumidor provee `renderMobileCard?`. Sin `renderMobileCard`, `DataTable` MUST renderizar SIEMPRE la `<Table>` desktop, independientemente del viewport — comportamiento identico al previo al cambio (los 4 consumidores actuales no pasan `renderMobileCard`, por lo que su render NO cambia). Cuando `renderMobileCard` esta presente, tap sobre la card MUST disparar el mismo `onRowClick` que la fila desktop. La utilidad pura `derivarCamposMobile` (pares label/valor, omite headers no-string y valores vacios/`null`/`undefined`) queda disponible para que un consumidor arme su `renderMobileCard`, pero NO se aplica automaticamente como fallback.
 
-#### Scenario: Fallback y tap disparan comportamiento correcto (logica pura + interaccion)
-- GIVEN 3 columnas visibles, sin `renderMobileCard`, `onRowClick` definido
-- WHEN se renderiza y el usuario toca la card (fuera de un boton con `stopPropagation`)
-- THEN muestra 3 pares label/valor de esas columnas y `onRowClick` se invoca con `row.original`
+#### Scenario: Sin `renderMobileCard` renderiza tabla desktop en cualquier viewport
+- GIVEN un consumidor que NO provee `renderMobileCard`
+- WHEN se renderiza bajo `lg` (viewport mobile)
+- THEN `DataTable` muestra la `<Table>` desktop (sin cards), identico al comportamiento previo
+
+#### Scenario: Con `renderMobileCard`, tap dispara `onRowClick` (interaccion)
+- GIVEN `renderMobileCard` provisto y `onRowClick` definido, bajo `lg`
+- WHEN el usuario toca la card (fuera de un boton con `stopPropagation`)
+- THEN se renderiza la card del consumidor y `onRowClick` se invoca con `row.original`
 
 ### Requirement: Preservacion del contrato existente (WU1)
 

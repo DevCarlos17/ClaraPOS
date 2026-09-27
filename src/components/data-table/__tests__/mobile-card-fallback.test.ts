@@ -49,4 +49,45 @@ describe('derivarCamposMobile', () => {
 
     expect(derivarCamposMobile(columnas).map((campo) => campo.label)).toEqual(['B', 'A', 'C'])
   })
+
+  it('omite columnas con value undefined (ej. columnas `id:` sin accessorKey, cell.getValue() no resuelve nada)', () => {
+    const columnas: MobileCardColumn[] = [
+      { header: 'Cliente', value: undefined },
+      { header: 'Total USD', value: 125.5 },
+    ]
+
+    expect(derivarCamposMobile(columnas)).toEqual([{ label: 'Total USD', value: 125.5 }])
+  })
+
+  it('omite columnas con value null', () => {
+    const columnas: MobileCardColumn[] = [
+      { header: 'Estado', value: null },
+      { header: 'Fecha', value: '2026-01-01' },
+    ]
+
+    expect(derivarCamposMobile(columnas)).toEqual([{ label: 'Fecha', value: '2026-01-01' }])
+  })
+
+  it('omite columnas con value string vacio', () => {
+    const columnas: MobileCardColumn[] = [
+      { header: 'Nota', value: '' },
+      { header: 'Nombre', value: 'Juan Perez' },
+    ]
+
+    expect(derivarCamposMobile(columnas)).toEqual([{ label: 'Nombre', value: 'Juan Perez' }])
+  })
+
+  it('conserva valores validos no vacios, incluyendo 0 y false (falsy pero significativos)', () => {
+    const columnas: MobileCardColumn[] = [
+      { header: 'Cantidad', value: 0 },
+      { header: 'Activo', value: false },
+      { header: 'Nombre', value: 'Juan Perez' },
+    ]
+
+    expect(derivarCamposMobile(columnas)).toEqual([
+      { label: 'Cantidad', value: 0 },
+      { label: 'Activo', value: false },
+      { label: 'Nombre', value: 'Juan Perez' },
+    ])
+  })
 })
