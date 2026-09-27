@@ -123,17 +123,6 @@ export function LoginPage() {
               {isLoading ? 'Iniciando sesion...' : 'Iniciar sesion'}
             </button>
           </form>
-
-          <p className="text-center text-sm text-muted-foreground">
-            No tienes cuenta?{' '}
-            <button
-              type="button"
-              onClick={() => navigate({ to: '/register' })}
-              className="text-primary underline-offset-4 hover:underline font-medium"
-            >
-              Registrate
-            </button>
-          </p>
         </div>
       </div>
     </div>

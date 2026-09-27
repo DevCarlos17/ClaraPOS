@@ -1,10 +1,9 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
-import { MagnifyingGlass } from '@phosphor-icons/react'
 import { DataTable } from '@/components/data-table/data-table'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { rangoMesActual } from '../utils/notas-credito-admin-filters'
@@ -12,6 +11,7 @@ import {
   derivarEstadoPago,
   resolverBadgesFactura,
   filaFacturaAtenuada,
+  facturaEmpresaCoincideBusqueda,
   ESTADO_PAGO_LABEL,
   type EstadoPago,
   type BadgeReverso,
@@ -29,25 +29,14 @@ import { ConsultaFacturaModal } from './consulta-factura-modal'
  * un callback prop que hoy no tiene consumidor por defecto — stub
  * inofensivo).
  *
- * Slice E.2 (tester QA feedback): los 3 inputs separados (nro_factura,
- * cliente, RIF) se reemplazaron por UN SOLO input de busqueda (patron POS —
- * ver `producto-buscador.tsx`).
- *
- * Slice E.b (correccion de tester QA sobre E.3): el selector `<select>` de
- * "Estado" agregado en E.3 se RETIRA por completo — el estado se detecta
- * ahora como palabra clave DENTRO del mismo input de busqueda (ver
- * `detectarEstadoFacturaEnBusqueda` en `notas-credito-admin-filters.ts`).
- * Escribir "contado", "credito", "abonada", "reverso parcial" o "reverso
- * total" agrega la clausula de estado correspondiente ADEMAS del match por
- * nro/cliente/RIF — nunca en su lugar.
- *
- * `showToolbar`/`showPagination` del `DataTable` generico se dejan en
- * `false`: ese componente registra el `useReactTable` solo con
- * `getCoreRowModel` (sin `getFilteredRowModel`/`getPaginationRowModel`), por
- * lo que su buscador/paginacion interna caen al fallback de TanStack Table
- * (siempre el listado completo sin truncar) — cosmeticamente presentes pero
- * no funcionales. Filtrado real se hace aqui, contra el SQL empresa-wide via
- * el hook, no client-side. Ver residual risk en el reporte de esta entrega.
+ * WU2 (datatable-referencia-unificado): el buscador se movio de server-side
+ * (SQL, campo `busqueda` del hook) a client-side sobre el rango de fecha ya
+ * cargado — el input UNICO ahora es el propio buscador del `DataTable`
+ * (`toolbarSlot`/`globalFilterFn={facturaEmpresaCoincideBusqueda}`), nunca
+ * un segundo input custom. `FacturasEmpresaFiltros` (el card separado con
+ * Desde/Hasta/Buscar) se retira; Desde/Hasta pasan a vivir DENTRO del
+ * toolbar via `toolbarSlot` (siguen disparando el refetch server-side ya
+ * existente, sin tocar `buildFacturasEmpresaFiltro`/`useFacturasEmpresa`).
  */
 const ESTADO_PAGO_BADGE_CLASS: Record<EstadoPago, string> = {
   CONTADO: 'border-green-200 bg-green-50 text-green-700',
@@ -58,71 +47,109 @@ const ESTADO_PAGO_BADGE_CLASS: Record<EstadoPago, string> = {
 interface FiltrosFacturasEmpresaState {
   fechaDesde: string
   fechaHasta: string
-  busqueda: string
 }
 
 function filtrosIniciales(): FiltrosFacturasEmpresaState {
-  return { ...rangoMesActual(), busqueda: '' }
+  return rangoMesActual()
 }
 
-interface FacturasEmpresaFiltrosProps {
+interface FacturasEmpresaRangoFechaProps {
   filtros: FiltrosFacturasEmpresaState
   onChange: (filtros: FiltrosFacturasEmpresaState) => void
 }
 
-/** Presentacional: solo renderiza inputs, delega el estado al contenedor (`FacturasEmpresaTab`). */
-function FacturasEmpresaFiltros({ filtros, onChange }: FacturasEmpresaFiltrosProps) {
+/** Presentacional: Desde/Hasta renderizados dentro del `toolbarSlot` del `DataTable` (WU2). */
+function FacturasEmpresaRangoFecha({ filtros, onChange }: FacturasEmpresaRangoFechaProps) {
   function set<K extends keyof FiltrosFacturasEmpresaState>(key: K, value: FiltrosFacturasEmpresaState[K]) {
     onChange({ ...filtros, [key]: value })
   }
 
   return (
-    <div className="rounded-2xl bg-card shadow-lg p-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <label htmlFor="facturas-fecha-desde" className="text-xs text-muted-foreground">
-            Desde
-          </label>
-          <input
-            id="facturas-fecha-desde"
-            type="date"
-            value={filtros.fechaDesde}
-            onChange={(e) => set('fechaDesde', e.target.value)}
-            className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="facturas-fecha-hasta" className="text-xs text-muted-foreground">
-            Hasta
-          </label>
-          <input
-            id="facturas-fecha-hasta"
-            type="date"
-            value={filtros.fechaHasta}
-            onChange={(e) => set('fechaHasta', e.target.value)}
-            className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
-        <div className="flex flex-col gap-1 min-w-[240px] flex-1">
-          <label htmlFor="facturas-busqueda" className="text-xs text-muted-foreground">
-            Buscar
-          </label>
-          <div className="relative">
-            <MagnifyingGlass
-              size={16}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-            />
-            <Input
-              id="facturas-busqueda"
-              value={filtros.busqueda}
-              placeholder="Factura, cliente, RIF o estado (contado, crédito, abonada, reverso total/parcial)..."
-              onChange={(e) => set('busqueda', e.target.value)}
-              className="pl-9"
-            />
-          </div>
-        </div>
+    <div className="flex items-end gap-2 shrink-0">
+      <div className="flex flex-col gap-1">
+        <label htmlFor="facturas-fecha-desde" className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          Desde
+        </label>
+        <input
+          id="facturas-fecha-desde"
+          type="date"
+          value={filtros.fechaDesde}
+          onChange={(e) => set('fechaDesde', e.target.value)}
+          className="h-8 md:h-9 rounded-md border border-input px-2 text-xs md:text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label htmlFor="facturas-fecha-hasta" className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          Hasta
+        </label>
+        <input
+          id="facturas-fecha-hasta"
+          type="date"
+          value={filtros.fechaHasta}
+          onChange={(e) => set('fechaHasta', e.target.value)}
+          className="h-8 md:h-9 rounded-md border border-input px-2 text-xs md:text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+        />
       </div>
     </div>
+  )
+}
+
+/** Presentacional compartido: badges de estado de pago + reverso (columna desktop "estado" y card mobile, WU2). */
+function FacturaEstadoBadges({ f }: { f: FacturaParaAnular }) {
+  const badgeReverso: BadgeReverso =
+    f.tiene_reverso_total === 1 ? 'TOTAL' : f.tiene_reverso_parcial === 1 ? 'PARCIAL' : null
+  const badges = resolverBadgesFactura(derivarEstadoPago(f), badgeReverso)
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {badges.estadoPago && (
+        <Badge variant="outline" className={ESTADO_PAGO_BADGE_CLASS[badges.estadoPago]}>
+          {ESTADO_PAGO_LABEL[badges.estadoPago]}
+        </Badge>
+      )}
+      {badges.reverso === 'TOTAL' && (
+        <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
+          Reverso Total
+        </Badge>
+      )}
+      {badges.reverso === 'PARCIAL' && (
+        <Badge variant="outline" className="border-orange-200 bg-orange-50 text-orange-700">
+          Reverso Parcial
+        </Badge>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Presentacional compartido: boton "Aplicar nota de credito" con el MISMO
+ * guard `stopPropagation` en la columna desktop "acciones" y en la card
+ * mobile (WU2) — sin esta guarda el tap/click tambien dispararia el
+ * `onRowClick` de la fila/card y abriria `ConsultaFacturaModal` por encima
+ * de `CrearNcrModal` (ver `facturas-emitidas-consulta-rowclick`).
+ */
+function AplicarNcButton({
+  f,
+  onAplicarNc,
+  className,
+}: {
+  f: FacturaParaAnular
+  onAplicarNc?: (f: FacturaParaAnular) => void
+  className?: string
+}) {
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      className={className}
+      disabled={f.tiene_reverso_total === 1}
+      onClick={(e) => {
+        e.stopPropagation()
+        onAplicarNc?.(f)
+      }}
+    >
+      Aplicar nota de credito
+    </Button>
   )
 }
 
@@ -152,10 +179,48 @@ export interface FacturasEmpresaTableProps {
    * `DataTable`). Omitido = sin handler, comportamiento identico a hoy.
    */
   onRowClick?: (f: FacturaParaAnular) => void
+  /**
+   * WU2 (datatable-referencia-unificado): activa el toolbar/paginacion
+   * internos del `DataTable`. Default `false` — preserva byte-a-byte el
+   * comportamiento de los 3 llamadores existentes (`cliente-detalle.tsx`,
+   * `ventas-consultas-modal.tsx` x2), que NO pasan esta prop. Solo
+   * `FacturasEmpresaTab` (pestaña "Facturas emitidas") la activa.
+   */
+  showToolbar?: boolean
+  /** Ver `showToolbar` — mismo default/alcance. */
+  showPagination?: boolean
+  /** Controles custom (Desde/Hasta) en la fila del buscador del `DataTable`. Pass-through — ver `DataTableProps.toolbarSlot`. */
+  toolbarSlot?: ReactNode
+  /** Placeholder del buscador propio del `DataTable`. Pass-through. */
+  searchPlaceholder?: string
+  /** Predicado custom del buscador propio del `DataTable`. Pass-through. */
+  globalFilterFn?: (f: FacturaParaAnular, term: string) => boolean
+  /**
+   * Card mobile OPT-IN (`< lg`). Pass-through al `DataTable` — se pasa
+   * SOLO desde `FacturasEmpresaTab` (pestaña "Facturas emitidas"); los otros
+   * 3 llamadores no la pasan y siguen mostrando SIEMPRE la tabla desktop.
+   */
+  renderMobileCard?: (f: FacturaParaAnular) => ReactNode
+  /** Costura para adosar el `SegmentedTabs` (pestaña "Facturas emitidas") a la tarjeta de la tabla. Pass-through. */
+  containerClassName?: string
 }
 
 /** Presentacional: recibe data via props, sin conocer el hook ni el estado de filtros. */
-export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc, mostrarAcciones, mostrarCliente, onRowClick }: FacturasEmpresaTableProps) {
+export function FacturasEmpresaTable({
+  facturas,
+  isLoading,
+  onAplicarNc,
+  mostrarAcciones,
+  mostrarCliente,
+  onRowClick,
+  showToolbar = false,
+  showPagination = false,
+  toolbarSlot,
+  searchPlaceholder,
+  globalFilterFn,
+  renderMobileCard,
+  containerClassName,
+}: FacturasEmpresaTableProps) {
   const columns: ColumnDef<FacturaParaAnular>[] = [
     {
       accessorKey: 'fecha',
@@ -200,70 +265,26 @@ export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc, mostrar
     {
       id: 'estado',
       header: 'Estado',
-      cell: ({ row }) => {
-        const f = row.original
-        // Reuso parcial de la capa pura de `notas-credito-ui-pos` (Design
-        // §Testing Strategy: "reuso sin tests nuevos"): a diferencia de
-        // `useBadgesReversoSesion`/`calcularBadgesReversoPorVenta` (que
-        // acumulan facturado-vs-reversado linea por linea via una query
-        // adicional de `ventas_det`/`notas_credito_det`), aqui se deriva el
-        // badge directo de los flags `tiene_reverso_total`/
-        // `tiene_reverso_parcial` YA presentes en la fila (Slice A, EXISTS
-        // sobre `notas_credito.tipo`) — evita una query extra empresa-wide
-        // no exigida por design.md para esta pestana.
-        const badgeReverso: BadgeReverso =
-          f.tiene_reverso_total === 1 ? 'TOTAL' : f.tiene_reverso_parcial === 1 ? 'PARCIAL' : null
-        const badges = resolverBadgesFactura(derivarEstadoPago(f), badgeReverso)
-        return (
-          <div className="flex flex-wrap items-center gap-1">
-            {badges.estadoPago && (
-              <Badge variant="outline" className={ESTADO_PAGO_BADGE_CLASS[badges.estadoPago]}>
-                {ESTADO_PAGO_LABEL[badges.estadoPago]}
-              </Badge>
-            )}
-            {badges.reverso === 'TOTAL' && (
-              <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
-                Reverso Total
-              </Badge>
-            )}
-            {badges.reverso === 'PARCIAL' && (
-              <Badge variant="outline" className="border-orange-200 bg-orange-50 text-orange-700">
-                Reverso Parcial
-              </Badge>
-            )}
-          </div>
-        )
-      },
+      // Reuso parcial de la capa pura de `notas-credito-ui-pos` (Design
+      // §Testing Strategy: "reuso sin tests nuevos"): a diferencia de
+      // `useBadgesReversoSesion`/`calcularBadgesReversoPorVenta` (que
+      // acumulan facturado-vs-reversado linea por linea via una query
+      // adicional de `ventas_det`/`notas_credito_det`), `FacturaEstadoBadges`
+      // deriva el badge directo de los flags `tiene_reverso_total`/
+      // `tiene_reverso_parcial` YA presentes en la fila (Slice A, EXISTS
+      // sobre `notas_credito.tipo`) — evita una query extra empresa-wide no
+      // exigida por design.md para esta pestana. Extraida a componente
+      // compartido (WU2) para reusarse identica en la card mobile.
+      cell: ({ row }) => <FacturaEstadoBadges f={row.original} />,
     },
     ...(mostrarAcciones !== false
       ? [
           {
             id: 'acciones',
             header: '',
-            cell: ({ row }: { row: { original: FacturaParaAnular } }) => {
-              const f = row.original
-              return (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={f.tiene_reverso_total === 1}
-                  onClick={(e) => {
-                    // facturas-emitidas-consulta-rowclick: esta fila puede
-                    // tener `onRowClick` (Facturas emitidas admin), a
-                    // diferencia de los otros 3 llamadores que ocultan este
-                    // boton con `mostrarAcciones={false}` — sin esta guarda
-                    // el click en el boton dispararia TAMBIEN el row-click
-                    // y abriria `ConsultaFacturaModal` por encima de
-                    // `CrearNcrModal`.
-                    e.stopPropagation()
-                    onAplicarNc?.(f)
-                  }}
-                >
-                  Aplicar nota de credito
-                </Button>
-              )
-            },
+            cell: ({ row }: { row: { original: FacturaParaAnular } }) => (
+              <AplicarNcButton f={row.original} onAplicarNc={onAplicarNc} />
+            ),
           } satisfies ColumnDef<FacturaParaAnular>,
         ]
       : []),
@@ -276,8 +297,13 @@ export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc, mostrar
       isLoading={isLoading}
       onRowClick={onRowClick}
       emptyMessage="No hay facturas para el periodo o filtros seleccionados."
-      showToolbar={false}
-      showPagination={false}
+      showToolbar={showToolbar}
+      showPagination={showPagination}
+      toolbarSlot={toolbarSlot}
+      searchPlaceholder={searchPlaceholder}
+      globalFilterFn={globalFilterFn}
+      renderMobileCard={renderMobileCard}
+      containerClassName={containerClassName}
       rowClassName={(f) => (filaFacturaAtenuada(f) ? 'text-muted-foreground/70' : undefined)}
       rowProps={(f): Record<string, string> => (filaFacturaAtenuada(f) ? { 'data-atenuada': 'true' } : {})}
     />
@@ -300,7 +326,6 @@ export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}
   const { facturas, isLoading } = useFacturasEmpresa({
     fechaDesde: filtros.fechaDesde,
     fechaHasta: filtros.fechaHasta,
-    busqueda: filtros.busqueda,
   })
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaParaAnular | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
@@ -315,14 +340,48 @@ export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}
     setModalOpen(true)
   }
 
+  // WU2: card mobile (`< lg`) — SOLO datos identificatorios (nro/cliente/
+  // total USD-Bs/fecha/badges), mismo `AplicarNcButton`/`FacturaEstadoBadges`
+  // que la columna desktop. `stopPropagation` (dentro de `AplicarNcButton`)
+  // evita que el tap en el boton dispare el `onClick` de la card (que abre
+  // `ConsultaFacturaModal` via `onRowClick={setFacturaConsulta}` abajo).
+  function renderFacturaMobileCard(f: FacturaParaAnular) {
+    return (
+      <Card className={`gap-2 p-3 ${filaFacturaAtenuada(f) ? 'text-muted-foreground/70' : ''}`}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="font-mono font-bold text-xs">#{f.nro_factura}</p>
+            <p className="text-sm font-medium truncate">{f.cliente_nombre}</p>
+            <p className="text-xs text-muted-foreground truncate">{f.cliente_identificacion}</p>
+          </div>
+          <div className="text-right shrink-0">
+            <p className="font-bold text-sm">{formatUsd(f.total_usd)}</p>
+            <p className="text-xs text-muted-foreground">{formatBs(f.total_bs)}</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">{formatDateTime(f.fecha)}</span>
+          <FacturaEstadoBadges f={f} />
+        </div>
+        <AplicarNcButton f={f} onAplicarNc={handleAplicarNc} className="w-full" />
+      </Card>
+    )
+  }
+
   return (
-    <div className="space-y-4">
-      <FacturasEmpresaFiltros filtros={filtros} onChange={setFiltros} />
+    <div className="h-full flex flex-col min-h-0">
       <FacturasEmpresaTable
         facturas={facturas}
         isLoading={isLoading}
         onAplicarNc={handleAplicarNc}
         onRowClick={setFacturaConsulta}
+        showToolbar
+        showPagination
+        toolbarSlot={<FacturasEmpresaRangoFecha filtros={filtros} onChange={setFiltros} />}
+        searchPlaceholder="Buscar por factura, cliente, RIF o estado (contado, crédito, abonada, reverso total/parcial)..."
+        globalFilterFn={(f, term) => facturaEmpresaCoincideBusqueda(f, term)}
+        renderMobileCard={renderFacturaMobileCard}
+        containerClassName="rounded-t-none"
       />
       <CrearNcrModal
         isOpen={modalOpen}

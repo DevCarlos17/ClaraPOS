@@ -7,6 +7,7 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { TasaUpdateModal } from '@/features/configuracion/components/tasa-update-modal'
 import { formatTasa } from '@/lib/currency'
 import { cn } from '@/lib/utils'
+import { usePageTitleStore } from '@/stores/page-title-store'
 
 interface TopBarProps {
   onMenuClick: () => void
@@ -21,6 +22,7 @@ function isTasaDesactualizada(createdAt: string): boolean {
 }
 
 export function TopBar({ onMenuClick }: TopBarProps) {
+  const titulo = usePageTitleStore((state) => state.titulo)
   const { tasa, tasaValor, isLoading } = useTasaActual()
   const [tasaModalOpen, setTasaModalOpen] = useState(false)
   const [showTasaTooltip, setShowTasaTooltip] = useState(false)
@@ -43,14 +45,19 @@ export function TopBar({ onMenuClick }: TopBarProps) {
 
   return (
     <header className="h-16 bg-background/90 backdrop-blur-xl border-b border-transparent px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-40 w-full transition-colors duration-300">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0">
         <button
           onClick={onMenuClick}
-          className="lg:hidden p-2 hover:bg-black/5 rounded-xl transition-all duration-200 active:scale-[0.98] z-50 relative cursor-pointer"
+          className="lg:hidden p-2 hover:bg-black/5 rounded-xl transition-all duration-200 active:scale-[0.98] z-50 relative cursor-pointer flex-shrink-0"
           aria-label="Abrir menu"
         >
           <List className="w-5 h-5 text-foreground" />
         </button>
+        {titulo && (
+          <h1 className="lg:hidden text-base font-semibold text-foreground truncate">
+            {titulo}
+          </h1>
+        )}
       </div>
 
       <div className="flex items-center gap-3 ml-auto">
