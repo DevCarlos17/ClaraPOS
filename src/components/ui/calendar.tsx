@@ -7,21 +7,43 @@ import { buttonVariants } from '@/components/ui/button'
 
 export type CalendarProps = React.ComponentProps<typeof DayPicker>
 
+// Rango de anios por defecto para los dropdowns de mes/anio: desde 2020
+// hasta el anio proximo. Permite saltar de anio sin clickear mes a mes.
+const DEFAULT_START_MONTH = new Date(2020, 0)
+const DEFAULT_END_MONTH = new Date(new Date().getFullYear() + 1, 11)
+
 export function Calendar({
   className,
   classNames,
   showOutsideDays = true,
+  captionLayout = 'dropdown',
+  startMonth = DEFAULT_START_MONTH,
+  endMonth = DEFAULT_END_MONTH,
   ...props
 }: CalendarProps) {
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
+      captionLayout={captionLayout}
+      startMonth={startMonth}
+      endMonth={endMonth}
       className={cn('p-3', className)}
       classNames={{
         months: 'flex flex-col sm:flex-row gap-y-4 sm:gap-y-0 sm:gap-x-4',
         month: 'space-y-4',
         month_caption: 'flex justify-center pt-1 relative items-center',
-        caption_label: 'text-sm font-medium',
+        caption_label: cn(
+          'text-sm font-medium',
+          // Con captionLayout="dropdown" el label real se reemplaza por los
+          // <select>; se muestra como el texto visible del dropdown.
+          captionLayout !== 'label' &&
+            'inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 text-sm [&>svg]:size-3.5 [&>svg]:opacity-50'
+        ),
+        dropdowns: 'flex items-center justify-center gap-1.5',
+        dropdown_root: 'relative',
+        // <select> nativo transparente por encima del caption_label visible
+        // (patron shadcn rdp v9): captura el click/teclado sin romper el estilo.
+        dropdown: 'absolute inset-0 h-full w-full cursor-pointer opacity-0',
         nav: 'space-x-1 flex items-center',
         button_previous: cn(
           buttonVariants({ variant: 'outline' }),

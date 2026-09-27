@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
 import { DataTable } from '@/components/data-table/data-table'
+import { DateRangeField } from '@/components/data-table/date-range-field'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
@@ -51,47 +52,6 @@ interface FiltrosFacturasEmpresaState {
 
 function filtrosIniciales(): FiltrosFacturasEmpresaState {
   return rangoMesActual()
-}
-
-interface FacturasEmpresaRangoFechaProps {
-  filtros: FiltrosFacturasEmpresaState
-  onChange: (filtros: FiltrosFacturasEmpresaState) => void
-}
-
-/** Presentacional: Desde/Hasta renderizados dentro del `toolbarSlot` del `DataTable` (WU2). */
-function FacturasEmpresaRangoFecha({ filtros, onChange }: FacturasEmpresaRangoFechaProps) {
-  function set<K extends keyof FiltrosFacturasEmpresaState>(key: K, value: FiltrosFacturasEmpresaState[K]) {
-    onChange({ ...filtros, [key]: value })
-  }
-
-  return (
-    <div className="flex items-end gap-2 shrink-0">
-      <div className="flex flex-col gap-1">
-        <label htmlFor="facturas-fecha-desde" className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          Desde
-        </label>
-        <input
-          id="facturas-fecha-desde"
-          type="date"
-          value={filtros.fechaDesde}
-          onChange={(e) => set('fechaDesde', e.target.value)}
-          className="h-8 md:h-9 rounded-md border border-input px-2 text-xs md:text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-      </div>
-      <div className="flex flex-col gap-1">
-        <label htmlFor="facturas-fecha-hasta" className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          Hasta
-        </label>
-        <input
-          id="facturas-fecha-hasta"
-          type="date"
-          value={filtros.fechaHasta}
-          onChange={(e) => set('fechaHasta', e.target.value)}
-          className="h-8 md:h-9 rounded-md border border-input px-2 text-xs md:text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-      </div>
-    </div>
-  )
 }
 
 /** Presentacional compartido: badges de estado de pago + reverso (columna desktop "estado" y card mobile, WU2). */
@@ -377,7 +337,12 @@ export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}
         onRowClick={setFacturaConsulta}
         showToolbar
         showPagination
-        toolbarSlot={<FacturasEmpresaRangoFecha filtros={filtros} onChange={setFiltros} />}
+        toolbarSlot={
+          <DateRangeField
+            value={{ desde: filtros.fechaDesde, hasta: filtros.fechaHasta }}
+            onChange={(v) => setFiltros({ fechaDesde: v.desde, fechaHasta: v.hasta })}
+          />
+        }
         searchPlaceholder="Buscar por factura, cliente, RIF o estado (contado, crédito, abonada, reverso total/parcial)..."
         globalFilterFn={(f, term) => facturaEmpresaCoincideBusqueda(f, term)}
         renderMobileCard={renderFacturaMobileCard}
