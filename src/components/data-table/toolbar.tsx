@@ -43,9 +43,9 @@ export function DataTableToolbar<TData>({
 
   return (
     <div className="flex flex-col gap-3 md:gap-4 w-full">
-      <div className="flex flex-row flex-wrap items-center justify-between gap-2 md:gap-3 w-full">
+      <div className="flex flex-col md:flex-row md:flex-wrap items-stretch md:items-center justify-between gap-2 md:gap-3 w-full">
         <div className="flex flex-1 min-w-0 flex-wrap items-center gap-2 md:gap-3">
-          <div className="relative flex-1 min-w-[140px] sm:flex-none sm:w-[220px] lg:w-[280px] shrink">
+          <div className="relative w-full md:flex-none md:w-[220px] lg:w-[280px] shrink">
             <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder={searchPlaceholder}
