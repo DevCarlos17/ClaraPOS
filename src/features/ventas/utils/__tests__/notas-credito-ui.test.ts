@@ -3,6 +3,7 @@ import {
   derivarEstadoPago,
   huboAfectacionCxc,
   facturaCoincideBusqueda,
+  facturaEmpresaCoincideBusqueda,
   previewMontoBsNc,
   derivarLineasNcParcial,
   puedeEmitirNcAdicional,
@@ -98,6 +99,64 @@ describe('facturaCoincideBusqueda (Slice 2: buscador client-side sobre nro_factu
 
   it('no coincide si ningun campo contiene el query', () => {
     expect(facturaCoincideBusqueda(base, 'xyz-no-existe')).toBe(false)
+  })
+})
+
+// ─── facturaEmpresaCoincideBusqueda (WU2, datatable-referencia-unificado) ────
+// globalFilterFn de la pestana admin "Facturas emitidas" — DEBE producir los
+// MISMOS resultados que el SQL que reemplaza (buildFacturasEmpresaFiltro,
+// notas-credito-admin-filters.ts): substring sobre nro_factura/cliente_nombre/
+// cliente_identificacion (RIF) MAS una rama de estado que SOLO se activa con
+// una palabra clave EXACTA (nunca substring laxo como facturaCoincideBusqueda
+// de arriba, que sirve a un buscador de sesion POS con semantica distinta).
+
+describe('facturaEmpresaCoincideBusqueda (WU2: globalFilterFn de Facturas emitidas admin, mismo OR-semantics que buildFacturasEmpresaFiltro)', () => {
+  const base = {
+    nro_factura: 'C01-000042',
+    cliente_nombre: 'Maria Perez',
+    cliente_identificacion: 'V-12345678',
+    total_usd: '100.00',
+    saldo_pend_usd: '0.00',
+  }
+
+  it('query vacio coincide con cualquier factura', () => {
+    expect(facturaEmpresaCoincideBusqueda(base, '')).toBe(true)
+  })
+
+  it('coincide por substring de nro_factura, case-insensitive', () => {
+    expect(facturaEmpresaCoincideBusqueda(base, 'c01-0000')).toBe(true)
+  })
+
+  it('coincide por substring de cliente_nombre', () => {
+    expect(facturaEmpresaCoincideBusqueda(base, 'MARIA')).toBe(true)
+  })
+
+  it('coincide por substring de cliente_identificacion (RIF)', () => {
+    expect(facturaEmpresaCoincideBusqueda(base, '12345678')).toBe(true)
+  })
+
+  it('palabra clave exacta "contado" coincide cuando el estado derivado es CONTADO', () => {
+    expect(facturaEmpresaCoincideBusqueda(base, 'contado')).toBe(true)
+  })
+
+  it('palabra clave exacta "credito" NO coincide cuando el estado derivado es CONTADO (no confunde estados)', () => {
+    expect(facturaEmpresaCoincideBusqueda(base, 'credito')).toBe(false)
+  })
+
+  it('palabra clave exacta "reverso total" coincide cuando tiene_reverso_total=1', () => {
+    expect(facturaEmpresaCoincideBusqueda({ ...base, tiene_reverso_total: 1 }, 'reverso total')).toBe(true)
+  })
+
+  it('palabra clave exacta "reverso parcial" coincide cuando tiene_reverso_parcial=1', () => {
+    expect(facturaEmpresaCoincideBusqueda({ ...base, tiene_reverso_parcial: 1 }, 'reverso parcial')).toBe(true)
+  })
+
+  it('"reverso" SOLO (sin "total"/"parcial") NO dispara la rama de estado, mismo criterio que detectarEstadoFacturaEnBusqueda del builder SQL', () => {
+    expect(facturaEmpresaCoincideBusqueda({ ...base, tiene_reverso_total: 1 }, 'reverso')).toBe(false)
+  })
+
+  it('no coincide si ningun campo ni palabra clave matchea', () => {
+    expect(facturaEmpresaCoincideBusqueda(base, 'xyz-no-existe')).toBe(false)
   })
 })
 

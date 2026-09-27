@@ -92,6 +92,66 @@ export function facturaCoincideBusqueda(f: FacturaBuscable, query: string): bool
 }
 
 // =============================================
+// facturaEmpresaCoincideBusqueda — WU2 (datatable-referencia-unificado)
+// =============================================
+
+export interface FacturaEmpresaBuscable {
+  nro_factura: string
+  cliente_nombre: string
+  cliente_identificacion: string
+  total_usd: DecimalInput
+  saldo_pend_usd: DecimalInput
+  tiene_reverso_total?: number
+  tiene_reverso_parcial?: number
+}
+
+/**
+ * Rama de estado por PALABRA CLAVE EXACTA — mismas 5 claves y mismo criterio
+ * que `ESTADO_FACTURA_POR_PALABRA_CLAVE`/`detectarEstadoFacturaEnBusqueda`
+ * (`notas-credito-admin-filters.ts`), duplicada deliberadamente en JS puro
+ * (Design §Open Questions: "Recommend accepting duplication now") en vez de
+ * importar el builder SQL — este archivo no depende de texto SQL.
+ */
+const ESTADO_EMPRESA_KEYWORD_MATCH: Record<string, (f: FacturaEmpresaBuscable) => boolean> = {
+  contado: (f) => derivarEstadoPago(f) === 'CONTADO',
+  credito: (f) => derivarEstadoPago(f) === 'CREDITO',
+  abonada: (f) => derivarEstadoPago(f) === 'ABONADA',
+  'reverso parcial': (f) => f.tiene_reverso_parcial === 1,
+  'reverso total': (f) => f.tiene_reverso_total === 1,
+}
+
+/**
+ * Predicado PURO usado como `globalFilterFn` de la pestana admin "Facturas
+ * emitidas" (`facturas-empresa-tab.tsx`, WU2) al mover el buscador de
+ * server-side (SQL) a client-side sobre el rango de fecha ya cargado. DEBE
+ * producir los MISMOS resultados que `buildFacturasEmpresaFiltro`
+ * (`notas-credito-admin-filters.ts`) para el mismo termino: substring
+ * case/acento-insensitive sobre `nro_factura`/`cliente_nombre`/
+ * `cliente_identificacion` (RIF), MAS -si el termino ES EXACTAMENTE una
+ * palabra clave de estado conocida- la clausula de estado correspondiente
+ * como una rama ADICIONAL del OR (nunca en lugar del match por
+ * nro/cliente/RIF).
+ *
+ * A proposito NO reusa `facturaCoincideBusqueda` (de arriba): esa funcion
+ * sirve al buscador de sesion POS (`nota-credito-pos-modal.tsx`), con una
+ * semantica mas laxa (substring genérico sobre las labels ya renderizadas,
+ * por lo que p.ej. buscar "reverso" solo YA matchea "Reverso Parcial").
+ * Reusarla aqui cambiaria los resultados visibles respecto al SQL que esta
+ * pestana reemplaza — la nueva busqueda client-side debe ser una migracion
+ * transparente, no una expansion de resultados.
+ */
+export function facturaEmpresaCoincideBusqueda(f: FacturaEmpresaBuscable, query: string): boolean {
+  const q = normalizarBusqueda(query.trim())
+  if (!q) return true
+  const coincideCampo = [f.nro_factura, f.cliente_nombre, f.cliente_identificacion].some((campo) =>
+    normalizarBusqueda(campo).includes(q)
+  )
+  if (coincideCampo) return true
+  const matchEstado = ESTADO_EMPRESA_KEYWORD_MATCH[q]
+  return matchEstado ? matchEstado(f) : false
+}
+
+// =============================================
 // previewMontoBsNc — Design §Decision 8 (INVARIANTE BIMONETARIA)
 // =============================================
 
