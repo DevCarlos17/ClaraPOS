@@ -25,8 +25,19 @@ const TABS = [
  *
  * facturas-emitidas-tabla-tabs-ui: tabs migradas del `Tabs` shadcn al mismo
  * `SegmentedTabs` compartido que usa `kardex.tsx` (tab-bar de ancho natural,
- * agrupada a la izquierda, con borde + subrayado azul animado) para lograr
- * el look de "cap" adjunto a la tarjeta de filtros sin apilar hacks locales.
+ * agrupada a la izquierda, con borde + subrayado azul animado).
+ *
+ * facturas-mobile-bottomsheet (Cambio 3): el look "adosado" (tabs fundidas
+ * a la tarjeta via `containerClassName="rounded-t-none"`) se retira — ambas
+ * pestañas (`FacturasEmpresaTab`/`NotasCreditoTab`) ya NO pasan esa prop, la
+ * tarjeta del `DataTable` recupera sus esquinas redondeadas normales
+ * (default `rounded-2xl`). El resultado es identico al de `kardex.tsx`: sin
+ * gap entre `SegmentedTabs` y el contenido (`flex flex-col` sin `gap-*`,
+ * misma cadena que aqui), el borde SUPERIOR de la tarjeta hace de linea
+ * base de ancho completo debajo de las tabs de ancho natural — sin wrapper
+ * ni clase extra, es la misma estructura `flex flex-col min-h-0` que ya
+ * existia (WU2/WU3, parrafo de abajo), solo cambia que el `DataTable` deja
+ * de recibir la esquina recortada.
  *
  * WU2/WU3 (datatable-referencia-unificado / notas-credito-datatable): AMBAS
  * pestañas activan el `DataTable` con toolbar/paginacion internos
