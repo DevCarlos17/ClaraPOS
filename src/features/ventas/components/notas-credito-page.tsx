@@ -31,13 +31,22 @@ const TABS = [
  * a la tarjeta via `containerClassName="rounded-t-none"`) se retira — ambas
  * pestañas (`FacturasEmpresaTab`/`NotasCreditoTab`) ya NO pasan esa prop, la
  * tarjeta del `DataTable` recupera sus esquinas redondeadas normales
- * (default `rounded-2xl`). El resultado es identico al de `kardex.tsx`: sin
- * gap entre `SegmentedTabs` y el contenido (`flex flex-col` sin `gap-*`,
- * misma cadena que aqui), el borde SUPERIOR de la tarjeta hace de linea
- * base de ancho completo debajo de las tabs de ancho natural — sin wrapper
- * ni clase extra, es la misma estructura `flex flex-col min-h-0` que ya
- * existia (WU2/WU3, parrafo de abajo), solo cambia que el `DataTable` deja
- * de recibir la esquina recortada.
+ * (default `rounded-2xl`).
+ *
+ * Bugfix (mismo cambio, revision posterior): quitar `rounded-t-none` NO
+ * bastaba — el wrapper de este componente es `flex flex-col` (a diferencia
+ * de `kardex.tsx`, que usa un `<div>` block plano `space-y-0`), y
+ * flexbox aplica `align-items: stretch` por default: `SegmentedTabs`
+ * (un flex ITEM de este wrapper, aunque su `display` INTERNO sea
+ * `inline-flex`) se estiraba a lo ancho completo del contenedor,
+ * fusionando visualmente la capsula de tabs con la barra blanca completa
+ * en vez de mostrarla de ancho natural. Fix real (`self-start` en el
+ * propio `SegmentedTabs`, ver `segmented-tabs.tsx`) — no reproducible con
+ * cambios solo en este archivo. El resultado visual final SI es identico
+ * al de `kardex.tsx`: sin gap entre `SegmentedTabs` y el contenido, el
+ * borde SUPERIOR de la tarjeta del `DataTable` hace de linea base de
+ * ancho completo debajo de las tabs de ancho natural — misma estructura
+ * `flex flex-col min-h-0` que ya existia (WU2/WU3, parrafo de abajo).
  *
  * WU2/WU3 (datatable-referencia-unificado / notas-credito-datatable): AMBAS
  * pestañas activan el `DataTable` con toolbar/paginacion internos

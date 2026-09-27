@@ -197,6 +197,7 @@ export function NotasCreditoTab({ clienteId }: NotasCreditoTabProps = {}) {
             onChange={(v) => setFiltros({ fechaDesde: v.desde, fechaHasta: v.hasta })}
           />
         }
+        containerClassName={scopedToCliente ? undefined : 'rounded-tl-none'}
       />
     </div>
   )

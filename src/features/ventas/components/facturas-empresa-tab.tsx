@@ -356,6 +356,7 @@ export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}
         searchPlaceholder="Buscar por factura, cliente, RIF o estado (contado, crédito, abonada, reverso total/parcial)..."
         globalFilterFn={(f, term) => facturaEmpresaCoincideBusqueda(f, term)}
         renderMobileCard={renderFacturaMobileRow}
+        containerClassName="rounded-tl-none"
       />
       <CrearNcrModal
         isOpen={modalOpen}
