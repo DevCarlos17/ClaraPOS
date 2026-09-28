@@ -17,7 +17,7 @@
   --color-primary-foreground: #ffffff;
 
   --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
+  --color-muted-foreground: #475569;
 
   --color-accent: #e5e5ea;
   --color-accent-foreground: #1d1d1f;
@@ -124,7 +124,7 @@
   --color-accent: #eff6ff;
   --color-accent-foreground: #1e40af;
   --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
+  --color-muted-foreground: #475569;
   --color-sidebar: #1e3a8a;
   --color-sidebar-fg: #f1f5f9;
   --color-sidebar-muted-fg: rgb(255 255 255 / 0.75);
@@ -139,7 +139,7 @@
   --color-accent: #ecfdf5;
   --color-accent-foreground: #065f46;
   --color-muted: #f0fdf4;
-  --color-muted-foreground: #6b7280;
+  --color-muted-foreground: #4b5563;
   --color-sidebar: #064e3b;
   --color-sidebar-fg: #f0fdf4;
   --color-sidebar-muted-fg: rgb(255 255 255 / 0.65);
@@ -154,7 +154,7 @@
   --color-accent: #fdf2f8;
   --color-accent-foreground: #9d174d;
   --color-muted: #fdf4f8;
-  --color-muted-foreground: #6b7280;
+  --color-muted-foreground: #4b5563;
   --color-sidebar: #831843;
   --color-sidebar-fg: #fdf2f8;
   --color-sidebar-muted-fg: rgb(255 255 255 / 0.65);
@@ -169,7 +169,7 @@
   --color-accent: #f5f3ff;
   --color-accent-foreground: #5b21b6;
   --color-muted: #f5f3ff;
-  --color-muted-foreground: #6b7280;
+  --color-muted-foreground: #4b5563;
   --color-sidebar: #4c1d95;
   --color-sidebar-fg: #f5f3ff;
   --color-sidebar-muted-fg: rgb(255 255 255 / 0.65);
@@ -184,7 +184,7 @@
   --color-accent: #fffbeb;
   --color-accent-foreground: #92400e;
   --color-muted: #fef9ee;
-  --color-muted-foreground: #78716c;
+  --color-muted-foreground: #57534e;
   --color-sidebar: #78350f;
   --color-sidebar-fg: #fef9ee;
   --color-sidebar-muted-fg: rgb(255 255 255 / 0.65);
@@ -199,7 +199,7 @@
   --color-accent: #eff6ff;
   --color-accent-foreground: #1e40af;
   --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
+  --color-muted-foreground: #475569;
   --color-sidebar: #ffffff;
   --color-sidebar-accent: #2563eb;
 }
@@ -210,7 +210,7 @@
   --color-accent: #eff6ff;
   --color-accent-foreground: #1e40af;
   --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
+  --color-muted-foreground: #475569;
   --color-sidebar: #0f172a;
   --color-sidebar-fg: #f1f5f9;
   --color-sidebar-muted-fg: rgb(255 255 255 / 0.65);
