@@ -20,6 +20,9 @@ import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate, formatDateTime } from '@/lib/format'
 import { montoCostoGasto, montoIvaGasto, montoTotalGasto } from '@/features/contabilidad/lib/gasto-montos'
 import { GastoForm } from './gasto-form'
+import { GastoWizardSheet } from './wizard/gasto-wizard-sheet'
+import { useGastoWizardStore } from '@/stores/gasto-wizard-store'
+import { useMobile } from '@/hooks/use-mobile'
 import { CuentaGastoModal } from './cuenta-gasto-modal'
 import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
 import {
@@ -155,6 +158,8 @@ export function GastosDashboard() {
 
   // ── Modales
   const [formOpen, setFormOpen]               = useState(false)
+  const isMobile = useMobile(1024)
+  const openWizardSheet = useGastoWizardStore((s) => s.openSheet)
   const [cuentaModalOpen, setCuentaModalOpen] = useState(false)
   const [detalleId, setDetalleId]             = useState<string | null>(null)
 
@@ -584,12 +589,15 @@ export function GastosDashboard() {
     )
   }
 
-  if (formOpen) {
+  if (formOpen && !isMobile) {
     return <GastoForm onClose={() => setFormOpen(false)} />
   }
 
   return (
     <div className="space-y-4">
+
+      {/* CABLEO TEMPORAL QA (W5 real despues): en mobile el wizard sheet */}
+      {isMobile && <GastoWizardSheet />}
 
       {/* ── Barra de filtros ─────────────────────────────────── */}
       <div className="rounded-2xl bg-card shadow-lg p-4">
@@ -728,7 +736,7 @@ export function GastosDashboard() {
             </button>
             <button
               type="button"
-              onClick={() => setFormOpen(true)}
+              onClick={() => (isMobile ? openWizardSheet() : setFormOpen(true))}
               className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
             >
               <Plus className="h-4 w-4" />
