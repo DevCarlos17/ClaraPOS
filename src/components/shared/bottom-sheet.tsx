@@ -48,7 +48,7 @@ export function BottomSheet({
 }: BottomSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="max-h-[90vh] rounded-t-2xl p-0">
+      <SheetContent side="bottom" className="max-h-[90vh] rounded-t-2xl bg-card p-0">
         {title && (
           <SheetHeader className="border-b pb-3">
             <SheetTitle>{title}</SheetTitle>
