@@ -64,6 +64,14 @@ interface GastoWizardState {
   monedaFactura: MonedaFacturaGasto
   usaTasaParalela: boolean
   tasaInterna: string
+  /**
+   * true = el usuario sobreescribio manualmente la tasa interna (o no hay
+   * tasa registrada para la fecha elegida); false = valor auto-detectado por
+   * fecha. Mismo campo que `gasto-form.tsx`/`GastoBorradorData.tasaInternaManual`
+   * — evita que `guardarDraft` pise una tasa manual al persistir el borrador
+   * (WARNING detectado en revision de W2a: antes se hardcodeaba `false`).
+   */
+  tasaInternaManual: boolean
   tasaProveedor: string
   tipoImpuesto: TipoImpuestoGasto
   montoFactura: string
@@ -71,6 +79,14 @@ interface GastoWizardState {
 
   // Paso 3 — Pagos
   pagos: PagoWizardGasto[]
+  /**
+   * Destino del abono (CAJA si hay sesion abierta, TESORERIA si no). Estado
+   * puro en el store; el I/O que lo detecta (query a `sesiones_caja`) vive en
+   * `paso-pagos.tsx` (design.md Open Questions: "el store se mantiene sin I/O
+   * a PowerSync"), que llama `setDestinoCobro` con el resultado.
+   */
+  destinoCobro: 'CAJA' | 'TESORERIA'
+  sesionActivaId: string | null
 
   // Sheet + navegación
   sheetOpen: boolean
@@ -93,6 +109,7 @@ interface GastoWizardState {
         | 'monedaFactura'
         | 'usaTasaParalela'
         | 'tasaInterna'
+        | 'tasaInternaManual'
         | 'tasaProveedor'
         | 'montoFactura'
         | 'tipoImpuesto'
@@ -104,6 +121,7 @@ interface GastoWizardState {
   agregarPago: () => void
   actualizarPago: (id: string, campo: keyof Omit<PagoWizardGasto, 'id'>, valor: string) => void
   eliminarPago: (id: string) => void
+  setDestinoCobro: (patch: { destinoCobro: 'CAJA' | 'TESORERIA'; sesionActivaId: string | null }) => void
 
   // Validez por paso — usados por el indicador y por canGoNext
   isStep1Valid: () => boolean
@@ -131,11 +149,14 @@ const initialState = {
   monedaFactura: 'USD' as MonedaFacturaGasto,
   usaTasaParalela: false,
   tasaInterna: '',
+  tasaInternaManual: false,
   tasaProveedor: '',
   tipoImpuesto: 'Exento' as TipoImpuestoGasto,
   montoFactura: '',
   porcentajeIva: '',
   pagos: [] as PagoWizardGasto[],
+  destinoCobro: 'TESORERIA' as 'CAJA' | 'TESORERIA',
+  sesionActivaId: null as string | null,
 }
 
 export const useGastoWizardStore = create<GastoWizardState>()((set, get) => ({
@@ -157,6 +178,8 @@ export const useGastoWizardStore = create<GastoWizardState>()((set, get) => ({
     set((state) => ({
       pagos: state.pagos.map((p) => (p.id === id ? { ...p, [campo]: valor } : p)),
     })),
+
+  setDestinoCobro: (patch) => set(patch),
 
   isStep1Valid: () => {
     const { cuentaId, descripcion, fecha } = get()
@@ -228,6 +251,7 @@ export const useGastoWizardStore = create<GastoWizardState>()((set, get) => ({
       monedaFactura: borrador.monedaFactura,
       usaTasaParalela: borrador.usaTasaParalela,
       tasaInterna: borrador.tasaInterna,
+      tasaInternaManual: borrador.tasaInternaManual,
       tasaProveedor: borrador.tasaProveedor,
       montoFactura: borrador.montoFactura,
       pagos: borrador.pagos.map((p) => ({ ...p })),
@@ -248,10 +272,7 @@ export const useGastoWizardStore = create<GastoWizardState>()((set, get) => ({
       monedaFactura: state.monedaFactura,
       usaTasaParalela: state.usaTasaParalela,
       tasaInterna: state.tasaInterna,
-      // El borrador desktop no distingue auto/manual fuera de gasto-form.tsx;
-      // el wizard siempre escribe `false` (mismo comportamiento neutro que
-      // tendria un `resetFormToDefaults()` recien montado).
-      tasaInternaManual: false,
+      tasaInternaManual: state.tasaInternaManual,
       tasaProveedor: state.tasaProveedor,
       montoFactura: state.montoFactura,
       pagos: state.pagos.map((p) => ({ ...p })),
