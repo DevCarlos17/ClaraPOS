@@ -442,82 +442,114 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                 )}
 
                 {/* Datos del documento */}
-                <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
+                <div className="space-y-1.5 text-sm">
                   {tipo === 'COMPRA' && compra && (
                     <>
-                      <div className="text-muted-foreground">Nro. Factura</div>
-                      <div className="font-mono font-semibold text-foreground">{compra.nro_factura}</div>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Nro. Factura</span>
+                        <span className="font-mono font-semibold text-foreground text-right break-all min-w-0">
+                          {compra.nro_factura}
+                        </span>
+                      </div>
                       {compra.nro_control && (
-                        <>
-                          <div className="text-muted-foreground">Nro. Control</div>
-                          <div className="font-mono font-semibold text-foreground">{compra.nro_control}</div>
-                        </>
+                        <div className="flex items-start justify-between gap-4">
+                          <span className="text-muted-foreground shrink-0">Nro. Control</span>
+                          <span className="font-mono font-semibold text-foreground text-right break-all min-w-0">
+                            {compra.nro_control}
+                          </span>
+                        </div>
                       )}
-                      <div className="text-muted-foreground">Fecha</div>
-                      <div className="font-semibold text-foreground">{formatDate(compra.fecha_factura)}</div>
-                      <div className="text-muted-foreground">Tipo pago</div>
-                      <div>
-                        <Badge variant="outline" className="text-xs">{compra.tipo}</Badge>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Fecha</span>
+                        <span className="font-semibold text-foreground text-right">
+                          {formatDate(compra.fecha_factura)}
+                        </span>
+                      </div>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Tipo pago</span>
+                        <span className="text-right">
+                          <Badge variant="outline" className="text-xs">{compra.tipo}</Badge>
+                        </span>
                       </div>
                     </>
                   )}
                   {tipo === 'GASTO' && gasto && (
                     <>
-                      <div className="text-muted-foreground">Nro. Interno</div>
-                      <div className="font-mono font-semibold text-foreground">{gasto.nro_gasto}</div>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Nro. Interno</span>
+                        <span className="font-mono font-semibold text-foreground text-right break-all min-w-0">
+                          {gasto.nro_gasto}
+                        </span>
+                      </div>
                       {gasto.nro_factura && (
-                        <>
-                          <div className="text-muted-foreground">Nro. Factura</div>
-                          <div className="font-mono font-semibold text-foreground">{gasto.nro_factura}</div>
-                        </>
+                        <div className="flex items-start justify-between gap-4">
+                          <span className="text-muted-foreground shrink-0">Nro. Factura</span>
+                          <span className="font-mono font-semibold text-foreground text-right break-all min-w-0">
+                            {gasto.nro_factura}
+                          </span>
+                        </div>
                       )}
                       {gasto.nro_control && (
-                        <>
-                          <div className="text-muted-foreground">Nro. Control</div>
-                          <div className="font-mono font-semibold text-foreground">{gasto.nro_control}</div>
-                        </>
+                        <div className="flex items-start justify-between gap-4">
+                          <span className="text-muted-foreground shrink-0">Nro. Control</span>
+                          <span className="font-mono font-semibold text-foreground text-right break-all min-w-0">
+                            {gasto.nro_control}
+                          </span>
+                        </div>
                       )}
-                      <div className="text-muted-foreground">Fecha</div>
-                      <div className="font-semibold text-foreground">{formatDate(gasto.fecha)}</div>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Fecha</span>
+                        <span className="font-semibold text-foreground text-right">
+                          {formatDate(gasto.fecha)}
+                        </span>
+                      </div>
                     </>
                   )}
 
                   {/* Tasas */}
                   {amounts && (
                     <>
-                      <div className="text-muted-foreground">Tasa Factura</div>
-                      <div className="flex items-center gap-2 font-mono font-semibold text-foreground tabular-nums">
-                        {amounts.tasaFactura.toFixed(4)} Bs/USD
-                        {amounts.usaParalela && (
-                          <Badge className="text-[9px] px-1.5 py-0 bg-amber-50 text-amber-700 border border-amber-200">
-                            Paralela
-                          </Badge>
-                        )}
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Tasa Factura</span>
+                        <span className="flex items-center justify-end flex-wrap gap-2 font-mono font-semibold text-foreground tabular-nums text-right">
+                          {amounts.tasaFactura.toFixed(4)} Bs/USD
+                          {amounts.usaParalela && (
+                            <Badge className="text-[9px] px-1.5 py-0 bg-amber-50 text-amber-700 border border-amber-200">
+                              Paralela
+                            </Badge>
+                          )}
+                        </span>
                       </div>
-                      <div className="text-muted-foreground">Tasa Interna</div>
-                      <div className="font-mono font-semibold text-foreground tabular-nums">
-                        {amounts.tasaInterna.toFixed(4)} Bs/USD
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Tasa Interna</span>
+                        <span className="font-mono font-semibold text-foreground tabular-nums text-right">
+                          {amounts.tasaInterna.toFixed(4)} Bs/USD
+                        </span>
                       </div>
                     </>
                   )}
 
                   {/* Status + procesado por */}
-                  <div className="text-muted-foreground">Status</div>
-                  <div>
-                    <Badge
-                      variant="outline"
-                      className={`text-xs ${
-                        esAnulado
-                          ? 'bg-red-50 text-red-700 border-red-200'
-                          : 'bg-green-50 text-green-700 border-green-200'
-                      }`}
-                    >
-                      {tipo === 'COMPRA' ? compra?.status : gasto?.status}
-                    </Badge>
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="text-muted-foreground shrink-0">Status</span>
+                    <span className="text-right">
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${
+                          esAnulado
+                            ? 'bg-red-50 text-red-700 border-red-200'
+                            : 'bg-green-50 text-green-700 border-green-200'
+                        }`}
+                      >
+                        {tipo === 'COMPRA' ? compra?.status : gasto?.status}
+                      </Badge>
+                    </span>
                   </div>
-                  <div className="text-muted-foreground">Procesado por</div>
-                  <div className="font-semibold text-foreground">
-                    {(tipo === 'COMPRA' ? compra?.created_by_nombre : gasto?.created_by_nombre) ?? '—'}
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="text-muted-foreground shrink-0">Procesado por</span>
+                    <span className="font-semibold text-foreground text-right">
+                      {(tipo === 'COMPRA' ? compra?.created_by_nombre : gasto?.created_by_nombre) ?? '—'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -899,40 +931,41 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
     </>
   )
 
-  const footer = (
+  const footer = confirmandoAnular ? (
+    <div className="flex items-center justify-between gap-2 w-full">
+      <span className="text-sm font-medium text-foreground">¿Anular este gasto?</span>
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={anulando}
+          onClick={handleAnularGasto}
+          className="h-10 rounded-xl font-semibold"
+        >
+          {anulando ? 'Anulando...' : 'Si, anular'}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setConfirmandoAnular(false)}
+          className="h-10 rounded-xl"
+        >
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  ) : (
     <div className="flex items-center justify-between gap-2 w-full">
       <div className="flex items-center gap-2">
         {tipo === 'GASTO' && gasto && !esAnulado && puedeAnular && (
-          confirmandoAnular ? (
-            <>
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={anulando}
-                onClick={handleAnularGasto}
-                className="h-10 rounded-xl"
-              >
-                {anulando ? 'Anulando...' : 'Confirmar anulacion'}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setConfirmandoAnular(false)}
-                className="h-10 rounded-xl"
-              >
-                Cancelar
-              </Button>
-            </>
-          ) : (
-            <Button
-              size="sm"
-              variant="destructive"
-              className="h-10 rounded-xl font-semibold"
-              onClick={() => setConfirmandoAnular(true)}
-            >
-              Anular
-            </Button>
-          )
+          <Button
+            size="sm"
+            variant="destructive"
+            className="h-10 rounded-xl font-semibold"
+            onClick={() => setConfirmandoAnular(true)}
+          >
+            Anular
+          </Button>
         )}
       </div>
       <div className="flex items-center gap-2">
