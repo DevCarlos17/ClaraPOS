@@ -418,6 +418,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                         variant="destructive"
                         disabled={anulando}
                         onClick={handleAnularGasto}
+                        className="h-10 rounded-xl"
                       >
                         {anulando ? 'Anulando...' : 'Confirmar anulacion'}
                       </Button>
@@ -425,6 +426,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                         size="sm"
                         variant="outline"
                         onClick={() => setConfirmandoAnular(false)}
+                        className="h-10 rounded-xl"
                       >
                         Cancelar
                       </Button>
@@ -433,7 +435,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                     <Button
                       size="sm"
                       variant="outline"
-                      className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                      className="h-10 rounded-xl text-destructive font-semibold border-destructive/30 hover:bg-destructive/10"
                       onClick={() => setConfirmandoAnular(true)}
                     >
                       <ArrowCounterClockwise className="h-3.5 w-3.5 mr-1" />
@@ -455,7 +457,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
             <div className="space-y-4">
 
               {/* ── Encabezado del documento ─────────────── */}
-              <div className="rounded-lg bg-muted/40 border border-border p-4 space-y-3">
+              <div className="rounded-2xl bg-card border shadow-lg p-4 space-y-3">
                 {/* Proveedor */}
                 {(proveedorNombre || proveedorRif) && (
                   <div>
@@ -475,15 +477,15 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                   {tipo === 'COMPRA' && compra && (
                     <>
                       <div className="text-muted-foreground">Nro. Factura</div>
-                      <div className="font-mono font-medium">{compra.nro_factura}</div>
+                      <div className="font-mono font-semibold text-foreground">{compra.nro_factura}</div>
                       {compra.nro_control && (
                         <>
                           <div className="text-muted-foreground">Nro. Control</div>
-                          <div className="font-mono">{compra.nro_control}</div>
+                          <div className="font-mono font-semibold text-foreground">{compra.nro_control}</div>
                         </>
                       )}
                       <div className="text-muted-foreground">Fecha</div>
-                      <div>{formatDate(compra.fecha_factura)}</div>
+                      <div className="font-semibold text-foreground">{formatDate(compra.fecha_factura)}</div>
                       <div className="text-muted-foreground">Tipo pago</div>
                       <div>
                         <Badge variant="outline" className="text-xs">{compra.tipo}</Badge>
@@ -493,21 +495,21 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                   {tipo === 'GASTO' && gasto && (
                     <>
                       <div className="text-muted-foreground">Nro. Interno</div>
-                      <div className="font-mono font-medium">{gasto.nro_gasto}</div>
+                      <div className="font-mono font-semibold text-foreground">{gasto.nro_gasto}</div>
                       {gasto.nro_factura && (
                         <>
                           <div className="text-muted-foreground">Nro. Factura</div>
-                          <div className="font-mono">{gasto.nro_factura}</div>
+                          <div className="font-mono font-semibold text-foreground">{gasto.nro_factura}</div>
                         </>
                       )}
                       {gasto.nro_control && (
                         <>
                           <div className="text-muted-foreground">Nro. Control</div>
-                          <div className="font-mono">{gasto.nro_control}</div>
+                          <div className="font-mono font-semibold text-foreground">{gasto.nro_control}</div>
                         </>
                       )}
                       <div className="text-muted-foreground">Fecha</div>
-                      <div>{formatDate(gasto.fecha)}</div>
+                      <div className="font-semibold text-foreground">{formatDate(gasto.fecha)}</div>
                     </>
                   )}
 
@@ -515,7 +517,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                   {amounts && (
                     <>
                       <div className="text-muted-foreground">Tasa Factura</div>
-                      <div className="flex items-center gap-2 font-mono tabular-nums">
+                      <div className="flex items-center gap-2 font-mono font-semibold text-foreground tabular-nums">
                         {amounts.tasaFactura.toFixed(4)} Bs/USD
                         {amounts.usaParalela && (
                           <Badge className="text-[9px] px-1.5 py-0 bg-amber-50 text-amber-700 border border-amber-200">
@@ -524,7 +526,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                         )}
                       </div>
                       <div className="text-muted-foreground">Tasa Interna</div>
-                      <div className="font-mono tabular-nums">
+                      <div className="font-mono font-semibold text-foreground tabular-nums">
                         {amounts.tasaInterna.toFixed(4)} Bs/USD
                       </div>
                     </>
@@ -545,7 +547,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                     </Badge>
                   </div>
                   <div className="text-muted-foreground">Procesado por</div>
-                  <div className="text-muted-foreground">
+                  <div className="font-semibold text-foreground">
                     {(tipo === 'COMPRA' ? compra?.created_by_nombre : gasto?.created_by_nombre) ?? '—'}
                   </div>
                 </div>
@@ -611,10 +613,10 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
               )}
 
               {tipo === 'GASTO' && gasto && (
-                <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1.5 text-sm">
+                <div className="rounded-2xl bg-card border shadow-lg p-3 space-y-1.5 text-sm">
                   <div className="flex gap-2">
                     <span className="text-muted-foreground min-w-[90px] shrink-0">Cuenta:</span>
-                    <span className="font-medium">
+                    <span className="font-semibold text-foreground">
                       {gasto.cuenta_codigo && (
                         <span className="font-mono text-muted-foreground text-xs mr-1">
                           {gasto.cuenta_codigo}
@@ -625,14 +627,14 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                   </div>
                   <div className="flex gap-2">
                     <span className="text-muted-foreground min-w-[90px] shrink-0">Descripcion:</span>
-                    <span>{gasto.descripcion}</span>
+                    <span className="font-semibold text-foreground">{gasto.descripcion}</span>
                   </div>
                   {gasto.observaciones && (
                     <div className="flex gap-2">
                       <span className="text-muted-foreground min-w-[90px] shrink-0">
                         Observaciones:
                       </span>
-                      <span className="italic text-muted-foreground">{gasto.observaciones}</span>
+                      <span className="italic text-foreground">{gasto.observaciones}</span>
                     </div>
                   )}
                 </div>
@@ -640,17 +642,17 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
 
               {/* ── Totales ──────────────────────────────── */}
               {amounts && (
-                <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-1.5">
+                <div className="rounded-2xl bg-card border shadow-lg p-4 space-y-1.5">
                   {tipo === 'GASTO' && (
                     amounts.esGravable ? (
                       <>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Base imponible:</span>
                           <div className="text-right">
-                            <div className="font-medium text-foreground">
+                            <div className="font-bold text-foreground">
                               {formatUsd(amounts.baseUsd ?? 0)}
                             </div>
-                            <div className="text-[10px] text-muted-foreground">
+                            <div className="text-xs text-muted-foreground font-medium">
                               {formatBs((amounts.baseUsd ?? 0) * tasaValor)}
                             </div>
                           </div>
@@ -660,10 +662,10 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                             IVA ({(amounts.porcentajeIva ?? 0).toFixed(2)}%):
                           </span>
                           <div className="text-right">
-                            <div className="font-medium text-foreground">
+                            <div className="font-bold text-foreground">
                               {formatUsd(amounts.ivaUsd ?? 0)}
                             </div>
-                            <div className="text-[10px] text-muted-foreground">
+                            <div className="text-xs text-muted-foreground font-medium">
                               {formatBs((amounts.ivaUsd ?? 0) * tasaValor)}
                             </div>
                           </div>
@@ -671,10 +673,10 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                         <div className="flex justify-between text-sm border-b border-border/50 pb-1.5">
                           <span className="text-muted-foreground">Total con IVA:</span>
                           <div className="text-right">
-                            <div className="font-semibold text-foreground">
+                            <div className="text-base font-bold text-foreground">
                               {formatUsd(amounts.totalContableUsd)}
                             </div>
-                            <div className="text-[10px] text-muted-foreground">
+                            <div className="text-xs text-muted-foreground font-medium">
                               {formatBs(amounts.totalBs)}
                             </div>
                           </div>
@@ -686,10 +688,10 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                           Monto {amounts.esExonerado ? 'Exonerado' : 'Exento'} (sin IVA):
                         </span>
                         <div className="text-right">
-                          <div className="font-semibold text-foreground">
+                          <div className="text-base font-bold text-foreground">
                             {formatUsd(amounts.totalContableUsd)}
                           </div>
-                          <div className="text-[10px] text-muted-foreground">
+                          <div className="text-xs text-muted-foreground font-medium">
                             {formatBs(amounts.totalBs)}
                           </div>
                         </div>
@@ -700,7 +702,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                     <>
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Total Factura (Proveedor):</span>
-                        <span className="font-bold text-foreground">
+                        <span className="text-base font-bold text-foreground">
                           {formatUsd(amounts.totalProveedorUsd)}
                         </span>
                       </div>
@@ -708,7 +710,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                         <span className="text-muted-foreground">
                           Equivalente Bs ({amounts.tasaFactura.toFixed(2)} Bs/USD):
                         </span>
-                        <span className="font-medium text-muted-foreground">
+                        <span className="font-semibold text-foreground">
                           {formatBs(amounts.totalBs)}
                         </span>
                       </div>
@@ -716,7 +718,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                         <span className="text-muted-foreground">
                           Total Contable USD ({amounts.tasaInterna.toFixed(2)} Bs/USD):
                         </span>
-                        <span className="font-bold text-foreground">
+                        <span className="text-base font-bold text-foreground">
                           {formatUsd(amounts.totalContableUsd)}
                         </span>
                       </div>
@@ -725,13 +727,13 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                     <>
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Total Factura:</span>
-                        <span className="font-bold text-foreground">
+                        <span className="text-base font-bold text-foreground">
                           {formatUsd(amounts.totalProveedorUsd)}
                         </span>
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Total Bs:</span>
-                        <span className="font-medium text-muted-foreground">
+                        <span className="font-semibold text-foreground">
                           {formatBs(amounts.totalBs)}
                         </span>
                       </div>
@@ -742,11 +744,11 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                     <div className="flex justify-between text-sm border-t border-border pt-1.5 mt-1">
                       <span className="text-muted-foreground">Abonado:</span>
                       <div className="text-right">
-                        <div className="font-medium text-green-600">
+                        <div className="font-bold text-green-600">
                           {formatUsd(totalAbonadoProveedor)}
                         </div>
                         {Math.abs(totalAbonadoContable - totalAbonadoProveedor) > 0.005 && (
-                          <div className="text-[10px] text-muted-foreground">
+                          <div className="text-xs text-muted-foreground font-medium">
                             Contable: {formatUsd(totalAbonadoContable)}
                           </div>
                         )}
@@ -756,7 +758,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
 
                   {saldo > 0 ? (
                     <div className="flex justify-between text-sm border-t border-border pt-1.5 mt-1">
-                      <span className="font-medium text-muted-foreground">Saldo Pendiente:</span>
+                      <span className="text-muted-foreground">Saldo Pendiente:</span>
                       <div className="text-right">
                         {saldo < 0.01 ? (
                           <>
@@ -764,13 +766,13 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                               {new Decimal(saldo).toFixed(8)} USD
                             </div>
                             {amounts && amounts.tasaInterna > 0 && (
-                              <div className="font-bold text-destructive text-sm">
+                              <div className="font-bold text-destructive text-base">
                                 {formatBs(new Decimal(saldo).times(new Decimal(amounts.tasaInterna)).toNumber())}
                               </div>
                             )}
                           </>
                         ) : (
-                          <span className="font-bold text-destructive">{formatUsd(saldo)}</span>
+                          <span className="font-bold text-destructive text-base">{formatUsd(saldo)}</span>
                         )}
                       </div>
                     </div>
@@ -926,7 +928,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
 
               {/* ── Footer ───────────────────────────────── */}
               <div className="flex justify-between items-center pt-3 border-t border-border">
-                <Button variant="outline" onClick={onClose}>
+                <Button variant="default" onClick={onClose} className="h-11 rounded-xl text-base">
                   Cerrar
                 </Button>
                 <div className="flex gap-2">
@@ -936,13 +938,13 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                       size="sm"
                       onClick={handleDiferencialCambiario}
                       disabled={aplicandoDiferencial}
-                      className="text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
+                      className="h-10 rounded-xl gap-2.5 text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
                     >
                       {aplicandoDiferencial ? 'Procesando...' : 'Diferencial cambiario'}
                     </Button>
                   )}
                   {saldo > 0 && !esAnulado && (
-                    <Button onClick={() => setPagoOpen(true)}>
+                    <Button onClick={() => setPagoOpen(true)} className="h-10 rounded-xl gap-2.5">
                       Registrar Pago
                     </Button>
                   )}
