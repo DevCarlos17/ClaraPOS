@@ -90,7 +90,7 @@ export function FacturaDetallePanel({
   const tasaFactura = totalAbonos.usd > 0 ? totalAbonos.bs / totalAbonos.usd : 0
 
   return (
-    <div className="relative space-y-4 p-4">
+    <div className="relative space-y-4">
       {estadoReverso !== null && (
         <div
           aria-hidden="true"
@@ -108,9 +108,9 @@ export function FacturaDetallePanel({
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-slate-300 bg-card">
+      <div className="overflow-hidden rounded-xl border bg-card shadow-md">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-xs uppercase text-muted-foreground">
+          <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
             <tr>
               <th className="px-3 py-2 text-left">Articulo</th>
               <th className="px-3 py-2 text-right">Cant.</th>
@@ -140,15 +140,19 @@ export function FacturaDetallePanel({
         </table>
       </div>
 
-      <div className="space-y-1 rounded-lg border border-slate-300 bg-card p-3 text-sm">
+      <div className="space-y-1 rounded-xl border bg-card p-3 text-sm shadow-md">
         {construirFilasTotales(recibo.totales, recibo.monedaPresentacion).map((fila) => (
           <div
             key={fila.label}
-            className={`flex items-center justify-between ${fila.bold ? 'font-bold' : 'text-muted-foreground'}`}
+            className={`flex items-center justify-between ${
+              fila.bold
+                ? 'mt-1 border-t pt-2 text-base font-bold text-foreground'
+                : 'text-muted-foreground'
+            }`}
           >
             <span>{fila.label}</span>
             <div className="text-right tabular-nums">
-              <div>{fila.monto}</div>
+              <div className={fila.bold ? 'text-primary' : undefined}>{fila.monto}</div>
               {fila.montoBs !== null && <div className="text-xs">{fila.montoBs}</div>}
             </div>
           </div>
@@ -174,7 +178,7 @@ export function FacturaDetallePanel({
       */}
 
       {recibo.pagos.length > 0 && (
-        <div className="space-y-1 rounded-lg border border-slate-300 bg-card p-3 text-sm">
+        <div className="space-y-1 rounded-xl border bg-card p-3 text-sm shadow-md">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Metodos de pago
           </p>
@@ -225,7 +229,7 @@ export function FacturaDetallePanel({
       */}
 
       {recibo.evolucion && (
-        <div className="space-y-2 rounded-lg border border-slate-200 bg-card p-3 text-sm">
+        <div className="space-y-2 rounded-xl border bg-card p-3 text-sm shadow-md">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Evolucion</p>
 
           {/*

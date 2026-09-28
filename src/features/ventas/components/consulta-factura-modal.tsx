@@ -128,8 +128,8 @@ export function ConsultaFacturaModal({
       <FacturaDetallePanel recibo={recibo} gastoAbsorbido={gastoAbsorbido} />
       <div className={puedeCompartir ? 'grid grid-cols-2 gap-2' : ''}>
         <Button
-          className="w-full border-slate-300"
-          variant="outline"
+          className="h-10 w-full gap-2.5 rounded-xl"
+          variant="secondary"
           disabled={!recibo}
           onClick={handleDescargar}
         >
@@ -138,8 +138,8 @@ export function ConsultaFacturaModal({
         </Button>
         {puedeCompartir && (
           <Button
-            className="w-full border-slate-300"
-            variant="outline"
+            className="h-10 w-full gap-2.5 rounded-xl"
+            variant="secondary"
             disabled={!recibo}
             onClick={handleCompartir}
           >
@@ -164,7 +164,7 @@ export function ConsultaFacturaModal({
           onAplicarNc && (
             <Button
               type="button"
-              className="w-full"
+              className="h-11 w-full rounded-xl text-base"
               disabled={!venta || venta.tiene_reverso_total === 1}
               onClick={handleAplicarNc}
             >
