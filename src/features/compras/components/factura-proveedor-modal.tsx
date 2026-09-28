@@ -614,9 +614,9 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
               )}
 
               {tipo === 'GASTO' && gasto && (
-                <div className="rounded-2xl bg-card border shadow-lg p-3 space-y-1.5 text-sm">
-                  <div className="flex gap-2">
-                    <span className="text-muted-foreground min-w-[90px] shrink-0">Cuenta:</span>
+                <div className="rounded-2xl bg-card border shadow-lg p-4 space-y-2 text-sm">
+                  <div className="flex gap-3">
+                    <span className="text-muted-foreground min-w-[110px] shrink-0">Cuenta:</span>
                     <span className="font-semibold text-foreground">
                       {gasto.cuenta_codigo && (
                         <span className="font-mono text-muted-foreground text-xs mr-1">
@@ -626,13 +626,13 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                       {gasto.cuenta_nombre}
                     </span>
                   </div>
-                  <div className="flex gap-2">
-                    <span className="text-muted-foreground min-w-[90px] shrink-0">Descripcion:</span>
+                  <div className="flex gap-3">
+                    <span className="text-muted-foreground min-w-[110px] shrink-0">Descripcion:</span>
                     <span className="font-semibold text-foreground">{gasto.descripcion}</span>
                   </div>
                   {gasto.observaciones && (
-                    <div className="flex gap-2">
-                      <span className="text-muted-foreground min-w-[90px] shrink-0">
+                    <div className="flex gap-3">
+                      <span className="text-muted-foreground min-w-[110px] shrink-0">
                         Observaciones:
                       </span>
                       <span className="italic text-foreground">{gasto.observaciones}</span>
