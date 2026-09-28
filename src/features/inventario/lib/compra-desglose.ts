@@ -61,6 +61,30 @@ export function getLineSubtotal(l: LineaCompraCalculoInput): number {
 }
 
 /**
+ * `costo_unitario_usd` de una linea de compra: el costo POR UNIDAD BASE, a
+ * tasa PROVEEDOR/factura (para CxP y para `lineaCompraSchema` — NUNCA el
+ * costo contable/tasa interna, ver `costo_usd_sistema` que calcula
+ * `compra-wizard.tsx::construirLineasParam` para eso). 1:1 del calculo
+ * inline en `compra-form.tsx` L1060-1075 (rama sin tasa paralela de
+ * `lineasConvertidas`) — la ÚNICA fuente de verdad para este valor, usada
+ * tanto para construir el payload de `crearCompra` como para validar
+ * (`lineaCompraSchema.safeParse`) antes de habilitar el Paso 2/el submit.
+ */
+export function calcCostoUnitarioUsd(
+  costoInput: number,
+  factor: number,
+  moneda: MonedaCompra,
+  tasaFacturaNum: number
+): number {
+  const f = factor > 0 ? factor : 1
+  if (moneda === 'USD') {
+    return new Decimal(costoInput).dividedBy(f).toNumber()
+  }
+  const costoOrigPerUnit = tasaFacturaNum > 0 ? new Decimal(costoInput).dividedBy(tasaFacturaNum).toNumber() : 0
+  return new Decimal(costoOrigPerUnit).dividedBy(f).toNumber()
+}
+
+/**
  * Desglose fiscal en USD agrupado por alicuota de IVA. 1:1 de `compra-form.tsx`
  * L474-515 (`desgloseUsd` useMemo).
  */

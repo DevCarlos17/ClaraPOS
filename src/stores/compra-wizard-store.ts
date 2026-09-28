@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import type { ConceptoCargo } from '@/features/inventario/lib/compra-lineas-cargo'
-import { type PvpNivelUI } from '@/features/inventario/lib/compra-pvp-decision'
+import { calcCostoUnitarioUsd } from '@/features/inventario/lib/compra-desglose'
+import { costoTieneCambioSignificativo, type PvpNivelUI } from '@/features/inventario/lib/compra-pvp-decision'
+import { lineaTieneDecisionBloqueante } from '@/features/inventario/lib/compra-precio-gating'
+import { lineaCompraSchema } from '@/features/inventario/schemas/compra-schema'
 
 export type MonedaCompraWizard = 'USD' | 'BS'
 export type TipoImpuestoLineaWizard = 'Gravable' | 'Exento' | 'Exonerado'
@@ -134,6 +137,14 @@ interface CompraWizardState {
   abrirPvpDecision: (idx: number) => void
   confirmarPvpDecision: (idx: number, niveles: PvpNivelUI[]) => void
   cancelarPvpDecision: (idx: number) => void
+  /**
+   * Limpia `pvpPendienteLineaIdx` SOLO si actualmente apunta a `idx` — usado
+   * por `paso-productos.tsx` cuando un cambio de costo antes significativo
+   * deja de serlo (el usuario tipeo un costo, luego lo corrigio de vuelta a
+   * un valor cercano al actual). No-op si `idx` no es el indice pendiente
+   * (p. ej. otra linea esta pendiente en ese momento).
+   */
+  limpiarPvpPendienteSiCoincide: (idx: number) => void
 
   agregarCargo: (concepto: ConceptoCargo) => void
   actualizarCargo: (id: string, patch: Partial<Omit<CargoWizard, 'id'>>) => void
@@ -193,10 +204,28 @@ export const useCompraWizardStore = create<CompraWizardState>()((set, get) => ({
       lineas: state.lineas.map((l, i) => (i === idx ? { ...l, ...patch } : l)),
     })),
 
+  // Al eliminar una linea, los indices de TODAS las lineas posteriores se
+  // corren una posicion — `pvpPendienteLineaIdx` (si hay una decision
+  // pendiente) debe seguir a la MISMA linea, no quedar apuntando a la que
+  // ahora ocupa ese indice. Si la linea eliminada ES la pendiente, se limpia.
   quitarLinea: (idx) =>
-    set((state) => ({ lineas: state.lineas.filter((_, i) => i !== idx) })),
+    set((state) => {
+      const pendiente = state.pvpPendienteLineaIdx
+      let nuevoPendiente = pendiente
+      if (pendiente !== null) {
+        if (pendiente === idx) nuevoPendiente = null
+        else if (pendiente > idx) nuevoPendiente = pendiente - 1
+      }
+      return {
+        lineas: state.lineas.filter((_, i) => i !== idx),
+        pvpPendienteLineaIdx: nuevoPendiente,
+      }
+    }),
 
   abrirPvpDecision: (idx) => set({ pvpPendienteLineaIdx: idx }),
+
+  limpiarPvpPendienteSiCoincide: (idx) =>
+    set((state) => (state.pvpPendienteLineaIdx === idx ? { pvpPendienteLineaIdx: null } : {})),
 
   confirmarPvpDecision: (idx, niveles) =>
     set((state) => ({
@@ -239,12 +268,34 @@ export const useCompraWizardStore = create<CompraWizardState>()((set, get) => ({
     return Boolean(fechaFactura) && nroFactura.trim() !== '' && Boolean(proveedorId) && tasaInterna > 0
   },
 
-  // TODO(W4b-i): tighten to la gating real una vez exista `paso-productos.tsx`
-  // — `lineas.length > 0 && !lineas.some(l => lineaTieneDecisionBloqueante(...))`
-  // (ver tasks.md 4b-i.3, que remueve explicitamente esta concesion temporal).
-  // Hasta entonces el Paso 2 del wizard es un placeholder ("Agregar productos →"),
-  // asi que 0 lineas debe considerarse valido para poder avanzar al Paso 3.
-  isStep2Valid: () => true,
+  // Real desde W4b-i (tasks.md 4b-i.3): al menos 1 linea, CADA linea debe
+  // cumplir `lineaCompraSchema` (cantidad/costo_unitario_usd positivos,
+  // finitos, dentro del tope NUMERIC — EXACTAMENTE el mismo schema que
+  // `compra-form.tsx` corre por linea antes de construir el payload; sin
+  // este gate, cantidad=0/costo=0 escribiria un `movimiento_inventario`
+  // inmutable invalido), Y ninguna linea con decision de PVP
+  // pendiente/bloqueante. Mismos predicados que usa
+  // `compra-form.tsx`/`compra-wizard.tsx` para el guard de submit
+  // (`lineaCompraSchema`, `lineaTieneDecisionBloqueante`), asi que Paso 2 y
+  // el submit final nunca pueden divergir sobre que cuenta como "resuelto".
+  isStep2Valid: () => {
+    const { lineas, moneda, usaTasaParalela, tasaInterna, tasaProveedor } = get()
+    if (lineas.length === 0) return false
+    const tasaFacturaNum = usaTasaParalela ? tasaProveedor : tasaInterna
+    return lineas.every((l) => {
+      const factor = l.factor > 0 ? l.factor : 1
+      const cumpleSchema = lineaCompraSchema.safeParse({
+        producto_id: l.producto_id,
+        cantidad: l.cantidad_input * factor,
+        costo_unitario_usd: calcCostoUnitarioUsd(l.costo_input, l.factor, moneda, tasaFacturaNum),
+        tipo_impuesto: l.tipo_impuesto,
+        impuesto_pct: l.impuesto_pct,
+      }).success
+      if (!cumpleSchema) return false
+      const costoCambio = costoTieneCambioSignificativo(l.costo_input, l.costo_actual, { moneda, tasaFacturaNum })
+      return !lineaTieneDecisionBloqueante(costoCambio, l.pvp_niveles)
+    })
+  },
 
   // design.md: "siempre true — CREDITO es valido" (los pagos son opcionales,
   // el saldo no cubierto va a CxP, igual que en el formulario de escritorio).

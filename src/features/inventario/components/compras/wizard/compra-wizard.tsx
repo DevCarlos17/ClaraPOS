@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Decimal from 'decimal.js'
 import { toast } from 'sonner'
-import { ArrowLeft, ArrowRight, CheckCircle, Warning, Package, Plus } from '@phosphor-icons/react'
+import { ArrowLeft, ArrowRight, CheckCircle, Warning } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { WizardStepIndicator } from '@/components/shared/wizard-step-indicator'
@@ -9,75 +9,90 @@ import { WizardAcumulador, type WizardAcumuladorLinea } from '@/components/share
 import { useCompraWizardStore, type LineaWizardCompra } from '@/stores/compra-wizard-store'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
-import { compraHeaderSchema, pagoCompraSchema, lineaCargoSchema } from '@/features/inventario/schemas/compra-schema'
+import { compraHeaderSchema, pagoCompraSchema, lineaCargoSchema, lineaCompraSchema } from '@/features/inventario/schemas/compra-schema'
 import { crearCompra, type PagoCompraParam, type CrearCompraParams, type LineaCompra } from '@/features/inventario/hooks/use-compras'
 import { totalizarLineasCargo } from '@/features/inventario/lib/compra-lineas-cargo'
 import {
   getLineSubtotal,
   calcDesgloseUsd,
+  calcCostoUnitarioUsd,
   convertirLineasCargo,
   calcTotalUsd,
   calcTotalUsdSistema,
   calcPendienteUsd,
 } from '@/features/inventario/lib/compra-desglose'
+import { derivarSenalesPvp, lineaTieneDecisionBloqueante } from '@/features/inventario/lib/compra-precio-gating'
+import { costoTieneCambioSignificativo } from '@/features/inventario/lib/compra-pvp-decision'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { PasoCabecera } from './steps/paso-cabecera'
+import { PasoProductos } from './steps/paso-productos'
 import { PasoCargosPagos } from './steps/paso-cargos-pagos'
 
 const STEPS = [{ label: 'Datos' }, { label: 'Productos' }, { label: 'Cargos y pagos' }]
 
 /**
- * Paso 2 (Productos) — PLACEHOLDER hasta W4b-i (`paso-productos.tsx`).
- * `isStep2Valid` ya permite 0 lineas (W3a, TODO explicito) para que la
- * navegacion no quede bloqueada mientras no existe la UI real.
- */
-function PasoProductosPlaceholder() {
-  return (
-    <div className="flex flex-col items-center justify-center gap-4 py-14 text-center">
-      <Package className="h-10 w-10 text-muted-foreground/50" />
-      <p className="text-sm text-muted-foreground max-w-xs">
-        La carga de productos llega en la próxima actualización
-      </p>
-      <button
-        type="button"
-        disabled
-        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-muted text-muted-foreground text-sm font-medium cursor-not-allowed opacity-60"
-      >
-        <Plus className="h-4 w-4" />
-        Agregar productos
-      </button>
-    </div>
-  )
-}
-
-/**
  * Convierte `LineaWizardCompra` (store) al shape que espera `crearCompra`
- * (`use-compras.ts::LineaCompra`). Mapeo MINIMO: los senales de PVP
- * (`nuevo_precio_*_usd`, `no_actualizar_pvp`, `costo_cambio`) se resuelven
- * en `compra-precio-gating.ts` (W4a/W4b-ii), fuera del alcance asignado a
- * W3b — `lineas` esta SIEMPRE vacio en este PR (Paso 2 es un placeholder),
- * asi que este mapeo no se ejecuta en la practica todavia; se deja correcto
- * para cuando W4b-i popule `lineas` de verdad.
+ * (`use-compras.ts::LineaCompra`). 1:1 de `compra-form.tsx` L1055-1139
+ * (bloque `lineasConvertidas`): calcula `costo_unitario_usd` (a tasa
+ * proveedor, para CxP/total factura) y `costo_usd_sistema` (a tasa interna,
+ * para inventario/contabilidad cuando hay tasa paralela), deriva
+ * `costo_cambio` comparando el costo CONTABLE nuevo contra el guardado en la
+ * ficha (`costo_usd_actual`, NUNCA el costo de factura ni el raw de
+ * pantalla), y resuelve `no_actualizar_pvp`/`nuevo_precio_*_usd` via
+ * `derivarSenalesPvp` (compra-precio-gating.ts) a partir de las decisiones
+ * ya tomadas en `pvp_niveles` — el mismo predicado que persistencia usa para
+ * escritorio, sin re-derivar la logica en dos lugares.
  */
 function construirLineasParam(
   lineas: LineaWizardCompra[],
   moneda: 'USD' | 'BS',
-  tasaFacturaNum: number
+  tasaFacturaNum: number,
+  tasaInternaNum: number,
+  usaTasaParalela: boolean
 ): LineaCompra[] {
   return lineas.map((l) => {
     const factor = l.factor > 0 ? l.factor : 1
-    const costoUnitarioUsd = moneda === 'USD'
-      ? new Decimal(l.costo_input).dividedBy(factor).toNumber()
-      : (tasaFacturaNum > 0 ? new Decimal(l.costo_input).dividedBy(tasaFacturaNum).dividedBy(factor).toNumber() : 0)
+    const cantidadBase = l.cantidad_input * factor
+
+    // costoUnitarioUsd: unica fuente de verdad (compra-desglose.ts), reusada
+    // tambien por `lineaCompraSchema`/`isStep2Valid` (compra-wizard-store.ts)
+    // para validar — nunca se recalcula ad-hoc en un segundo lugar.
+    const costoUnitarioUsd = calcCostoUnitarioUsd(l.costo_input, l.factor, moneda, tasaFacturaNum)
+
+    let costoUsdSistema: number
+    if (moneda === 'USD') {
+      costoUsdSistema = usaTasaParalela && tasaInternaNum > 0 && tasaFacturaNum > 0
+        ? new Decimal(costoUnitarioUsd).times(tasaFacturaNum).dividedBy(tasaInternaNum).toNumber()
+        : costoUnitarioUsd
+    } else {
+      if (usaTasaParalela && tasaInternaNum > 0) {
+        const costoBcvPerUnit = new Decimal(l.costo_input).dividedBy(tasaInternaNum).toNumber()
+        costoUsdSistema = factor > 0 ? new Decimal(costoBcvPerUnit).dividedBy(factor).toNumber() : costoBcvPerUnit
+      } else {
+        costoUsdSistema = costoUnitarioUsd
+      }
+    }
+
+    const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
+    const costoCambio = Math.abs(costoUsdSistema - costoUsdActual) > 0.0001
+
+    const { noActualizarPvp, getNewPvpUsdForNivel } = derivarSenalesPvp(l.pvp_niveles, moneda, tasaFacturaNum)
+
     return {
       producto_id: l.producto_id,
-      cantidad: l.cantidad_input * factor,
+      cantidad: cantidadBase,
       costo_unitario_usd: Number(costoUnitarioUsd.toFixed(8)),
+      costo_usd_sistema: Number(costoUsdSistema.toFixed(8)),
       tipo_impuesto: l.tipo_impuesto,
       impuesto_pct: l.impuesto_pct,
       lote_nro: l.lote_nro.trim() || undefined,
       lote_fecha_fab: l.lote_fecha_fab || undefined,
       lote_fecha_venc: l.lote_fecha_venc || undefined,
+      costo_cambio: costoCambio,
+      no_actualizar_pvp: noActualizarPvp,
+      nuevo_precio_venta_usd: getNewPvpUsdForNivel(1),
+      nuevo_precio_mayor_usd: getNewPvpUsdForNivel(2),
+      nuevo_precio_especial_usd: getNewPvpUsdForNivel(3),
     }
   })
 }
@@ -317,7 +332,7 @@ export function CompraWizard() {
   ]
   const acumuladorTotal = { usd: totalUsd, bs: totalBs }
 
-  const STEP_COMPONENTS = [<PasoCabecera key="1" />, <PasoProductosPlaceholder key="2" />, <PasoCargosPagos key="3" />]
+  const STEP_COMPONENTS = [<PasoCabecera key="1" />, <PasoProductos key="2" />, <PasoCargosPagos key="3" />]
 
   function canGoNext(): boolean {
     if (step === 1) return isStep1Valid()
@@ -354,12 +369,51 @@ export function CompraWizard() {
     }
 
     // ── crearCompra exige al menos 1 linea de producto (use-compras.ts:
-    // "Debe agregar al menos una linea a la compra") — el Paso 2 de ESTE PR
-    // es un placeholder sin UI de productos (llega en W4b-i), asi que el
-    // registro queda bloqueado aca con el mismo mensaje que compra-form.tsx
-    // hasta que exista forma de agregar productos desde el wizard.
+    // "Debe agregar al menos una linea a la compra") — 1:1 del guard de
+    // `compra-form.tsx` L1013-1016. Defensa en profundidad: `isStep2Valid()`
+    // ya bloquea la navegacion al Paso 3 en este mismo caso.
     if (lineas.length === 0) {
-      toast.error('Debe agregar al menos un producto — disponible en la próxima actualización')
+      toast.error('Debe agregar al menos un producto')
+      return
+    }
+
+    // Segunda barrera (defensa en profundidad, igual que `compra-form.tsx`
+    // L1086-1098): cada linea DEBE pasar `lineaCompraSchema` — cantidad y
+    // costo_unitario_usd positivos, finitos, dentro del tope NUMERIC. Sin
+    // esto, una linea con cantidad/costo en 0 (el input mobile permite 0,
+    // a diferencia del `min="0.001"` HTML-only del input desktop) escribiria
+    // un `movimiento_inventario` inmutable con cantidad/costo cero. Misma
+    // instancia del schema que `compra-form.tsx` usa — jamas se relaja aca.
+    for (let i = 0; i < lineas.length; i++) {
+      const l = lineas[i]
+      const factorLinea = l.factor > 0 ? l.factor : 1
+      const parsedLinea = lineaCompraSchema.safeParse({
+        producto_id: l.producto_id,
+        cantidad: l.cantidad_input * factorLinea,
+        costo_unitario_usd: calcCostoUnitarioUsd(l.costo_input, l.factor, moneda, tasaFacturaNum),
+        tipo_impuesto: l.tipo_impuesto,
+        impuesto_pct: l.impuesto_pct,
+      })
+      if (!parsedLinea.success) {
+        const msg = parsedLinea.error.issues[0]?.message ?? 'Error en línea'
+        toast.error(`Línea ${i + 1} (${l.nombre}): ${msg}`)
+        return
+      }
+    }
+
+    // Tercera barrera (defensa en profundidad, igual que `compra-form.tsx`
+    // L1044-1052): bloquear si alguna linea con cambio de costo tiene una
+    // decision de PVP sin resolver. `isStep2Valid()` ya impide llegar aca en
+    // ese estado, pero el submit no debe confiar solo en la navegacion.
+    const lineasConConflicto = lineas.filter((l) =>
+      lineaTieneDecisionBloqueante(
+        costoTieneCambioSignificativo(l.costo_input, l.costo_actual, { moneda, tasaFacturaNum }),
+        l.pvp_niveles
+      )
+    )
+    if (lineasConConflicto.length > 0) {
+      const nombres = lineasConConflicto.map((l) => l.nombre).join(', ')
+      toast.error(`Corregí el PVP de: ${nombres}`)
       return
     }
 
@@ -439,7 +493,7 @@ export function CompraWizard() {
       nro_factura: headerParsed.data.nro_factura,
       nro_control: headerParsed.data.nro_control,
       moneda: headerParsed.data.moneda,
-      lineas: construirLineasParam(lineas, moneda, tasaFacturaNum),
+      lineas: construirLineasParam(lineas, moneda, tasaFacturaNum, tasaInterna, usaTasaParalela),
       lineasCargo: lineasCargoUsd,
       pagos: pagosParam,
       usuario_id: user.id,
@@ -548,7 +602,7 @@ export function CompraWizard() {
               className="h-11 rounded-xl text-base gap-2 bg-green-600 hover:bg-green-700"
               onClick={handleConfirmar}
               disabled={guardando || lineas.length === 0}
-              title={lineas.length === 0 ? 'Disponible cuando agregues productos (próxima actualización)' : undefined}
+              title={lineas.length === 0 ? 'Agregá al menos un producto en el Paso 2' : undefined}
             >
               <CheckCircle size={16} />
               {guardando ? 'Registrando...' : 'Registrar compra'}
