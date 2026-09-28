@@ -434,11 +434,10 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                   ) : (
                     <Button
                       size="sm"
-                      variant="outline"
-                      className="h-10 rounded-xl text-destructive font-semibold border-destructive/30 hover:bg-destructive/10"
+                      variant="destructive"
+                      className="h-10 rounded-xl font-semibold"
                       onClick={() => setConfirmandoAnular(true)}
                     >
-                      <ArrowCounterClockwise className="h-3.5 w-3.5 mr-1" />
                       Anular
                     </Button>
                   )}
