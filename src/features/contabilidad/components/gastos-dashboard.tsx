@@ -616,7 +616,7 @@ export function GastosDashboard() {
 
       {/* ── Placeholder cuando GRUPO sin selección ───────────── */}
       {!isLoading && criterio === 'GRUPO' && !grupoId && (
-        <div className="rounded-2xl bg-card shadow-lg p-12 text-center text-muted-foreground">
+        <div className="rounded-2xl bg-card border shadow-lg p-12 text-center text-muted-foreground">
           <p className="text-base font-medium">Selecciona un grupo para ver los datos</p>
           <p className="text-sm mt-1">Elige un grupo en el selector de criterio para cargar la gráfica y el detalle</p>
         </div>
@@ -627,7 +627,7 @@ export function GastosDashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-stretch">
 
           {/* Card de estadísticas + pie */}
-          <div className="lg:col-span-2 rounded-2xl bg-card shadow-lg overflow-hidden flex flex-col">
+          <div className="lg:col-span-2 rounded-2xl bg-card border shadow-lg overflow-hidden flex flex-col">
             <div className="px-4 py-3 border-b border-border bg-muted/40 shrink-0">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Estadísticas</p>
             </div>
@@ -699,7 +699,7 @@ export function GastosDashboard() {
           </div>
 
           {/* Gráfica de barras — ocupa toda la altura de la card de estadísticas */}
-          <div className="lg:col-span-3 rounded-2xl bg-card shadow-lg p-4 flex flex-col h-full">
+          <div className="lg:col-span-3 rounded-2xl bg-card border shadow-lg p-4 flex flex-col h-full">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 shrink-0">
               Gastos por {intervalo === 'MENSUAL' ? 'mes' : 'día'} (USD)
             </p>
@@ -730,7 +730,7 @@ export function GastosDashboard() {
 
       {/* ── Tabla de detalle ──────────────────────────────────── */}
       {!isLoading && !(criterio === 'GRUPO' && !grupoId) && (
-        <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+        <div className="rounded-2xl bg-card border shadow-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-border bg-muted/40 flex items-center justify-between">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               Detalle de registros
