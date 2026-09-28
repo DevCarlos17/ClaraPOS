@@ -152,7 +152,7 @@ export function FacturaDetallePanel({
           >
             <span>{fila.label}</span>
             <div className="text-right tabular-nums">
-              <div className={fila.bold ? 'text-primary' : undefined}>{fila.monto}</div>
+              <div className={fila.bold ? 'text-primary' : 'font-semibold text-foreground'}>{fila.monto}</div>
               {fila.montoBs !== null && <div className="text-xs">{fila.montoBs}</div>}
             </div>
           </div>
@@ -183,12 +183,12 @@ export function FacturaDetallePanel({
             Metodos de pago
           </p>
           {recibo.pagos.map((pago) => (
-            <div key={pago.metodoCobroId} className="flex items-center justify-between text-muted-foreground">
+            <div key={pago.metodoCobroId} className="flex items-center justify-between font-semibold text-foreground">
               <span>{pago.metodoNombre}</span>
               <span className="tabular-nums">{formatMontoPago(pago, recibo.monedaPresentacion)}</span>
             </div>
           ))}
-          <div className="flex items-center justify-between font-bold">
+          <div className="flex items-center justify-between font-bold text-foreground">
             <span>Total abonos</span>
             <span className="tabular-nums">
               {formatMontoBimonetario(totalAbonos.usd, totalAbonos.bs, recibo.monedaPresentacion)}
@@ -198,13 +198,13 @@ export function FacturaDetallePanel({
             <>
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>Pagado</span>
-                <span className="tabular-nums">
+                <span className="tabular-nums font-semibold text-foreground">
                   {formatMontoBimonetario(totalAbonos.usd, totalAbonos.bs, recibo.monedaPresentacion)}
                 </span>
               </div>
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>Asumido por el negocio</span>
-                <span className="tabular-nums">
+                <span className="tabular-nums font-semibold text-foreground">
                   {formatMontoBimonetario(
                     Number(gastoAbsorbido.montoUsd),
                     Number(usdToBs(gastoAbsorbido.montoUsd, tasaFactura)),
@@ -244,7 +244,7 @@ export function FacturaDetallePanel({
           */}
           {recibo.evolucion.reversos.map((reverso) => (
             <div key={reverso.nroNcr} className="space-y-1">
-              <div className="flex items-center justify-between text-muted-foreground">
+              <div className="flex items-center justify-between font-semibold text-foreground">
                 <span>
                   {reverso.nroNcr} ({REVERSO_TIPO_LABEL[reverso.tipo]})
                 </span>
@@ -275,10 +275,10 @@ export function FacturaDetallePanel({
           {construirLineasEvolucion({ ...recibo.evolucion, reversos: [] }, recibo.monedaPresentacion).map((fila) => (
             <div
               key={fila.label}
-              className={`flex items-center justify-between ${fila.bold ? 'font-bold' : 'text-muted-foreground'}`}
+              className={`flex items-center justify-between ${fila.bold ? 'font-bold text-foreground' : 'text-muted-foreground'}`}
             >
               <span>{fila.label}</span>
-              <span className="tabular-nums">{fila.monto}</span>
+              <span className={`tabular-nums ${fila.bold ? '' : 'font-semibold text-foreground'}`}>{fila.monto}</span>
             </div>
           ))}
         </div>
