@@ -1,7 +1,11 @@
 import { useMemo, useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { type ColumnDef } from '@tanstack/react-table'
 import { Plus, BookOpen, CaretDown, CaretUp, Printer } from '@phosphor-icons/react'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { useGastos } from '@/features/contabilidad/hooks/use-gastos'
+import { SegmentedTabs, tabContentVariants } from '@/components/shared/segmented-tabs'
+import { DataTable } from '@/components/data-table/data-table'
+import { DateRangeField } from '@/components/data-table/date-range-field'
+import { useGastos, type Gasto } from '@/features/contabilidad/hooks/use-gastos'
 import {
   useGruposGastoConSubcuentas,
   findGrupoGastoById,
@@ -62,6 +66,23 @@ function openPrintWindow(title: string, html: string) {
 
 type Criterio = 'TODAS' | 'GRUPO' | 'CUENTA'
 type Intervalo = 'DIARIO' | 'ULTIMOS_7' | 'MENSUAL'
+
+// Pestañas Dashboard/Libro (SegmentedTabs, mismo patron que `kardex.tsx`)
+type TabActiva = 'dashboard' | 'libro'
+
+const TAB_ORDER: TabActiva[] = ['dashboard', 'libro']
+
+const TABS = [
+  { key: 'dashboard' as const, label: 'Dashboard' },
+  { key: 'libro' as const, label: 'Libro de gastos' },
+]
+
+// Fila de la tabla "Libro de gastos" (DataTable) — mismo shape que devuelve `useGastos`
+type GastoLibroRow = Gasto & {
+  cuenta_nombre: string
+  proveedor_nombre: string | null
+  created_by_nombre: string | null
+}
 
 // ─── Helpers de fecha ────────────────────────────────────────
 
@@ -136,6 +157,17 @@ export function GastosDashboard() {
   const [formOpen, setFormOpen]               = useState(false)
   const [cuentaModalOpen, setCuentaModalOpen] = useState(false)
   const [detalleId, setDetalleId]             = useState<string | null>(null)
+
+  // ── Pestañas (SegmentedTabs, patron Kardex)
+  const [tabActiva, setTabActiva] = useState<TabActiva>('dashboard')
+  const [prevTab, setPrevTab]     = useState<TabActiva>('dashboard')
+
+  function handleTabChange(key: TabActiva) {
+    setPrevTab(tabActiva)
+    setTabActiva(key)
+  }
+
+  const tabDirection = TAB_ORDER.indexOf(tabActiva) > TAB_ORDER.indexOf(prevTab) ? 1 : -1
 
   // ── Datos — declarados ANTES de expandir/colapsar todo para que los capture correctamente
   const { grupos } = useGruposGastoConSubcuentas()
@@ -243,6 +275,12 @@ export function GastosDashboard() {
   )
   const totalGeneralPeriodo = useMemo(
     () => gastosFiltrados.reduce((s, g) => s + montoTotalGasto(g), 0),
+    [gastosFiltrados]
+  )
+
+  // Orden cronologico descendente para la tabla "Libro de gastos" (DataTable) — mismo criterio que antes
+  const gastosLibroOrdenados = useMemo(
+    () => [...gastosFiltrados].sort((a, b) => b.fecha.localeCompare(a.fecha) || b.created_at.localeCompare(a.created_at)),
     [gastosFiltrados]
   )
 
@@ -435,6 +473,117 @@ export function GastosDashboard() {
     ]
   }
 
+  // ── Columnas + card mobile de la tabla "Libro de gastos" (DataTable)
+
+  const gastoLibroColumns: ColumnDef<GastoLibroRow>[] = [
+    {
+      accessorKey: 'nro_gasto',
+      header: 'Nro',
+      cell: ({ row }) => (
+        <span className={`font-mono text-xs ${row.original.status === 'ANULADO' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
+          {row.original.nro_gasto}
+        </span>
+      ),
+    },
+    {
+      accessorKey: 'fecha',
+      header: 'Fecha',
+      cell: ({ row }) => (
+        <span className={`text-xs text-muted-foreground whitespace-nowrap ${row.original.status === 'ANULADO' ? 'line-through' : ''}`}>
+          {formatDate(row.original.fecha)}
+        </span>
+      ),
+    },
+    {
+      accessorKey: 'cuenta_nombre',
+      header: 'Cuenta',
+      cell: ({ row }) => (
+        <span className={`block max-w-[160px] truncate text-xs text-foreground ${row.original.status === 'ANULADO' ? 'line-through' : ''}`}>
+          {row.original.cuenta_nombre}
+        </span>
+      ),
+    },
+    {
+      accessorKey: 'nro_factura',
+      header: 'Factura',
+      cell: ({ row }) => (
+        <span className={`font-mono text-xs text-muted-foreground ${row.original.status === 'ANULADO' ? 'line-through' : ''}`}>
+          {row.original.nro_factura ?? '—'}
+        </span>
+      ),
+    },
+    {
+      accessorKey: 'proveedor_nombre',
+      header: 'Proveedor',
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground">{row.original.proveedor_nombre ?? '—'}</span>
+      ),
+    },
+    {
+      accessorKey: 'observaciones',
+      header: 'Observaciones',
+      cell: ({ row }) => (
+        <span className="block max-w-[200px] truncate text-xs text-muted-foreground">
+          {row.original.observaciones ?? '—'}
+        </span>
+      ),
+    },
+    {
+      id: 'costo',
+      header: () => <div className="text-right">Costo</div>,
+      cell: ({ row }) => {
+        const g = row.original
+        const anulado = g.status === 'ANULADO'
+        const montoUsd = montoCostoGasto(g)
+        const tasaGasto = parseFloat(g.tasa) || 1
+        const montoBs = montoUsd * tasaGasto
+        return (
+          <div className="text-right tabular-nums">
+            <div className={`text-sm font-semibold ${anulado ? 'line-through' : 'text-foreground'}`}>{formatUsd(montoUsd)}</div>
+            <div className="text-[10px] text-muted-foreground">{formatBs(montoBs)}</div>
+          </div>
+        )
+      },
+    },
+    {
+      id: 'status',
+      header: () => <div className="text-center">Status</div>,
+      cell: ({ row }) => (
+        <div className="text-center"><StatusBadge status={row.original.status} /></div>
+      ),
+    },
+  ]
+
+  function renderGastoLibroMobileCard(g: GastoLibroRow) {
+    const anulado = g.status === 'ANULADO'
+    const montoUsd = montoCostoGasto(g)
+    const tasaGasto = parseFloat(g.tasa) || 1
+    const montoBs = montoUsd * tasaGasto
+    return (
+      <div className={`rounded-xl border bg-card px-3 py-2.5 shadow-sm ${anulado ? 'opacity-50' : ''}`}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className={`shrink-0 font-mono text-xs font-semibold ${anulado ? 'line-through' : 'text-foreground'}`}>
+              {g.nro_gasto}
+            </span>
+            <StatusBadge status={g.status} />
+          </div>
+          <div className="shrink-0 text-right tabular-nums">
+            <p className={`text-sm font-bold ${anulado ? 'line-through' : 'text-foreground'}`}>{formatUsd(montoUsd)}</p>
+            <p className="text-[10px] text-muted-foreground">{formatBs(montoBs)}</p>
+          </div>
+        </div>
+        <p className={`mt-0.5 truncate text-sm font-medium ${anulado ? 'line-through' : 'text-foreground'}`}>{g.cuenta_nombre}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {formatDate(g.fecha)} · {g.proveedor_nombre ?? '—'}{g.nro_factura ? ` · Fact. ${g.nro_factura}` : ''}
+        </p>
+        {g.observaciones && (
+          <p className="mt-0.5 truncate text-[11px] text-muted-foreground/80">{g.observaciones}</p>
+        )}
+      </div>
+    )
+  }
+
   if (formOpen) {
     return <GastoForm onClose={() => setFormOpen(false)} />
   }
@@ -541,27 +690,13 @@ export function GastosDashboard() {
               </div>
             </>
           ) : intervalo === 'DIARIO' ? (
-            <>
-              <div className="flex-shrink-0">
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Fecha inicio</label>
-                <input
-                  type="date"
-                  value={dailyDesde}
-                  onChange={(e) => setDailyDesde(e.target.value)}
-                  className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div className="flex-shrink-0">
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Fecha fin</label>
-                <input
-                  type="date"
-                  value={dailyHasta}
-                  min={dailyDesde}
-                  onChange={(e) => setDailyHasta(e.target.value)}
-                  className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-            </>
+            <div className="flex-shrink-0">
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Rango de fechas</label>
+              <DateRangeField
+                value={{ desde: dailyDesde, hasta: dailyHasta }}
+                onChange={(v) => { setDailyDesde(v.desde); setDailyHasta(v.hasta) }}
+              />
+            </div>
           ) : (
             /* ULTIMOS_7: auto-computed, solo informativo */
             <div className="flex-shrink-0 self-end">
@@ -605,14 +740,23 @@ export function GastosDashboard() {
       </div>
 
       {/* ── Pestañas ─────────────────────────────────────────── */}
-      <Tabs defaultValue="dashboard" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-          <TabsTrigger value="libro">Libro de gastos</TabsTrigger>
-        </TabsList>
+      <div className="space-y-0">
+        <SegmentedTabs tabs={TABS} active={tabActiva} onChange={handleTabChange} />
 
+        <div className="overflow-hidden">
+          <AnimatePresence mode="wait" custom={tabDirection}>
+            <motion.div
+              key={tabActiva}
+              custom={tabDirection}
+              variants={tabContentVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              className="space-y-4"
+            >
         {/* ── Tab: Dashboard ─────────────────────────────────── */}
-        <TabsContent value="dashboard" className="space-y-4">
+        {tabActiva === 'dashboard' && (
+        <>
 
       {/* ── Placeholder cuando GRUPO sin selección ───────────── */}
       {!isLoading && criterio === 'GRUPO' && !grupoId && (
@@ -802,10 +946,12 @@ export function GastosDashboard() {
         </div>
       )}
 
-        </TabsContent>
+        </>
+        )}
 
         {/* ── Tab: Libro de gastos ──────────────────────────── */}
-        <TabsContent value="libro" className="space-y-4">
+        {tabActiva === 'libro' && (
+        <>
 
           {/* Botones de acción */}
           <div className="flex flex-wrap gap-2">
@@ -837,81 +983,32 @@ export function GastosDashboard() {
           </div>
 
           {/* Tabla plana cronológica */}
-          <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
-            {isLoading ? (
-              <div className="p-4 space-y-2">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="h-10 bg-muted/50 rounded animate-pulse" />
-                ))}
+          <DataTable
+            columns={gastoLibroColumns}
+            data={gastosLibroOrdenados}
+            isLoading={isLoading}
+            onRowClick={(g) => setDetalleId(g.id)}
+            emptyMessage="Sin gastos en el periodo"
+            renderMobileCard={renderGastoLibroMobileCard}
+          />
+
+          {!isLoading && gastosFiltrados.length > 0 && (
+            <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-2.5 shadow-lg">
+              <p className="text-xs font-semibold text-muted-foreground">Total periodo (costo · IVA · total)</p>
+              <div className="text-right tabular-nums">
+                <div className="text-sm font-bold text-foreground">{formatUsd(totalPeriodo)}</div>
+                <div className="text-[10px] font-normal text-muted-foreground">
+                  IVA {formatUsd(ivaPeriodo)} · Total {formatUsd(totalGeneralPeriodo)}
+                </div>
               </div>
-            ) : gastosFiltrados.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <p className="text-sm font-medium">Sin gastos en el periodo</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 sticky top-0 z-[1]">
-                    <tr>
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Fecha</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Factura</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
-                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Observaciones</th>
-                      <th className="text-right px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Costo</th>
-                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...gastosFiltrados]
-                      .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.created_at.localeCompare(a.created_at))
-                      .map((g) => {
-                        const anulado = g.status === 'ANULADO'
-                        const montoUsd = montoCostoGasto(g)
-                        const tasaGasto = parseFloat(g.tasa) || 1
-                        const montoBs = montoUsd * tasaGasto
-                        return (
-                          <tr
-                            key={g.id}
-                            onClick={() => setDetalleId(g.id)}
-                            className={`border-t border-border hover:bg-muted/30 cursor-pointer transition-colors ${anulado ? 'opacity-50' : ''}`}
-                          >
-                            <td className={`px-4 py-2 font-mono text-xs ${anulado ? 'line-through' : 'text-foreground'}`}>{g.nro_gasto}</td>
-                            <td className={`px-4 py-2 text-xs text-muted-foreground whitespace-nowrap ${anulado ? 'line-through' : ''}`}>{formatDate(g.fecha)}</td>
-                            <td className={`px-4 py-2 text-xs text-foreground max-w-[160px] truncate ${anulado ? 'line-through' : ''}`}>{(g as { cuenta_nombre: string }).cuenta_nombre}</td>
-                            <td className={`px-4 py-2 font-mono text-xs text-muted-foreground ${anulado ? 'line-through' : ''}`}>{g.nro_factura ?? '—'}</td>
-                            <td className="px-4 py-2 text-xs text-muted-foreground">{(g as { proveedor_nombre: string | null }).proveedor_nombre ?? '—'}</td>
-                            <td className="px-4 py-2 text-xs text-muted-foreground max-w-[200px] truncate">{(g as { observaciones: string | null }).observaciones ?? '—'}</td>
-                            <td className="px-4 py-2 text-right tabular-nums">
-                              <div className={`text-sm font-semibold ${anulado ? 'line-through' : 'text-foreground'}`}>{formatUsd(montoUsd)}</div>
-                              <div className="text-[10px] text-muted-foreground">{formatBs(montoBs)}</div>
-                            </td>
-                            <td className="px-4 py-2 text-center"><StatusBadge status={g.status} /></td>
-                          </tr>
-                        )
-                      })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/30">
-                      <td colSpan={6} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">
-                        Total (costo · IVA · total)
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums">
-                        <div className="text-sm font-bold">{formatUsd(totalPeriodo)}</div>
-                        <div className="text-[10px] font-normal text-muted-foreground">
-                          IVA {formatUsd(ivaPeriodo)} · Total {formatUsd(totalGeneralPeriodo)}
-                        </div>
-                      </td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-          </div>
-        </TabsContent>
-      </Tabs>
+            </div>
+          )}
+        </>
+        )}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </div>
 
       {/* ── Modales ───────────────────────────────────────────── */}
       <FacturaProveedorModal
