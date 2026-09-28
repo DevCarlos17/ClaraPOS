@@ -1,31 +1,16 @@
 import { create } from 'zustand'
-import type { DecisionPvp } from '@/features/inventario/lib/compra-precio-gating'
 import type { ConceptoCargo } from '@/features/inventario/lib/compra-lineas-cargo'
+import { type PvpNivelUI } from '@/features/inventario/lib/compra-pvp-decision'
 
 export type MonedaCompraWizard = 'USD' | 'BS'
 export type TipoImpuestoLineaWizard = 'Gravable' | 'Exento' | 'Exonerado'
 
 const STORAGE_KEY = 'compra_wizard_draft'
 
-/**
- * TEMPORAL: mismo shape que la interfaz privada `PvpNivelUI` de
- * `compra-form.tsx`. Segun design.md, este tipo se "mueve" a
- * `compra-pvp-decision.ts` en W4a (aun no existe — ver tasks.md 3a.5: "PVP
- * actions stubbed as no-ops en este PR, do NOT wire to compra-pvp-decision.ts
- * yet"). Cuando W4a cree ese modulo, reemplazar este `export interface` por
- * un `import type` desde alli, sin tocar los campos ya consumidos aqui.
- */
-export interface PvpNivelUI {
-  orden: number
-  nombre: string
-  campo: 'precio_venta_usd' | 'precio_mayor_usd' | 'precio_especial_usd'
-  pvp_actual_usd: number
-  pvp_input: string
-  margen_input: string
-  violado: boolean
-  decision: DecisionPvp
-  margen_si_mantiene_pvp: string
-}
+// `PvpNivelUI` vive en `compra-pvp-decision.ts` (W4a) — swap de import puro
+// desde la copia temporal que este archivo tenia hasta W3a, sin tocar los
+// campos ya consumidos por `paso-productos.tsx`/`pvp-confirm-sheet.tsx`.
+export type { PvpNivelUI }
 
 /** Subconjunto de `LineaUI` (compra-form.tsx) relevante para el wizard mobile. */
 export interface LineaWizardCompra {
@@ -136,12 +121,15 @@ interface CompraWizardState {
   quitarLinea: (idx: number) => void
 
   /**
-   * PVP gating — STUBBED en este PR (tasks.md 3a.5): `abrirPvpDecision` solo
-   * setea el indice pendiente (necesario para que W3b/W4b-i puedan construir
-   * la UI de apertura); `confirmarPvpDecision`/`cancelarPvpDecision` solo
-   * limpian el indice pendiente SIN escribir `pvp_niveles` — esa escritura
-   * real requiere las funciones puras de `compra-pvp-decision.ts`, que W4a
-   * todavia no crea.
+   * PVP gating — real desde W4a. `abrirPvpDecision` setea el indice
+   * pendiente para que la UI (W4b-i/W4b-ii) abra el editor/sheet de esa
+   * linea. `confirmarPvpDecision` escribe las `niveles` YA resueltas
+   * (calculadas por el caller con las funciones puras de
+   * `compra-pvp-decision.ts` — el store no vuelve a computar, solo persiste
+   * la decision) en `lineas[idx].pvp_niveles` y limpia el indice pendiente.
+   * `cancelarPvpDecision` revierte la linea al estado sin cambio de costo
+   * (`nuevo_costo_raw=''`, `costo_input=costo_actual`, `pvp_niveles=[]`) y
+   * limpia el indice pendiente.
    */
   abrirPvpDecision: (idx: number) => void
   confirmarPvpDecision: (idx: number, niveles: PvpNivelUI[]) => void
@@ -210,9 +198,19 @@ export const useCompraWizardStore = create<CompraWizardState>()((set, get) => ({
 
   abrirPvpDecision: (idx) => set({ pvpPendienteLineaIdx: idx }),
 
-  confirmarPvpDecision: () => set({ pvpPendienteLineaIdx: null }),
+  confirmarPvpDecision: (idx, niveles) =>
+    set((state) => ({
+      lineas: state.lineas.map((l, i) => (i === idx ? { ...l, pvp_niveles: niveles } : l)),
+      pvpPendienteLineaIdx: null,
+    })),
 
-  cancelarPvpDecision: () => set({ pvpPendienteLineaIdx: null }),
+  cancelarPvpDecision: (idx) =>
+    set((state) => ({
+      lineas: state.lineas.map((l, i) =>
+        i === idx ? { ...l, nuevo_costo_raw: '', costo_input: l.costo_actual, pvp_niveles: [] } : l
+      ),
+      pvpPendienteLineaIdx: null,
+    })),
 
   agregarCargo: (concepto) =>
     set((state) => ({ lineasCargo: [...state.lineasCargo, nuevoCargoWizard(concepto)] })),
