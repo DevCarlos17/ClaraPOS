@@ -10,6 +10,8 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { BottomSheet } from '@/components/shared/bottom-sheet'
+import { useMobile } from '@/hooks/use-mobile'
 import Decimal from 'decimal.js'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
@@ -386,73 +388,76 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
   const proveedorRif =
     tipo === 'COMPRA' ? compra?.proveedor_rif : gasto?.proveedor_rif
 
-  // ─── Render ───────────────────────────────────────────────
+  // ─── Vista: Dialog (desktop) vs BottomSheet (mobile) ──────
+  // Slice B (compras-gastos-datatable-restyle): mismo patron de
+  // `consulta-factura-modal.tsx` — se arman `titulo`/`cuerpo`/`footer` UNA
+  // sola vez y se pasan a ambas superficies para no duplicar hooks/carga
+  // de datos. Decision de header resuelta en design.md: el Badge de tipo
+  // vive en el slot de titulo; la accion "Anular" (flujo stateful de
+  // confirmacion) se reposiciona al tope del `cuerpo` (antes vivia en el
+  // header derecho) — reposicion puramente cosmetica, mismos handlers.
+  const isMobile = useMobile(1024)
 
-  return (
+  const titulo = (
+    <span className="flex items-center gap-2">
+      {tipo === 'COMPRA' ? 'Detalle de Compra' : 'Detalle de Gasto'}
+      <Badge
+        variant="outline"
+        className={`text-[10px] ${
+          tipo === 'COMPRA'
+            ? 'bg-blue-50 text-blue-700 border-blue-200'
+            : 'bg-purple-50 text-purple-700 border-purple-200'
+        }`}
+      >
+        {tipo}
+      </Badge>
+    </span>
+  )
+
+  const cuerpo = (
     <>
-      <Dialog open={isOpen} onOpenChange={(v) => { if (!v) onClose() }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <DialogTitle>
-                  {tipo === 'COMPRA' ? 'Detalle de Compra' : 'Detalle de Gasto'}
-                </DialogTitle>
-                <Badge
-                  variant="outline"
-                  className={`text-[10px] ${
-                    tipo === 'COMPRA'
-                      ? 'bg-blue-50 text-blue-700 border-blue-200'
-                      : 'bg-purple-50 text-purple-700 border-purple-200'
-                  }`}
-                >
-                  {tipo}
-                </Badge>
-              </div>
-              {tipo === 'GASTO' && gasto && !esAnulado && puedeAnular && (
-                <div className="flex items-center gap-2 shrink-0">
-                  {confirmandoAnular ? (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        disabled={anulando}
-                        onClick={handleAnularGasto}
-                      >
-                        {anulando ? 'Anulando...' : 'Confirmar anulacion'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setConfirmandoAnular(false)}
-                      >
-                        Cancelar
-                      </Button>
-                    </>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-destructive border-destructive/30 hover:bg-destructive/10"
-                      onClick={() => setConfirmandoAnular(true)}
-                    >
-                      <ArrowCounterClockwise className="h-3.5 w-3.5 mr-1" />
-                      Anular
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-          </DialogHeader>
-
-          {isLoading ? (
-            <div className="space-y-4 py-4">
-              <div className="h-24 bg-muted/50 rounded animate-pulse" />
-              <div className="h-32 bg-muted/50 rounded animate-pulse" />
-              <div className="h-16 bg-muted/50 rounded animate-pulse" />
-            </div>
+      {tipo === 'GASTO' && gasto && !esAnulado && puedeAnular && (
+        <div className="flex justify-end gap-2">
+          {confirmandoAnular ? (
+            <>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={anulando}
+                onClick={handleAnularGasto}
+              >
+                {anulando ? 'Anulando...' : 'Confirmar anulacion'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setConfirmandoAnular(false)}
+              >
+                Cancelar
+              </Button>
+            </>
           ) : (
-            <div className="space-y-4">
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive border-destructive/30 hover:bg-destructive/10"
+              onClick={() => setConfirmandoAnular(true)}
+            >
+              <ArrowCounterClockwise className="h-3.5 w-3.5 mr-1" />
+              Anular
+            </Button>
+          )}
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="space-y-4 py-4">
+          <div className="h-24 bg-muted/50 rounded animate-pulse" />
+          <div className="h-32 bg-muted/50 rounded animate-pulse" />
+          <div className="h-16 bg-muted/50 rounded animate-pulse" />
+        </div>
+      ) : (
+        <div className="space-y-4">
 
               {/* ── Encabezado del documento ─────────────── */}
               <div className="rounded-lg bg-muted/40 border border-border p-4 space-y-3">
@@ -923,35 +928,65 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                   </div>
                 )}
               </div>
-
-              {/* ── Footer ───────────────────────────────── */}
-              <div className="flex justify-between items-center pt-3 border-t border-border">
-                <Button variant="outline" onClick={onClose}>
-                  Cerrar
-                </Button>
-                <div className="flex gap-2">
-                  {tipo === 'COMPRA' && saldo > 0 && saldo < 0.01 && !esAnulado && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleDiferencialCambiario}
-                      disabled={aplicandoDiferencial}
-                      className="text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
-                    >
-                      {aplicandoDiferencial ? 'Procesando...' : 'Diferencial cambiario'}
-                    </Button>
-                  )}
-                  {saldo > 0 && !esAnulado && (
-                    <Button onClick={() => setPagoOpen(true)}>
-                      Registrar Pago
-                    </Button>
-                  )}
-                </div>
-              </div>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
+    </>
+  )
+
+  const footer = (
+    <>
+      <Button variant="secondary" className="h-10 rounded-xl gap-2.5" onClick={onClose}>
+        Cerrar
+      </Button>
+      <div className="flex gap-2">
+        {tipo === 'COMPRA' && saldo > 0 && saldo < 0.01 && !esAnulado && (
+          <Button
+            variant="outline"
+            onClick={handleDiferencialCambiario}
+            disabled={aplicandoDiferencial}
+            className="h-11 rounded-xl text-base text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
+          >
+            {aplicandoDiferencial ? 'Procesando...' : 'Diferencial cambiario'}
+          </Button>
+        )}
+        {saldo > 0 && !esAnulado && (
+          <Button className="h-11 rounded-xl text-base" onClick={() => setPagoOpen(true)}>
+            Registrar Pago
+          </Button>
+        )}
+      </div>
+    </>
+  )
+
+  // ─── Render ───────────────────────────────────────────────
+
+  return (
+    <>
+      {isMobile ? (
+        <BottomSheet
+          open={isOpen}
+          onOpenChange={(v) => { if (!v) onClose() }}
+          title={titulo}
+          bodyClassName="flex flex-col gap-4 p-4"
+          footer={footer}
+        >
+          {cuerpo}
+        </BottomSheet>
+      ) : (
+        <Dialog open={isOpen} onOpenChange={(v) => { if (!v) onClose() }}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{titulo}</DialogTitle>
+            </DialogHeader>
+
+            {cuerpo}
+
+            <div className="flex justify-between items-center pt-3 border-t border-border">
+              {footer}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Sub-modales de pago */}
       {tipo === 'COMPRA' && (
