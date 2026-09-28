@@ -807,35 +807,6 @@ export function GastosDashboard() {
         {/* ── Tab: Libro de gastos ──────────────────────────── */}
         <TabsContent value="libro" className="space-y-4">
 
-          {/* Botones de acción */}
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setCuentaModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground bg-background hover:bg-muted transition-colors"
-            >
-              <BookOpen className="h-4 w-4" />
-              Crear cuenta
-            </button>
-            <button
-              type="button"
-              onClick={handleImprimir}
-              disabled={gastosFiltrados.length === 0 || isLoading}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground bg-background hover:bg-muted transition-colors disabled:opacity-40"
-            >
-              <Printer className="h-4 w-4" />
-              Imprimir
-            </button>
-            <button
-              type="button"
-              onClick={() => setFormOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
-            >
-              <Plus className="h-4 w-4" />
-              Agregar gasto
-            </button>
-          </div>
-
           {/* Tabla plana cronológica */}
           <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
             {isLoading ? (
