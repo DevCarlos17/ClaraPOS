@@ -6,6 +6,14 @@ import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, C
 import { compraHeaderSchema, lineaCompraSchema, pagoCompraSchema, lineaCargoSchema } from '@/features/inventario/schemas/compra-schema'
 import { crearCompra, type PagoCompraParam, type CrearCompraParams } from '@/features/inventario/hooks/use-compras'
 import { totalizarLineasCargo, mergeDesgloseConCargo, type LineaCargoUI, type ConceptoCargo } from '@/features/inventario/lib/compra-lineas-cargo'
+import {
+  getLineSubtotal,
+  calcDesgloseUsd,
+  convertirLineasCargo,
+  calcTotalUsd,
+  calcTotalUsdSistema,
+  calcPendienteUsd,
+} from '@/features/inventario/lib/compra-desglose'
 import { convertirMontoRawEntreMonedas } from '@/features/inventario/lib/convertir-monto-moneda'
 import {
   debeMostrarInfoPvpEnResumen,
@@ -440,10 +448,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
     return options
   }
 
-  function getLineSubtotal(l: LineaUI): number {
-    return new Decimal(l.cantidad_input).times(l.costo_input).toNumber()
-  }
-
   // Costo sistema por unidad (a tasa interna) para mostrar en gris
   function getCostoSistema(l: LineaUI): number | null {
     if (!usaTasaParalela || tasaInternaNum <= 0) return null
@@ -471,48 +475,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
   )
 
   // Desglose fiscal en USD, agrupado por alicuota de IVA
-  const desgloseUsd = useMemo(() => {
-    let exento = new Decimal(0)
-    const gravableMap = new Map<number, { base: Decimal; iva: Decimal }>()
-
-    for (const l of lineas) {
-      const lineaSub = new Decimal(getLineSubtotal(l))
-      const subtotalUsd = moneda === 'USD'
-        ? lineaSub
-        : (tasaFacturaNum > 0 ? lineaSub.dividedBy(tasaFacturaNum) : new Decimal(0))
-
-      if (l.tipo_impuesto !== 'Gravable') {
-        exento = exento.plus(subtotalUsd)
-      } else {
-        const existing = gravableMap.get(l.impuesto_pct) ?? { base: new Decimal(0), iva: new Decimal(0) }
-        const ivaAmount = subtotalUsd.times(l.impuesto_pct).dividedBy(100)
-        gravableMap.set(l.impuesto_pct, {
-          base: existing.base.plus(subtotalUsd),
-          iva: existing.iva.plus(ivaAmount),
-        })
-      }
-    }
-
-    const gravableGroups = Array.from(gravableMap.entries())
-      .sort(([a], [b]) => a - b)
-      .map(([pct, { base, iva }]) => ({
-        pct,
-        base: base.toDecimalPlaces(8).toNumber(),
-        iva: iva.toDecimalPlaces(8).toNumber(),
-      }))
-
-    const totalIvaUsd = gravableGroups.reduce(
-      (sum, g) => new Decimal(sum).plus(g.iva).toNumber(),
-      0
-    )
-
-    return {
-      exentoUsd: exento.toDecimalPlaces(8).toNumber(),
-      gravableGroups,
-      totalIvaUsd,
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lineas, moneda, tasaFacturaNum])
+  const desgloseUsd = useMemo(
+    () => calcDesgloseUsd(lineas, moneda, tasaFacturaNum),
+    [lineas, moneda, tasaFacturaNum]
+  )
 
   const { totalIvaUsd } = desgloseUsd
 
@@ -531,8 +497,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   // Se pliegan en totalUsd/totalBs (abajo) para que CxP, pendiente y "Max" de pago
   // reflejen el total real de la factura, cargos incluidos.
   const lineasCargoUsd = useMemo(
-    () => convertirLineasCargoAUsd(lineasCargo),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    () => convertirLineasCargo(lineasCargo, moneda, tasaFacturaNum),
     [lineasCargo, moneda, tasaFacturaNum]
   )
   const cargoTotales = useMemo(() => totalizarLineasCargo(lineasCargoUsd), [lineasCargoUsd])
@@ -549,23 +514,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
   )
 
   // totalUsd: siempre a tasa del proveedor (para CxP), incluye IVA + cargos (empaque/flete)
-  const totalUsd = (moneda === 'USD'
-    ? new Decimal(totalConIvaDisplay)
-    : (tasaFacturaNum > 0 ? new Decimal(totalConIvaDisplay).dividedBy(tasaFacturaNum) : new Decimal(0))
-  ).plus(totalCargoUsd).toNumber()
+  const totalUsd = calcTotalUsd(totalConIvaDisplay, totalCargoUsd.toNumber(), moneda, tasaFacturaNum)
   const totalBs = (moneda === 'BS'
     ? new Decimal(totalConIvaDisplay).plus(totalCargoUsd.times(tasaFacturaNum))
     : new Decimal(totalUsd).times(tasaFacturaNum)
   ).toNumber()
 
   // totalUsdSistema: a tasa interna (para inventario y contabilidad, sin IVA)
-  const totalUsdSistema = usaTasaParalela && tasaInternaNum > 0
-    ? (moneda === 'USD'
-        ? (tasaFacturaNum > 0
-            ? new Decimal(totalDisplay).times(tasaFacturaNum).dividedBy(tasaInternaNum).toNumber()
-            : 0)
-        : new Decimal(totalDisplay).dividedBy(tasaInternaNum).toNumber())
-    : totalUsd
+  const totalUsdSistema = calcTotalUsdSistema(totalDisplay, totalUsd, moneda, tasaFacturaNum, tasaInternaNum, usaTasaParalela)
 
   // Payment calculations always at proveedor rate (tasaFacturaNum)
   const totalAbonadoUsd = pagos.reduce((sum, p) => {
@@ -579,7 +535,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
     const mBs = p.moneda === 'USD' ? new Decimal(p.monto).times(tasaFacturaNum).toNumber() : p.monto
     return new Decimal(sum).plus(mBs).toNumber()
   }, 0)
-  const pendienteUsd = Math.max(0, new Decimal(totalUsd).minus(totalAbonadoUsd).toDecimalPlaces(2).toNumber())
+  const pendienteUsd = calcPendienteUsd(totalUsd, pagos, tasaFacturaNum)
   // pendienteBs: calculado directo desde totalBs, no desde pendienteUsd * tasa
   const pendienteBs = Math.max(0, new Decimal(totalBs).minus(totalAbonadoBs).toDecimalPlaces(2).toNumber())
   const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
@@ -684,19 +640,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
   function handleLineaCargoIvaChange(id: string, value: string) {
     const pct: 0 | 16 = value === '16' ? 16 : 0
     setLineasCargo((prev) => prev.map((l) => (l.id === id ? { ...l, porcentaje_iva: pct } : l)))
-  }
-
-  /** Convierte lineas de cargo a USD (mismo criterio que costo_unitario_usd de producto). Lineas con monto invalido/vacio se excluyen del preview. */
-  function convertirLineasCargoAUsd(input: LineaCargoInputUI[]): LineaCargoUI[] {
-    return input
-      .filter((l) => l.monto_input.trim() !== '' && parseFloat(l.monto_input) > 0)
-      .map((l) => {
-        const montoDisplay = parseFloat(l.monto_input)
-        const montoUsd = moneda === 'USD'
-          ? montoDisplay
-          : (tasaFacturaNum > 0 ? new Decimal(montoDisplay).dividedBy(tasaFacturaNum).toNumber() : 0)
-        return { id: l.id, concepto: l.concepto, monto: montoUsd, porcentaje_iva: l.porcentaje_iva }
-      })
   }
 
   function handleLineaChange(index: number, field: 'cantidad_input', value: string) {
@@ -1180,7 +1123,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
     }
 
     // Segunda barrera: validar cada linea de cargo con Zod (mismo patron que pagos)
-    const lineasCargoParam: LineaCargoUI[] = convertirLineasCargoAUsd(lineasCargo)
+    const lineasCargoParam: LineaCargoUI[] = convertirLineasCargo(lineasCargo, moneda, tasaFacturaNum)
     for (const l of lineasCargoParam) {
       const parsedCargo = lineaCargoSchema.safeParse({
         concepto: l.concepto,
