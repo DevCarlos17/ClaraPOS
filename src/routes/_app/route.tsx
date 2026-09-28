@@ -34,7 +34,7 @@ function AppLayout() {
 
   return (
     <GlobalContextMenu>
-      <div className="flex h-screen overflow-hidden bg-background overflow-x-hidden font-sans antialiased text-foreground selection:bg-primary/10 print:block print:h-auto print:overflow-visible print:bg-white">
+      <div className="flex h-[100dvh] overflow-hidden bg-background overflow-x-hidden font-sans antialiased text-foreground selection:bg-primary/10 print:block print:h-auto print:overflow-visible print:bg-white">
         <div className="print:hidden">
           <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
         </div>
