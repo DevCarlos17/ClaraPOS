@@ -10,6 +10,8 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { BottomSheet } from '@/components/shared/bottom-sheet'
+import { useMobile } from '@/hooks/use-mobile'
 import Decimal from 'decimal.js'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
@@ -386,76 +388,45 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
   const proveedorRif =
     tipo === 'COMPRA' ? compra?.proveedor_rif : gasto?.proveedor_rif
 
-  // ─── Render ───────────────────────────────────────────────
+  // ─── Vista: Dialog (desktop) vs BottomSheet (mobile) ──────
+  // Slice B (compras-gastos-datatable-restyle): mismo patron de
+  // `consulta-factura-modal.tsx` — se arman `titulo`/`cuerpo`/`footer` UNA
+  // sola vez y se pasan a ambas superficies para no duplicar hooks/carga
+  // de datos. Decision de header resuelta en design.md: el Badge de tipo
+  // vive en el slot de titulo; la accion "Anular" (flujo stateful de
+  // confirmacion) se reposiciona al tope del `cuerpo` (antes vivia en el
+  // header derecho) — reposicion puramente cosmetica, mismos handlers.
+  const isMobile = useMobile(1024)
 
-  return (
+  const titulo = (
+    <span className="flex items-center gap-2">
+      {tipo === 'COMPRA' ? 'Detalle de Compra' : 'Detalle de Gasto'}
+      <Badge
+        variant="outline"
+        className={`text-[10px] ${
+          tipo === 'COMPRA'
+            ? 'bg-blue-50 text-blue-700 border-blue-200'
+            : 'bg-purple-50 text-purple-700 border-purple-200'
+        }`}
+      >
+        {tipo}
+      </Badge>
+    </span>
+  )
+
+  const cuerpo = (
     <>
-      <Dialog open={isOpen} onOpenChange={(v) => { if (!v) onClose() }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <DialogTitle>
-                  {tipo === 'COMPRA' ? 'Detalle de Compra' : 'Detalle de Gasto'}
-                </DialogTitle>
-                <Badge
-                  variant="outline"
-                  className={`text-[10px] ${
-                    tipo === 'COMPRA'
-                      ? 'bg-blue-50 text-blue-700 border-blue-200'
-                      : 'bg-purple-50 text-purple-700 border-purple-200'
-                  }`}
-                >
-                  {tipo}
-                </Badge>
-              </div>
-              {tipo === 'GASTO' && gasto && !esAnulado && puedeAnular && (
-                <div className="flex items-center gap-2 shrink-0">
-                  {confirmandoAnular ? (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        disabled={anulando}
-                        onClick={handleAnularGasto}
-                      >
-                        {anulando ? 'Anulando...' : 'Confirmar anulacion'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setConfirmandoAnular(false)}
-                      >
-                        Cancelar
-                      </Button>
-                    </>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-destructive border-destructive/30 hover:bg-destructive/10"
-                      onClick={() => setConfirmandoAnular(true)}
-                    >
-                      <ArrowCounterClockwise className="h-3.5 w-3.5 mr-1" />
-                      Anular
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-          </DialogHeader>
-
-          {isLoading ? (
-            <div className="space-y-4 py-4">
-              <div className="h-24 bg-muted/50 rounded animate-pulse" />
-              <div className="h-32 bg-muted/50 rounded animate-pulse" />
-              <div className="h-16 bg-muted/50 rounded animate-pulse" />
-            </div>
-          ) : (
-            <div className="space-y-4">
+      {isLoading ? (
+        <div className="space-y-4 py-4">
+          <div className="h-24 bg-muted/50 rounded animate-pulse" />
+          <div className="h-32 bg-muted/50 rounded animate-pulse" />
+          <div className="h-16 bg-muted/50 rounded animate-pulse" />
+        </div>
+      ) : (
+        <div className="space-y-4">
 
               {/* ── Encabezado del documento ─────────────── */}
-              <div className="rounded-lg bg-muted/40 border border-border p-4 space-y-3">
+              <div className="rounded-2xl bg-card border shadow-lg p-4 space-y-3">
                 {/* Proveedor */}
                 {(proveedorNombre || proveedorRif) && (
                   <div>
@@ -471,82 +442,114 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                 )}
 
                 {/* Datos del documento */}
-                <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
+                <div className="space-y-1.5 text-sm">
                   {tipo === 'COMPRA' && compra && (
                     <>
-                      <div className="text-muted-foreground">Nro. Factura</div>
-                      <div className="font-mono font-medium">{compra.nro_factura}</div>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Nro. Factura</span>
+                        <span className="font-mono font-semibold text-foreground text-right break-all min-w-0">
+                          {compra.nro_factura}
+                        </span>
+                      </div>
                       {compra.nro_control && (
-                        <>
-                          <div className="text-muted-foreground">Nro. Control</div>
-                          <div className="font-mono">{compra.nro_control}</div>
-                        </>
+                        <div className="flex items-start justify-between gap-4">
+                          <span className="text-muted-foreground shrink-0">Nro. Control</span>
+                          <span className="font-mono font-semibold text-foreground text-right break-all min-w-0">
+                            {compra.nro_control}
+                          </span>
+                        </div>
                       )}
-                      <div className="text-muted-foreground">Fecha</div>
-                      <div>{formatDate(compra.fecha_factura)}</div>
-                      <div className="text-muted-foreground">Tipo pago</div>
-                      <div>
-                        <Badge variant="outline" className="text-xs">{compra.tipo}</Badge>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Fecha</span>
+                        <span className="font-semibold text-foreground text-right">
+                          {formatDate(compra.fecha_factura)}
+                        </span>
+                      </div>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Tipo pago</span>
+                        <span className="text-right">
+                          <Badge variant="outline" className="text-xs">{compra.tipo}</Badge>
+                        </span>
                       </div>
                     </>
                   )}
                   {tipo === 'GASTO' && gasto && (
                     <>
-                      <div className="text-muted-foreground">Nro. Interno</div>
-                      <div className="font-mono font-medium">{gasto.nro_gasto}</div>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Nro. Interno</span>
+                        <span className="font-mono font-semibold text-foreground text-right break-all min-w-0">
+                          {gasto.nro_gasto}
+                        </span>
+                      </div>
                       {gasto.nro_factura && (
-                        <>
-                          <div className="text-muted-foreground">Nro. Factura</div>
-                          <div className="font-mono">{gasto.nro_factura}</div>
-                        </>
+                        <div className="flex items-start justify-between gap-4">
+                          <span className="text-muted-foreground shrink-0">Nro. Factura</span>
+                          <span className="font-mono font-semibold text-foreground text-right break-all min-w-0">
+                            {gasto.nro_factura}
+                          </span>
+                        </div>
                       )}
                       {gasto.nro_control && (
-                        <>
-                          <div className="text-muted-foreground">Nro. Control</div>
-                          <div className="font-mono">{gasto.nro_control}</div>
-                        </>
+                        <div className="flex items-start justify-between gap-4">
+                          <span className="text-muted-foreground shrink-0">Nro. Control</span>
+                          <span className="font-mono font-semibold text-foreground text-right break-all min-w-0">
+                            {gasto.nro_control}
+                          </span>
+                        </div>
                       )}
-                      <div className="text-muted-foreground">Fecha</div>
-                      <div>{formatDate(gasto.fecha)}</div>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Fecha</span>
+                        <span className="font-semibold text-foreground text-right">
+                          {formatDate(gasto.fecha)}
+                        </span>
+                      </div>
                     </>
                   )}
 
                   {/* Tasas */}
                   {amounts && (
                     <>
-                      <div className="text-muted-foreground">Tasa Factura</div>
-                      <div className="flex items-center gap-2 font-mono tabular-nums">
-                        {amounts.tasaFactura.toFixed(4)} Bs/USD
-                        {amounts.usaParalela && (
-                          <Badge className="text-[9px] px-1.5 py-0 bg-amber-50 text-amber-700 border border-amber-200">
-                            Paralela
-                          </Badge>
-                        )}
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Tasa Factura</span>
+                        <span className="flex items-center justify-end flex-wrap gap-2 font-mono font-semibold text-foreground tabular-nums text-right">
+                          {amounts.tasaFactura.toFixed(4)} Bs/USD
+                          {amounts.usaParalela && (
+                            <Badge className="text-[9px] px-1.5 py-0 bg-amber-50 text-amber-700 border border-amber-200">
+                              Paralela
+                            </Badge>
+                          )}
+                        </span>
                       </div>
-                      <div className="text-muted-foreground">Tasa Interna</div>
-                      <div className="font-mono tabular-nums">
-                        {amounts.tasaInterna.toFixed(4)} Bs/USD
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-muted-foreground shrink-0">Tasa Interna</span>
+                        <span className="font-mono font-semibold text-foreground tabular-nums text-right">
+                          {amounts.tasaInterna.toFixed(4)} Bs/USD
+                        </span>
                       </div>
                     </>
                   )}
 
                   {/* Status + procesado por */}
-                  <div className="text-muted-foreground">Status</div>
-                  <div>
-                    <Badge
-                      variant="outline"
-                      className={`text-xs ${
-                        esAnulado
-                          ? 'bg-red-50 text-red-700 border-red-200'
-                          : 'bg-green-50 text-green-700 border-green-200'
-                      }`}
-                    >
-                      {tipo === 'COMPRA' ? compra?.status : gasto?.status}
-                    </Badge>
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="text-muted-foreground shrink-0">Status</span>
+                    <span className="text-right">
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${
+                          esAnulado
+                            ? 'bg-red-50 text-red-700 border-red-200'
+                            : 'bg-green-50 text-green-700 border-green-200'
+                        }`}
+                      >
+                        {tipo === 'COMPRA' ? compra?.status : gasto?.status}
+                      </Badge>
+                    </span>
                   </div>
-                  <div className="text-muted-foreground">Procesado por</div>
-                  <div className="text-muted-foreground">
-                    {(tipo === 'COMPRA' ? compra?.created_by_nombre : gasto?.created_by_nombre) ?? '—'}
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="text-muted-foreground shrink-0">Procesado por</span>
+                    <span className="font-semibold text-foreground text-right">
+                      {(tipo === 'COMPRA' ? compra?.created_by_nombre : gasto?.created_by_nombre) ?? '—'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -611,10 +614,10 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
               )}
 
               {tipo === 'GASTO' && gasto && (
-                <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1.5 text-sm">
-                  <div className="flex gap-2">
-                    <span className="text-muted-foreground min-w-[90px] shrink-0">Cuenta:</span>
-                    <span className="font-medium">
+                <div className="rounded-2xl bg-card border shadow-lg p-4 space-y-2 text-sm">
+                  <div className="flex gap-3">
+                    <span className="text-muted-foreground min-w-[110px] shrink-0">Cuenta:</span>
+                    <span className="font-semibold text-foreground">
                       {gasto.cuenta_codigo && (
                         <span className="font-mono text-muted-foreground text-xs mr-1">
                           {gasto.cuenta_codigo}
@@ -623,16 +626,16 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                       {gasto.cuenta_nombre}
                     </span>
                   </div>
-                  <div className="flex gap-2">
-                    <span className="text-muted-foreground min-w-[90px] shrink-0">Descripcion:</span>
-                    <span>{gasto.descripcion}</span>
+                  <div className="flex gap-3">
+                    <span className="text-muted-foreground min-w-[110px] shrink-0">Descripcion:</span>
+                    <span className="font-semibold text-foreground">{gasto.descripcion}</span>
                   </div>
                   {gasto.observaciones && (
-                    <div className="flex gap-2">
-                      <span className="text-muted-foreground min-w-[90px] shrink-0">
+                    <div className="flex gap-3">
+                      <span className="text-muted-foreground min-w-[110px] shrink-0">
                         Observaciones:
                       </span>
-                      <span className="italic text-muted-foreground">{gasto.observaciones}</span>
+                      <span className="italic text-foreground">{gasto.observaciones}</span>
                     </div>
                   )}
                 </div>
@@ -640,17 +643,17 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
 
               {/* ── Totales ──────────────────────────────── */}
               {amounts && (
-                <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-1.5">
+                <div className="rounded-2xl bg-card border shadow-lg p-4 space-y-1.5">
                   {tipo === 'GASTO' && (
                     amounts.esGravable ? (
                       <>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Base imponible:</span>
                           <div className="text-right">
-                            <div className="font-medium text-foreground">
+                            <div className="font-bold text-foreground">
                               {formatUsd(amounts.baseUsd ?? 0)}
                             </div>
-                            <div className="text-[10px] text-muted-foreground">
+                            <div className="text-xs text-muted-foreground font-medium">
                               {formatBs((amounts.baseUsd ?? 0) * tasaValor)}
                             </div>
                           </div>
@@ -660,10 +663,10 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                             IVA ({(amounts.porcentajeIva ?? 0).toFixed(2)}%):
                           </span>
                           <div className="text-right">
-                            <div className="font-medium text-foreground">
+                            <div className="font-bold text-foreground">
                               {formatUsd(amounts.ivaUsd ?? 0)}
                             </div>
-                            <div className="text-[10px] text-muted-foreground">
+                            <div className="text-xs text-muted-foreground font-medium">
                               {formatBs((amounts.ivaUsd ?? 0) * tasaValor)}
                             </div>
                           </div>
@@ -671,10 +674,10 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                         <div className="flex justify-between text-sm border-b border-border/50 pb-1.5">
                           <span className="text-muted-foreground">Total con IVA:</span>
                           <div className="text-right">
-                            <div className="font-semibold text-foreground">
+                            <div className="text-base font-bold text-foreground">
                               {formatUsd(amounts.totalContableUsd)}
                             </div>
-                            <div className="text-[10px] text-muted-foreground">
+                            <div className="text-xs text-muted-foreground font-medium">
                               {formatBs(amounts.totalBs)}
                             </div>
                           </div>
@@ -686,10 +689,10 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                           Monto {amounts.esExonerado ? 'Exonerado' : 'Exento'} (sin IVA):
                         </span>
                         <div className="text-right">
-                          <div className="font-semibold text-foreground">
+                          <div className="text-base font-bold text-foreground">
                             {formatUsd(amounts.totalContableUsd)}
                           </div>
-                          <div className="text-[10px] text-muted-foreground">
+                          <div className="text-xs text-muted-foreground font-medium">
                             {formatBs(amounts.totalBs)}
                           </div>
                         </div>
@@ -700,7 +703,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                     <>
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Total Factura (Proveedor):</span>
-                        <span className="font-bold text-foreground">
+                        <span className="text-base font-bold text-foreground">
                           {formatUsd(amounts.totalProveedorUsd)}
                         </span>
                       </div>
@@ -708,7 +711,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                         <span className="text-muted-foreground">
                           Equivalente Bs ({amounts.tasaFactura.toFixed(2)} Bs/USD):
                         </span>
-                        <span className="font-medium text-muted-foreground">
+                        <span className="font-semibold text-foreground">
                           {formatBs(amounts.totalBs)}
                         </span>
                       </div>
@@ -716,7 +719,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                         <span className="text-muted-foreground">
                           Total Contable USD ({amounts.tasaInterna.toFixed(2)} Bs/USD):
                         </span>
-                        <span className="font-bold text-foreground">
+                        <span className="text-base font-bold text-foreground">
                           {formatUsd(amounts.totalContableUsd)}
                         </span>
                       </div>
@@ -725,13 +728,13 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                     <>
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Total Factura:</span>
-                        <span className="font-bold text-foreground">
+                        <span className="text-base font-bold text-foreground">
                           {formatUsd(amounts.totalProveedorUsd)}
                         </span>
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Total Bs:</span>
-                        <span className="font-medium text-muted-foreground">
+                        <span className="font-semibold text-foreground">
                           {formatBs(amounts.totalBs)}
                         </span>
                       </div>
@@ -742,11 +745,11 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                     <div className="flex justify-between text-sm border-t border-border pt-1.5 mt-1">
                       <span className="text-muted-foreground">Abonado:</span>
                       <div className="text-right">
-                        <div className="font-medium text-green-600">
+                        <div className="font-bold text-green-600">
                           {formatUsd(totalAbonadoProveedor)}
                         </div>
                         {Math.abs(totalAbonadoContable - totalAbonadoProveedor) > 0.005 && (
-                          <div className="text-[10px] text-muted-foreground">
+                          <div className="text-xs text-muted-foreground font-medium">
                             Contable: {formatUsd(totalAbonadoContable)}
                           </div>
                         )}
@@ -756,7 +759,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
 
                   {saldo > 0 ? (
                     <div className="flex justify-between text-sm border-t border-border pt-1.5 mt-1">
-                      <span className="font-medium text-muted-foreground">Saldo Pendiente:</span>
+                      <span className="text-muted-foreground">Saldo Pendiente:</span>
                       <div className="text-right">
                         {saldo < 0.01 ? (
                           <>
@@ -764,13 +767,13 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                               {new Decimal(saldo).toFixed(8)} USD
                             </div>
                             {amounts && amounts.tasaInterna > 0 && (
-                              <div className="font-bold text-destructive text-sm">
+                              <div className="font-bold text-destructive text-base">
                                 {formatBs(new Decimal(saldo).times(new Decimal(amounts.tasaInterna)).toNumber())}
                               </div>
                             )}
                           </>
                         ) : (
-                          <span className="font-bold text-destructive">{formatUsd(saldo)}</span>
+                          <span className="font-bold text-destructive text-base">{formatUsd(saldo)}</span>
                         )}
                       </div>
                     </div>
@@ -923,35 +926,100 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                   </div>
                 )}
               </div>
-
-              {/* ── Footer ───────────────────────────────── */}
-              <div className="flex justify-between items-center pt-3 border-t border-border">
-                <Button variant="outline" onClick={onClose}>
-                  Cerrar
-                </Button>
-                <div className="flex gap-2">
-                  {tipo === 'COMPRA' && saldo > 0 && saldo < 0.01 && !esAnulado && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleDiferencialCambiario}
-                      disabled={aplicandoDiferencial}
-                      className="text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
-                    >
-                      {aplicandoDiferencial ? 'Procesando...' : 'Diferencial cambiario'}
-                    </Button>
-                  )}
-                  {saldo > 0 && !esAnulado && (
-                    <Button onClick={() => setPagoOpen(true)}>
-                      Registrar Pago
-                    </Button>
-                  )}
-                </div>
-              </div>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
+    </>
+  )
+
+  const footer = confirmandoAnular ? (
+    <div className="flex items-center justify-between gap-2 w-full">
+      <span className="text-sm font-medium text-foreground">¿Anular este gasto?</span>
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={anulando}
+          onClick={handleAnularGasto}
+          className="h-10 rounded-xl font-semibold"
+        >
+          {anulando ? 'Anulando...' : 'Si, anular'}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setConfirmandoAnular(false)}
+          className="h-10 rounded-xl"
+        >
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  ) : (
+    <div className="flex items-center justify-between gap-2 w-full">
+      <div className="flex items-center gap-2">
+        {tipo === 'GASTO' && gasto && !esAnulado && puedeAnular && (
+          <Button
+            size="sm"
+            variant="destructive"
+            className="h-10 rounded-xl font-semibold"
+            onClick={() => setConfirmandoAnular(true)}
+          >
+            Anular
+          </Button>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <Button variant="default" className="h-11 rounded-xl text-base" onClick={onClose}>
+          Cerrar
+        </Button>
+        {tipo === 'COMPRA' && saldo > 0 && saldo < 0.01 && !esAnulado && (
+          <Button
+            variant="outline"
+            onClick={handleDiferencialCambiario}
+            disabled={aplicandoDiferencial}
+            className="h-11 rounded-xl text-base text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
+          >
+            {aplicandoDiferencial ? 'Procesando...' : 'Diferencial cambiario'}
+          </Button>
+        )}
+        {saldo > 0 && !esAnulado && (
+          <Button className="h-11 rounded-xl text-base" onClick={() => setPagoOpen(true)}>
+            Registrar Pago
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+
+  // ─── Render ───────────────────────────────────────────────
+
+  return (
+    <>
+      {isMobile ? (
+        <BottomSheet
+          open={isOpen}
+          onOpenChange={(v) => { if (!v) onClose() }}
+          title={titulo}
+          bodyClassName="flex flex-col gap-4 p-4"
+          footer={footer}
+        >
+          {cuerpo}
+        </BottomSheet>
+      ) : (
+        <Dialog open={isOpen} onOpenChange={(v) => { if (!v) onClose() }}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{titulo}</DialogTitle>
+            </DialogHeader>
+
+            {cuerpo}
+
+            <div className="pt-3 border-t border-border">
+              {footer}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Sub-modales de pago */}
       {tipo === 'COMPRA' && (
