@@ -90,11 +90,14 @@ function handleSafeTextPaste(e: React.ClipboardEvent<HTMLInputElement>) {
  * `handleNuevoCostoChange`, L411-701), adaptado a cards en vez de tabla.
  *
  * A diferencia de `compra-form.tsx`, el flujo de decision de PVP (Caso A/B,
- * 3 botones por nivel) NO se resuelve aca — este PR (W4b-i) solo detecta el
- * cambio de costo significativo (`costoTieneCambioSignificativo`), computa la
- * vista base de `pvp_niveles` (`construirPvpNiveles`, igual que desktop) y
- * marca `pvpPendienteLineaIdx` para que W4b-ii abra el sheet de confirmacion
- * real. Mientras tanto se muestra un affordance inline deshabilitado.
+ * 3 botones por nivel) NO se resuelve en esta pantalla — este componente
+ * solo detecta el cambio de costo significativo
+ * (`costoTieneCambioSignificativo`), computa la vista base de `pvp_niveles`
+ * (`construirPvpNiveles`, igual que desktop) y marca `pvpPendienteLineaIdx`
+ * (`abrirPvpDecision`) para que `PvpConfirmSheet` (W4b-ii, montado como sheet
+ * stackeado en `compra-wizard-sheet.tsx`) abra la decision real de esa
+ * linea. El banner inline de abajo (`pvpSinResolver`) es solo el trigger +
+ * indicador de estado — la UI de decision en si vive en el sheet.
  */
 export function PasoProductos() {
   const {
@@ -103,7 +106,6 @@ export function PasoProductos() {
     usaTasaParalela,
     tasaInterna,
     tasaProveedor,
-    pvpPendienteLineaIdx,
     agregarLinea,
     actualizarLinea,
     quitarLinea,
@@ -365,7 +367,14 @@ export function PasoProductos() {
             const options = producto ? getUnidadOptions(producto) : []
             const subtotal = getLineSubtotal(l)
             const costoCambio = l.nuevo_costo_raw !== '' && costoTieneCambioSignificativo(l.costo_input, l.costo_actual, pvpTasaCtx())
-            const pendiente = pvpPendienteLineaIdx === idx
+            // Cualquier linea con al menos un nivel `decision === 'pendiente'`
+            // bloquea el submit (`isStep2Valid`/`lineaTieneDecisionBloqueante`),
+            // sin importar si su sheet esta ABIERTO ahora mismo — solo puede
+            // haber un `pvpPendienteLineaIdx` a la vez, asi que este banner
+            // (con boton para RE-abrir el sheet de ESTA linea) es la unica
+            // senal visible cuando el usuario paso a editar otra linea antes
+            // de resolver esta.
+            const pvpSinResolver = l.pvp_niveles.some((n) => n.decision === 'pendiente')
 
             return (
               <li key={l.producto_id} className="rounded-2xl border border-border bg-card shadow-md p-3 space-y-3">
@@ -477,16 +486,15 @@ export function PasoProductos() {
                   </div>
                 )}
 
-                {pendiente && (
+                {pvpSinResolver && (
                   <div className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 px-3 py-2 flex items-center justify-between gap-2">
                     <span className="text-xs font-medium text-amber-800 dark:text-amber-400">
                       ⏳ Precio pendiente de confirmar
                     </span>
                     <button
                       type="button"
-                      disabled
-                      title="Disponible en la próxima actualización"
-                      className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 opacity-60 cursor-not-allowed shrink-0"
+                      onClick={() => abrirPvpDecision(idx)}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-300 transition-colors shrink-0"
                     >
                       Confirmar precios
                       <ArrowRight className="h-3 w-3" />
