@@ -234,6 +234,12 @@ export function CompraList() {
 
   return (
     <div className="flex flex-1 min-h-0 flex-col gap-2">
+      {hasConsulta && !isLoading && (
+        <p className="px-1 text-sm text-muted-foreground">
+          {compras.length}{' '}
+          {compras.length === 1 ? 'factura encontrada' : 'facturas encontradas'}
+        </p>
+      )}
       <DataTable
         columns={columns}
         data={compras}
