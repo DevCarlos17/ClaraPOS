@@ -4,6 +4,7 @@ import { useGastoWizardStore } from '@/stores/gasto-wizard-store'
 import { useMetodosCxP } from '@/features/configuracion/hooks/use-payment-methods'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useGastoTotales } from '@/features/contabilidad/lib/use-gasto-totales'
+import { SelectSheet } from '@/components/shared/select-sheet'
 import { db } from '@/core/db/powersync/db'
 import { formatUsd } from '@/lib/currency'
 import { formatHora } from '@/lib/format'
@@ -175,19 +176,21 @@ export function PasoPagos() {
 
               {/* Metodo | Monto en misma linea */}
               <div className="grid grid-cols-2 gap-2">
-                <select
+                <SelectSheet
                   value={pago.metodo_cobro_id}
-                  onChange={(e) => handleMetodoChange(pago.id, e.target.value)}
+                  onChange={(val) => handleMetodoChange(pago.id, val)}
                   disabled={loadingMetodos}
-                  className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="">{loadingMetodos ? 'Cargando...' : 'Método'}</option>
-                  {metodos.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.nombre} ({m.moneda})
-                    </option>
-                  ))}
-                </select>
+                  title="Seleccionar método de pago"
+                  placeholder={loadingMetodos ? 'Cargando...' : 'Método'}
+                  searchPlaceholder="Buscar método..."
+                  emptyMessage="No hay métodos de pago"
+                  options={metodos.map((m) => ({
+                    value: m.id,
+                    label: m.nombre,
+                    sublabel: m.moneda,
+                    keywords: `${m.nombre} ${m.moneda}`,
+                  }))}
+                />
 
                 <input
                   type="number"

@@ -21,11 +21,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 
 interface ProveedorFormProps {
   isOpen: boolean
   onClose: () => void
   proveedor?: Proveedor
+  /**
+   * Superficie de presentacion. `dialog` (default) = Dialog centrado, usado en
+   * desktop. `sheet` = BottomSheet fullscreen-ish, usado en superficies mobile
+   * (ej. wizard de gasto). SOLO cambia el contenedor externo; el `<form>`
+   * interno es identico en ambos modos (byte-identidad del contenido).
+   */
+  presentation?: 'dialog' | 'sheet'
 }
 
 interface Moneda {
@@ -178,7 +191,7 @@ function AgregarBancoForm({ proveedorId, empresaId, onSaved, onCancel }: Agregar
 
 // ─── Componente principal ────────────────────────────────────
 
-export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps) {
+export function ProveedorForm({ isOpen, onClose, proveedor, presentation = 'dialog' }: ProveedorFormProps) {
   const isEditing = !!proveedor
   const { user } = useCurrentUser()
 
@@ -324,16 +337,9 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
     }
   }
 
-  return (
-    <>
-      <Dialog open={isOpen} onOpenChange={(v) => !v && onClose()}>
-        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              {isEditing ? 'Editar Proveedor' : 'Nuevo Proveedor'}
-            </DialogTitle>
-          </DialogHeader>
+  const tituloForm = isEditing ? 'Editar Proveedor' : 'Nuevo Proveedor'
 
+  const cuerpoForm = (
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* ---- Identificacion ---- */}
             <div>
@@ -620,8 +626,29 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
               </button>
             </div>
           </form>
-        </DialogContent>
-      </Dialog>
+  )
+
+  return (
+    <>
+      {presentation === 'sheet' ? (
+        <Sheet open={isOpen} onOpenChange={(v) => !v && onClose()}>
+          <SheetContent side="bottom" className="max-h-[92vh] rounded-t-2xl bg-card p-0 flex flex-col">
+            <SheetHeader className="border-b pb-3">
+              <SheetTitle>{tituloForm}</SheetTitle>
+            </SheetHeader>
+            <div className="overflow-y-auto px-4 pb-4 pt-2">{cuerpoForm}</div>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={isOpen} onOpenChange={(v) => !v && onClose()}>
+          <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{tituloForm}</DialogTitle>
+            </DialogHeader>
+            {cuerpoForm}
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Dialog interno: agregar cuenta bancaria */}
       <Dialog open={agregarBancoOpen} onOpenChange={(v) => !v && setAgregarBancoOpen(false)}>

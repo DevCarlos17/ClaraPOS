@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { toast } from 'sonner'
-import { CheckCircle, CaretUp, CaretDown, X } from '@phosphor-icons/react'
+import { CheckCircle, CaretUp, CaretDown, X, ArrowLeft, ArrowRight } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { WizardStepIndicator } from '@/components/shared/wizard-step-indicator'
@@ -105,6 +105,10 @@ export function GastoWizard() {
   const [guardando, setGuardando] = useState(false)
   const [mostrarRestaurar, setMostrarRestaurar] = useState(false)
   const [resumenOpen, setResumenOpen] = useState(false)
+  // Paso maximo que el usuario ya visito (para marcar completados en el
+  // indicador). NO se calcula por validez: un borrador restaurado no debe
+  // marcar pasos que el usuario no navego todavia.
+  const [maxStepVisitado, setMaxStepVisitado] = useState(1)
 
   // Swipe horizontal para cambiar de paso
   const touchStartX = useRef<number | null>(null)
@@ -137,6 +141,8 @@ export function GastoWizard() {
     isStep3Valid,
     hidratarDesdeBorrador,
     guardarDraft,
+    descartarBorrador,
+    descartado,
   } = useGastoWizardStore()
 
   const { metodos } = useMetodosCxP()
@@ -149,6 +155,7 @@ export function GastoWizard() {
 
   useEffect(() => {
     if (!user?.empresa_id) return
+    if (descartado) return // no re-persistir tras Descartar
     const hasData = Boolean(cuentaId || descripcion.trim() || montoFactura)
     if (!hasData) return
     const timer = setTimeout(() => guardarDraft(user.empresa_id!), 1000)
@@ -210,9 +217,14 @@ export function GastoWizard() {
 
   const STEP_COMPONENTS = [<PasoIdentificacion key="1" />, <PasoMonto key="2" />, <PasoPagos key="3" />]
 
-  function handleStepClick(n: number) {
+  function irAPaso(n: 1 | 2 | 3) {
     setResumenOpen(false)
-    setStep(n as 1 | 2 | 3)
+    setStep(n)
+    setMaxStepVisitado((prev) => Math.max(prev, n))
+  }
+
+  function handleStepClick(n: number) {
+    irAPaso(n as 1 | 2 | 3)
   }
 
   function handleTouchStart(e: React.TouchEvent) {
@@ -224,8 +236,8 @@ export function GastoWizard() {
     const delta = e.changedTouches[0].clientX - touchStartX.current
     touchStartX.current = null
     if (Math.abs(delta) < SWIPE_THRESHOLD) return
-    if (delta < 0 && step < 3) setStep((step + 1) as 1 | 2 | 3)
-    if (delta > 0 && step > 1) setStep((step - 1) as 1 | 2 | 3)
+    if (delta < 0 && step < 3) irAPaso((step + 1) as 1 | 2 | 3)
+    if (delta > 0 && step > 1) irAPaso((step - 1) as 1 | 2 | 3)
   }
 
   async function handleConfirmar() {
@@ -323,12 +335,12 @@ export function GastoWizard() {
     }
   }
 
-  // Indicador de pasos completados (solo visual, no bloquea navegacion)
-  const completedSteps = [
-    isStep1Valid() ? 1 : null,
-    isStep2Valid() ? 2 : null,
-    isStep3Valid() ? 3 : null,
-  ].filter(Boolean) as number[]
+  // Pasos "completados" (marcados con check) = los que el usuario ya visito,
+  // excepto el activo. Un borrador restaurado arranca en paso 1 con
+  // maxStepVisitado=1 → no marca nada aunque los datos sean validos.
+  const completedSteps = Array.from({ length: maxStepVisitado }, (_, i) => i + 1).filter(
+    (n) => n !== step
+  )
 
   return (
     <>
@@ -346,13 +358,20 @@ export function GastoWizard() {
               variant="secondary"
               className="h-10 rounded-xl"
               onClick={() => {
-                reset()
+                descartarBorrador()
+                setMaxStepVisitado(1)
                 setMostrarRestaurar(false)
               }}
             >
               Descartar
             </Button>
-            <Button className="h-10 rounded-xl" onClick={() => setMostrarRestaurar(false)}>
+            <Button
+              className="h-10 rounded-xl"
+              onClick={() => {
+                setMaxStepVisitado(3) // borrador completo: permitir navegar libre
+                setMostrarRestaurar(false)
+              }}
+            >
               Continuar
             </Button>
           </DialogFooter>
@@ -378,41 +397,73 @@ export function GastoWizard() {
           onTouchEnd={handleTouchEnd}
         >
           {STEP_COMPONENTS[step - 1]}
+
+          {/* Hint de swipe — atajo secundario, se oculta en el ultimo paso */}
+          {step < 3 && (
+            <p className="mt-4 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground/60 select-none">
+              <ArrowLeft size={12} className="animate-pulse" />
+              Deslizá o usá los botones para avanzar
+              <ArrowRight size={12} className="animate-pulse" />
+            </p>
+          )}
         </div>
 
-        {/* Footer fijo: handle del panel de resumen + boton Registrar */}
-        <div className="shrink-0 border-t bg-background px-4 py-3 flex items-center gap-3">
-          {/* Boton handle para abrir/cerrar el panel de resumen */}
-          <button
-            type="button"
-            onClick={() => setResumenOpen((v) => !v)}
-            className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-            aria-label={resumenOpen ? 'Cerrar resumen de abonos' : 'Ver resumen de abonos'}
-          >
-            {resumenOpen ? <CaretDown className="h-3.5 w-3.5" /> : <CaretUp className="h-3.5 w-3.5" />}
-            {pagos.length > 0 ? `${pagos.length} abono(s)` : 'Resumen'}
-          </button>
+        {/* Footer fijo — 2 filas: navegacion primaria (Atras/Continuar) +
+            fila de acciones (resumen, cancelar, registrar) */}
+        <div className="shrink-0 border-t bg-background px-4 py-3 space-y-2.5">
+          {/* Fila 1: navegacion primaria — botones grandes visibles.
+              El swipe y los numeros del indicador son atajos secundarios. */}
+          <div className="flex items-center gap-3">
+            <Button
+              variant="secondary"
+              className="h-11 rounded-xl gap-2 flex-1 text-base"
+              onClick={() => irAPaso((step - 1) as 1 | 2 | 3)}
+              disabled={step === 1}
+            >
+              <ArrowLeft size={18} />
+              Atrás
+            </Button>
+            <Button
+              className="h-11 rounded-xl gap-2 flex-1 text-base"
+              onClick={() => irAPaso((step + 1) as 1 | 2 | 3)}
+              disabled={step === 3}
+            >
+              Continuar
+              <ArrowRight size={18} />
+            </Button>
+          </div>
 
-          <div className="flex-1" />
+          {/* Fila 2: acciones — resumen (izq) + cancelar + registrar (der) */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setResumenOpen((v) => !v)}
+              className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              aria-label={resumenOpen ? 'Cerrar resumen de abonos' : 'Ver resumen de abonos'}
+            >
+              {resumenOpen ? <CaretDown className="h-3.5 w-3.5" /> : <CaretUp className="h-3.5 w-3.5" />}
+              {pagos.length > 0 ? `${pagos.length} abono(s)` : 'Resumen'}
+            </button>
 
-          {/* Boton cancelar */}
-          <Button
-            variant="secondary"
-            className="h-10 rounded-xl"
-            onClick={() => { reset(); closeSheet() }}
-          >
-            Cancelar
-          </Button>
+            <div className="flex-1" />
 
-          {/* Boton procesar — se habilita solo cuando los 3 pasos son validos */}
-          <Button
-            className="h-11 rounded-xl text-base gap-2 bg-green-600 hover:bg-green-700"
-            onClick={handleConfirmar}
-            disabled={!canProcesar || guardando}
-          >
-            <CheckCircle size={16} />
-            {guardando ? 'Registrando...' : 'Registrar'}
-          </Button>
+            <Button
+              variant="ghost"
+              className="h-10 rounded-xl text-muted-foreground"
+              onClick={() => { reset(); closeSheet() }}
+            >
+              Cancelar
+            </Button>
+
+            <Button
+              className="h-11 rounded-xl text-base gap-2 bg-green-600 hover:bg-green-700"
+              onClick={handleConfirmar}
+              disabled={!canProcesar || guardando}
+            >
+              <CheckCircle size={16} />
+              {guardando ? 'Registrando...' : 'Registrar'}
+            </Button>
+          </div>
         </div>
 
         {/* Panel de resumen de abonos — deslizable desde el borde inferior */}

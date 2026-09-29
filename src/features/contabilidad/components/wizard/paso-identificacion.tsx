@@ -4,6 +4,8 @@ import { useGastoWizardStore } from '@/stores/gasto-wizard-store'
 import { useProveedores } from '@/features/proveedores/hooks/use-proveedores'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { ProveedorForm } from '@/features/proveedores/components/proveedor-form'
+import { SelectSheet } from '@/components/shared/select-sheet'
+import { Button } from '@/components/ui/button'
 import { db } from '@/core/db/powersync/db'
 import { todayStr } from '@/lib/dates'
 
@@ -84,34 +86,40 @@ export function PasoIdentificacion() {
 
   return (
     <div className="space-y-4 pt-2">
-      {/* ── Proveedor + boton crear ── */}
+      {/* ── Proveedor (SelectSheet con searchbar) + crear proveedor ── */}
       <div>
         <label className="block text-xs font-medium text-muted-foreground mb-1">
           Proveedor <span className="font-normal opacity-60">(opcional)</span>
         </label>
-        <div className="flex gap-2">
-          <select
-            value={proveedorId}
-            onChange={(e) => setIdentificacion({ proveedorId: e.target.value })}
-            disabled={loadingProveedores}
-            className="flex-1 rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="">{loadingProveedores ? 'Cargando...' : 'Sin proveedor'}</option>
-            {proveedores.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.rif} - {p.razon_social}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => setCrearProveedorOpen(true)}
-            title="Crear nuevo proveedor"
-            className="inline-flex items-center px-3 py-2 text-sm font-medium text-foreground bg-muted border border-border rounded-xl hover:bg-muted/80 transition-colors"
-          >
-            <UserPlus className="h-4 w-4" />
-          </button>
-        </div>
+        <SelectSheet
+          value={proveedorId}
+          onChange={(val) => setIdentificacion({ proveedorId: val })}
+          disabled={loadingProveedores}
+          title="Seleccionar proveedor"
+          placeholder={loadingProveedores ? 'Cargando...' : 'Sin proveedor'}
+          searchPlaceholder="Buscar por RIF o razón social..."
+          emptyMessage="No se encontraron proveedores"
+          options={proveedores.map((p) => ({
+            value: p.id,
+            label: p.razon_social,
+            sublabel: p.rif,
+            keywords: `${p.rif} ${p.razon_social}`,
+          }))}
+          footerAction={(close) => (
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full h-11 rounded-xl gap-2"
+              onClick={() => {
+                close()
+                setCrearProveedorOpen(true)
+              }}
+            >
+              <UserPlus className="h-4 w-4" />
+              Crear nuevo proveedor
+            </Button>
+          )}
+        />
       </div>
 
       {/* ── Nro Factura | Nro Control ── */}
@@ -228,7 +236,11 @@ export function PasoIdentificacion() {
         )}
       </div>
 
-      <ProveedorForm isOpen={crearProveedorOpen} onClose={() => setCrearProveedorOpen(false)} />
+      <ProveedorForm
+        isOpen={crearProveedorOpen}
+        onClose={() => setCrearProveedorOpen(false)}
+        presentation="sheet"
+      />
     </div>
   )
 }

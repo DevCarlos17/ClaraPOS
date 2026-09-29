@@ -4,6 +4,7 @@ import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuesto
 import { useCuentasDetallePorTipo } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { useProveedores } from '@/features/proveedores/hooks/use-proveedores'
 import { useGastoTotales } from '@/features/contabilidad/lib/use-gasto-totales'
+import { SelectSheet } from '@/components/shared/select-sheet'
 import { formatUsd, formatBs } from '@/lib/currency'
 import type { MonedaFacturaGasto } from '@/features/contabilidad/lib/gasto-totales'
 
@@ -74,24 +75,25 @@ export function PasoMonto() {
         </div>
       )}
 
-      {/* ── Cuenta Contable ── */}
+      {/* ── Cuenta Contable (SelectSheet con searchbar) ── */}
       <div>
         <label className="block text-xs font-medium text-muted-foreground mb-1">
           Cuenta Contable <span className="text-destructive">*</span>
         </label>
-        <select
+        <SelectSheet
           value={cuentaId}
-          onChange={(e) => setIdentificacion({ cuentaId: e.target.value })}
+          onChange={(val) => setIdentificacion({ cuentaId: val })}
           disabled={loadingCuentas}
-          className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-        >
-          <option value="">{loadingCuentas ? 'Cargando...' : 'Seleccionar cuenta'}</option>
-          {cuentas.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.codigo} - {c.nombre}
-            </option>
-          ))}
-        </select>
+          title="Seleccionar cuenta contable"
+          placeholder={loadingCuentas ? 'Cargando...' : 'Seleccionar cuenta'}
+          searchPlaceholder="Buscar por código o nombre..."
+          emptyMessage="No se encontraron cuentas"
+          options={cuentas.map((c) => ({
+            value: c.id,
+            label: `${c.codigo} - ${c.nombre}`,
+            keywords: `${c.codigo} ${c.nombre}`,
+          }))}
+        />
       </div>
 
       {/* ── Tipo de Factura USD / BS ── */}

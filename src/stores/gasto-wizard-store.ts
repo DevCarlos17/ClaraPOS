@@ -134,6 +134,19 @@ interface GastoWizardState {
   // decisión #2: un borrador iniciado en mobile es resumible en desktop).
   hidratarDesdeBorrador: () => boolean
   guardarDraft: (empresaId: string) => void
+  /**
+   * Descarta el borrador: limpia el store en memoria Y el borrador persistido
+   * en localStorage (`useGastoBorradorStore.limpiar()`). Ademas activa
+   * `descartado` para suprimir el auto-guardado inmediato que, de lo
+   * contrario, volveria a persistir un borrador vacio/parcial.
+   */
+  descartarBorrador: () => void
+  /**
+   * true justo despues de descartar — el efecto de auto-guardado en
+   * `gasto-wizard.tsx` lo consulta para NO re-persistir. Se limpia en el
+   * proximo `setIdentificacion`/`setMonto` (el usuario retoma la edicion).
+   */
+  descartado: boolean
   reset: () => void
 }
 
@@ -162,13 +175,15 @@ const initialState = {
 export const useGastoWizardStore = create<GastoWizardState>()((set, get) => ({
   ...initialState,
   sheetOpen: false,
+  descartado: false,
 
   openSheet: () => set({ sheetOpen: true }),
   closeSheet: () => set({ sheetOpen: false }),
   setStep: (step) => set({ step }),
 
-  setIdentificacion: (patch) => set(patch),
-  setMonto: (patch) => set(patch),
+  // Cualquier edicion del usuario reactiva el auto-guardado (limpia descartado)
+  setIdentificacion: (patch) => set({ ...patch, descartado: false }),
+  setMonto: (patch) => set({ ...patch, descartado: false }),
 
   agregarPago: () => set((state) => ({ pagos: [...state.pagos, nuevoPagoWizard()] })),
 
@@ -292,5 +307,13 @@ export const useGastoWizardStore = create<GastoWizardState>()((set, get) => ({
     })
   },
 
-  reset: () => set({ ...initialState, sheetOpen: false }),
+  descartarBorrador: () => {
+    useGastoBorradorStore.getState().limpiar()
+    set({ ...initialState, descartado: true })
+  },
+
+  reset: () => {
+    useGastoBorradorStore.getState().limpiar()
+    set({ ...initialState, sheetOpen: false, descartado: false })
+  },
 }))
