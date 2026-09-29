@@ -44,10 +44,10 @@ function SheetOverlay({
 
 function SheetContent({
   className,
-  container,
   children,
   side = "right",
   showCloseButton = true,
+  container,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: "top" | "right" | "bottom" | "left"
@@ -55,13 +55,12 @@ function SheetContent({
   /**
    * Contenedor del portal (Radix `Dialog.Portal container`, Sheet reusa el
    * mismo primitivo de Dialog). Por defecto Radix portaliza al
-   * `document.body`. Cuando este sheet se abre ENCIMA de otro `Sheet` ya
-   * abierto (ej. `PvpConfirmSheet` sobre el wizard de compra), pasar el nodo
-   * DOM del `SheetContent` padre como `container` apila el hijo correctamente
-   * por encima (mismo patron que `dialog.tsx` usa para stacking sobre un
-   * `<dialog>` nativo — ver `nota-credito-pos-modal.tsx`). `undefined`
-   * (default) preserva el comportamiento actual para todo consumidor
-   * existente.
+   * `document.body`. Cuando este sheet se abre desde otro modal en la top
+   * layer del navegador (`<dialog>` con showModal(), ej.
+   * `nota-credito-pos-modal.tsx`) o ENCIMA de otro `Sheet` ya abierto (ej.
+   * `PvpConfirmSheet` sobre el wizard de compra), pasar el nodo DOM del padre
+   * como `container` apila el hijo correctamente por encima. `undefined`
+   * (default) preserva el comportamiento actual para todo consumidor existente.
    */
   container?: React.ComponentProps<typeof SheetPortal>['container']
 }) {

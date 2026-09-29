@@ -52,7 +52,7 @@ export function DatePickerField({ ariaLabel, placeholder, value, onChange }: Dat
           variant="outline"
           size="sm"
           aria-label={ariaLabel}
-          className="h-8 md:h-9 px-3 gap-2 font-normal text-xs md:text-sm text-foreground"
+          className="h-8 md:h-9 px-3 gap-2 font-normal text-xs md:text-sm text-foreground flex-1 sm:flex-none justify-start"
         >
           <CalendarBlank className="size-4 shrink-0 text-muted-foreground" />
           {label}
@@ -87,7 +87,7 @@ export function DateRangeField({ value, onChange }: DateRangeFieldProps) {
   }
 
   return (
-    <div className="flex items-center gap-1.5 shrink-0">
+    <div className="flex items-center gap-1.5 w-full sm:w-auto sm:shrink-0">
       <DatePickerField
         ariaLabel="Fecha desde"
         placeholder="Desde"
