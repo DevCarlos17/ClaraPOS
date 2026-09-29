@@ -105,10 +105,6 @@ export function GastoWizard() {
   const [guardando, setGuardando] = useState(false)
   const [mostrarRestaurar, setMostrarRestaurar] = useState(false)
   const [resumenOpen, setResumenOpen] = useState(false)
-  // Paso maximo que el usuario ya visito (para marcar completados en el
-  // indicador). NO se calcula por validez: un borrador restaurado no debe
-  // marcar pasos que el usuario no navego todavia.
-  const [maxStepVisitado, setMaxStepVisitado] = useState(1)
 
   // Swipe horizontal para cambiar de paso
   const touchStartX = useRef<number | null>(null)
@@ -220,7 +216,6 @@ export function GastoWizard() {
   function irAPaso(n: 1 | 2 | 3) {
     setResumenOpen(false)
     setStep(n)
-    setMaxStepVisitado((prev) => Math.max(prev, n))
   }
 
   function handleStepClick(n: number) {
@@ -335,13 +330,6 @@ export function GastoWizard() {
     }
   }
 
-  // Pasos "completados" (marcados con check) = los que el usuario ya visito,
-  // excepto el activo. Un borrador restaurado arranca en paso 1 con
-  // maxStepVisitado=1 → no marca nada aunque los datos sean validos.
-  const completedSteps = Array.from({ length: maxStepVisitado }, (_, i) => i + 1).filter(
-    (n) => n !== step
-  )
-
   return (
     <>
       {/* Dialog de borrador encontrado */}
@@ -359,19 +347,12 @@ export function GastoWizard() {
               className="h-10 rounded-xl"
               onClick={() => {
                 descartarBorrador()
-                setMaxStepVisitado(1)
                 setMostrarRestaurar(false)
               }}
             >
               Descartar
             </Button>
-            <Button
-              className="h-10 rounded-xl"
-              onClick={() => {
-                setMaxStepVisitado(3) // borrador completo: permitir navegar libre
-                setMostrarRestaurar(false)
-              }}
-            >
+            <Button className="h-10 rounded-xl" onClick={() => setMostrarRestaurar(false)}>
               Continuar
             </Button>
           </DialogFooter>
@@ -380,13 +361,15 @@ export function GastoWizard() {
 
       {/* Layout fullscreen: indicador arriba, contenido scrolleable, footer fijo */}
       <div className="flex flex-col h-full relative">
-        {/* Indicador de pasos — clic libre entre pasos */}
+        {/* Indicador de pasos — navegacion libre: solo el activo se ilumina,
+            sin checks (opcion A del owner). Todos clickeables. */}
         <div className="px-4 pt-3 pb-2 shrink-0">
           <WizardStepIndicator
             steps={STEPS}
             currentStep={step}
-            completedSteps={completedSteps}
+            completedSteps={[]}
             onStepClick={handleStepClick}
+            freeNavigation
           />
         </div>
 

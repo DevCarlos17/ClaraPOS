@@ -82,13 +82,16 @@ export function SelectSheet({
       </button>
 
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="bottom" className="max-h-[85vh] rounded-t-2xl bg-card p-0 flex flex-col">
-          <SheetHeader className="border-b pb-3">
+        {/* Altura FIJA (h-[85vh], no max-h) para que el sheet no se encoja al
+            filtrar a pocos resultados y quede bajo el teclado. El CommandList
+            con flex-1 absorbe el espacio restante. */}
+        <SheetContent side="bottom" className="h-[85vh] rounded-t-2xl bg-card p-0 flex flex-col">
+          <SheetHeader className="border-b pb-3 shrink-0">
             <SheetTitle>{title}</SheetTitle>
           </SheetHeader>
 
           <Command
-            className="flex-1"
+            className="flex-1 min-h-0"
             filter={(val, search) => {
               // val es el `value` de CommandItem; buscamos en el texto asociado
               const opt = options.find((o) => o.value === val)
@@ -98,7 +101,7 @@ export function SelectSheet({
             }}
           >
             <CommandInput placeholder={searchPlaceholder} />
-            <CommandList className="max-h-[55vh]">
+            <CommandList className="flex-1 min-h-0 max-h-none">
               <CommandEmpty>{emptyMessage}</CommandEmpty>
               <CommandGroup>
                 {options.map((opt) => (

@@ -10,10 +10,17 @@ export interface WizardStepIndicatorProps {
   steps: WizardStepIndicatorStep[]
   /** Numero del paso activo (1-indexed). */
   currentStep: number
-  /** Numeros de paso ya completados (1-indexed). */
+  /** Numeros de paso ya completados (1-indexed). Muestran check relleno. */
   completedSteps: number[]
   /** Si se provee, los pasos completados son clickeables para navegar hacia atras. */
   onStepClick?: (step: number) => void
+  /**
+   * Navegacion libre: TODOS los pasos son clickeables (no solo los
+   * completados) y NO se muestran checks — solo se ilumina el paso activo.
+   * Default `false` (comportamiento clasico: check en completados + click solo
+   * hacia atras). Usado por el wizard de gasto (mobile).
+   */
+  freeNavigation?: boolean
 }
 
 /**
@@ -26,14 +33,16 @@ export function WizardStepIndicator({
   currentStep,
   completedSteps,
   onStepClick,
+  freeNavigation = false,
 }: WizardStepIndicatorProps) {
   return (
     <div className="flex items-center gap-0" role="group" aria-label="Pasos del asistente">
       {steps.map((s, i) => {
         const num = i + 1
-        const done = completedSteps.includes(num)
+        // En navegacion libre NO hay checks: solo el paso activo se ilumina.
+        const done = freeNavigation ? false : completedSteps.includes(num)
         const active = currentStep === num
-        const clickable = done && !!onStepClick
+        const clickable = freeNavigation ? !!onStepClick : done && !!onStepClick
 
         return (
           <div key={num} className="flex items-center flex-1 last:flex-none">
