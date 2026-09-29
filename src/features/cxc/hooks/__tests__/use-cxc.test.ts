@@ -39,6 +39,7 @@ import {
   registrarSafExcedente,
   aplicarSaldoFavor,
   registrarPagoFactura,
+  registrarReversoAbono,
   useDetalleFactura,
   useAfectacionCxc,
   useEvolucionFactura,
@@ -307,6 +308,123 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a SUM(SAFC)-
     await expect(
       registrarPagoFactura(baseParams({ montoSaf: 50 }))
     ).rejects.toThrow(/excede el saldo disponible/i)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// registrarReversoAbono — saldo acotado a total_usd (bugfix-reversa-cxc)
+//
+// Regresion para el bug P0001 en CxC: el trigger vivo `prevent_venta_mutation`
+// (migrations/0006_ventas.sql) rechazaba CUALQUIER aumento de
+// `ventas.saldo_pend_usd`, incluso el aumento controlado que hace un reverso
+// de pago para reabrir la deuda de la factura. El fix relaja el trigger en
+// `migrations/0097_permitir_reverso_saldo_venta.sql` (SQL, no testeable por
+// Vitest — se valida manualmente via Supabase SQL Editor, ver design.md).
+//
+// Esta suite es un test de APROBACION (approval test) sobre la logica JS que
+// ya existia ANTES de este cambio: `registrarReversoAbono` (use-cxc.ts:1565)
+// ya acota el nuevo saldo con `Decimal.min(total_usd, saldo_pend_usd + monto)`
+// — no requirio ningun cambio de codigo (design.md, File Changes: "Sin cambio
+// de codigo — Decimal.min ya existe"). El test PASA contra la implementacion
+// EXISTENTE sin modificarla, documentando y congelando ese comportamiento
+// correcto como regresion permanente.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('registrarReversoAbono — saldo acotado a total_usd', () => {
+  function mockTx(opts: {
+    pagoMontoUsd: string
+    saldoPendActual: string
+    totalUsd: string
+    saldoClienteActual: string
+    ventaId?: string | null
+  }) {
+    const calls: Call[] = []
+    mockedDb.writeTransaction.mockImplementation(async (callback) => {
+      const tx = {
+        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params })
+          if (sql.startsWith('SELECT id, venta_id, cliente_id, monto_usd, is_reversed, tasa, monto, moneda_id FROM pagos')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  id: 'pago-1',
+                  venta_id: opts.ventaId ?? 'venta-1',
+                  cliente_id: 'cliente-1',
+                  monto_usd: opts.pagoMontoUsd,
+                  is_reversed: 0,
+                  tasa: null,
+                  monto: null,
+                  moneda_id: null,
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT nro_factura, saldo_pend_usd, total_usd FROM ventas WHERE id = ?')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  nro_factura: 'F-001',
+                  saldo_pend_usd: opts.saldoPendActual,
+                  total_usd: opts.totalUsd,
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT saldo_actual FROM clientes WHERE id = ?')) {
+            return { rows: { length: 1, item: () => ({ saldo_actual: opts.saldoClienteActual }) } }
+          }
+          if (sql.startsWith('SELECT id FROM libro_contable WHERE')) {
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          return { rows: { length: 0, item: () => undefined } }
+        }),
+      } as unknown as Transaction
+      return callback(tx)
+    })
+    return calls
+  }
+
+  function baseParams() {
+    return {
+      pago_id: 'pago-1',
+      reason: 'Cliente reporto error de cobro',
+      reversed_by: 'user-1',
+      reversed_by_nombre: 'Cajero Test',
+      empresa_id: 'emp-1',
+    }
+  }
+
+  it('reverso parcial: nuevo saldo = saldo_pend_usd + monto cuando la suma queda por debajo de total_usd', async () => {
+    const calls = mockTx({
+      pagoMontoUsd: '20.00000000',
+      saldoPendActual: '30.00000000',
+      totalUsd: '100.00000000',
+      saldoClienteActual: '0.00000000',
+    })
+
+    await registrarReversoAbono(baseParams())
+
+    const ventaUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?'))
+    expect(ventaUpdates).toHaveLength(1)
+    expect(ventaUpdates[0]!.params).toEqual([toStorageString(50), 'venta-1']) // 30 + 20 = 50 < 100
+  })
+
+  it('reverso saturante: nuevo saldo se acota a total_usd cuando la suma lo excederia', async () => {
+    const calls = mockTx({
+      pagoMontoUsd: '30.00000000',
+      saldoPendActual: '90.00000000',
+      totalUsd: '100.00000000',
+      saldoClienteActual: '0.00000000',
+    })
+
+    await registrarReversoAbono(baseParams())
+
+    const ventaUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?'))
+    expect(ventaUpdates).toHaveLength(1)
+    // 90 + 30 = 120, pero nunca puede exceder total_usd = 100
+    expect(ventaUpdates[0]!.params).toEqual([toStorageString(100), 'venta-1'])
   })
 })
 
