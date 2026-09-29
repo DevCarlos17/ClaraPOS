@@ -87,7 +87,13 @@ interface CompraWizardState {
   tasaProveedor: number
 
   // Paso 2 — Productos
+  // `lineas` = carrito de productos YA confirmados (con PVP resuelto).
+  // `lineaEnProceso` = el producto que se esta configurando en pantalla
+  // (cantidad, unidad, costo, PVP inline) ANTES de confirmarlo al carrito.
+  // Flujo mobile: buscar producto -> lineaEnProceso -> configurar + resolver
+  // PVP inline -> confirmarLineaEnProceso() lo mueve a `lineas`.
   lineas: LineaWizardCompra[]
+  lineaEnProceso: LineaWizardCompra | null
   pvpPendienteLineaIdx: number | null
 
   // Paso 3 — Cargos + Pagos
@@ -122,6 +128,24 @@ interface CompraWizardState {
   agregarLinea: (linea: LineaWizardCompra) => void
   actualizarLinea: (idx: number, patch: Partial<LineaWizardCompra>) => void
   quitarLinea: (idx: number) => void
+
+  /**
+   * Producto-en-proceso (flujo mobile de confirmacion al carrito):
+   * - `iniciarLineaEnProceso`: setea el producto seleccionado como
+   *   lineaEnProceso (no toca `lineas`).
+   * - `actualizarLineaEnProceso`: patch parcial sobre lineaEnProceso
+   *   (cantidad, unidad, costo, pvp_niveles inline).
+   * - `confirmarLineaEnProceso`: mueve lineaEnProceso a `lineas` (append) y
+   *   limpia el estado en proceso. El caller garantiza PVP resuelto.
+   * - `cancelarLineaEnProceso`: descarta lineaEnProceso sin agregar nada.
+   * - `desconfirmarLinea`: saca la linea `idx` del carrito y la devuelve a
+   *   lineaEnProceso para re-editar (si ya hay una en proceso, la reemplaza).
+   */
+  iniciarLineaEnProceso: (linea: LineaWizardCompra) => void
+  actualizarLineaEnProceso: (patch: Partial<LineaWizardCompra>) => void
+  confirmarLineaEnProceso: () => void
+  cancelarLineaEnProceso: () => void
+  desconfirmarLinea: (idx: number) => void
 
   /**
    * PVP gating — real desde W4a. `abrirPvpDecision` setea el indice
@@ -165,6 +189,9 @@ interface CompraWizardState {
   // expiracion, mismo patron que `cita-wizard-store.ts`.
   guardarDraft: () => void
   restaurarDraft: () => boolean
+  /** Descarta el borrador persistido + resetea el estado (mismo efecto que
+   * reset, nombre explicito para el dialogo "Borrador encontrado"). */
+  descartarBorrador: () => void
   reset: () => void
 }
 
@@ -180,6 +207,7 @@ const initialState = {
   tasaInternaManual: false,
   tasaProveedor: 0,
   lineas: [] as LineaWizardCompra[],
+  lineaEnProceso: null as LineaWizardCompra | null,
   pvpPendienteLineaIdx: null as number | null,
   lineasCargo: [] as CargoWizard[],
   pagos: [] as PagoWizardCompra[],
@@ -219,6 +247,34 @@ export const useCompraWizardStore = create<CompraWizardState>()((set, get) => ({
       return {
         lineas: state.lineas.filter((_, i) => i !== idx),
         pvpPendienteLineaIdx: nuevoPendiente,
+      }
+    }),
+
+  iniciarLineaEnProceso: (linea) => set({ lineaEnProceso: linea }),
+
+  actualizarLineaEnProceso: (patch) =>
+    set((state) =>
+      state.lineaEnProceso ? { lineaEnProceso: { ...state.lineaEnProceso, ...patch } } : {}
+    ),
+
+  confirmarLineaEnProceso: () =>
+    set((state) =>
+      state.lineaEnProceso
+        ? { lineas: [...state.lineas, state.lineaEnProceso], lineaEnProceso: null }
+        : {}
+    ),
+
+  cancelarLineaEnProceso: () => set({ lineaEnProceso: null }),
+
+  // Devuelve la linea del carrito a estado "en proceso" para re-editar.
+  // Si ya habia una en proceso, se descarta (solo una a la vez).
+  desconfirmarLinea: (idx) =>
+    set((state) => {
+      const linea = state.lineas[idx]
+      if (!linea) return {}
+      return {
+        lineas: state.lineas.filter((_, i) => i !== idx),
+        lineaEnProceso: linea,
       }
     }),
 
@@ -279,8 +335,11 @@ export const useCompraWizardStore = create<CompraWizardState>()((set, get) => ({
   // (`lineaCompraSchema`, `lineaTieneDecisionBloqueante`), asi que Paso 2 y
   // el submit final nunca pueden divergir sobre que cuenta como "resuelto".
   isStep2Valid: () => {
-    const { lineas, moneda, usaTasaParalela, tasaInterna, tasaProveedor } = get()
+    const { lineas, lineaEnProceso, moneda, usaTasaParalela, tasaInterna, tasaProveedor } = get()
     if (lineas.length === 0) return false
+    // Un producto a medio configurar (sin confirmar al carrito) deja el paso
+    // incompleto: hay que confirmarlo o descartarlo antes de avanzar/procesar.
+    if (lineaEnProceso !== null) return false
     const tasaFacturaNum = usaTasaParalela ? tasaProveedor : tasaInterna
     return lineas.every((l) => {
       const factor = l.factor > 0 ? l.factor : 1
@@ -358,6 +417,15 @@ export const useCompraWizardStore = create<CompraWizardState>()((set, get) => ({
       // Ignorar
     }
     return false
+  },
+
+  descartarBorrador: () => {
+    set({ ...initialState })
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch {
+      // Ignorar errores de localStorage
+    }
   },
 
   reset: () => {

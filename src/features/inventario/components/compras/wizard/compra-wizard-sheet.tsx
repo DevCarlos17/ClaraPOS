@@ -1,44 +1,30 @@
-import { useRef } from 'react'
-import { BottomSheet } from '@/components/shared/bottom-sheet'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useCompraWizardStore } from '@/stores/compra-wizard-store'
 import { CompraWizard } from './compra-wizard'
-import { PvpConfirmSheet } from './pvp-confirm-sheet'
 
 /**
- * Wrapper `BottomSheet` del wizard de compra — mobile-only surface, hermana
- * de `CompraForm` (desktop). El caller (W5) decide via `useMobile(1024)`
- * cual de los dos montar; este componente no conoce breakpoints. Navegacion,
- * validacion y submit viven todos en `CompraWizard` (orquestador) — este
- * wrapper solo controla el `Sheet` (mismo patron que `gasto-wizard-sheet.tsx`).
+ * Contenedor fullscreen del wizard de compra — mobile-only surface, hermana
+ * de `CompraForm` (desktop). El caller (W5) decide via `useMobile(1024)` cual
+ * de los dos montar; este componente no conoce breakpoints.
  *
- * `wizardContentRef` apunta al nodo DOM del `SheetContent` de este wizard —
- * se reenvia como `containerRef` a `PvpConfirmSheet` (W4b-ii) para que ese
- * sheet secundario (decision de PVP por nivel, Paso 2) stackee ENCIMA de
- * este, en vez de portalizar a `document.body` y competir en z-index.
- * `PvpConfirmSheet` se monta siempre (hermano de `BottomSheet`, no hijo): su
- * propia visibilidad la gobierna `pvpPendienteLineaIdx` en el store, y para
- * cuando ese indice se setea el wizard ya esta abierto (Paso 2 solo es
- * alcanzable con el sheet montado), asi que `wizardContentRef.current` ya
- * esta poblado.
+ * Usa `Dialog` fullscreen (en vez del `BottomSheet` original) para ocupar toda
+ * la pantalla sin la animacion "desde abajo". La decision de PVP ya NO usa un
+ * sheet stackeado (`PvpConfirmSheet` eliminado) — ahora se resuelve inline en
+ * `paso-productos.tsx`, debajo del producto en configuracion.
  */
 export function CompraWizardSheet() {
   const { sheetOpen, closeSheet } = useCompraWizardStore()
-  const wizardContentRef = useRef<HTMLDivElement>(null)
 
   return (
-    <>
-      <BottomSheet
-        open={sheetOpen}
-        onOpenChange={(open) => {
-          if (!open) closeSheet()
-        }}
-        title="Nueva Factura de Compra"
-        bodyClassName="px-4 pb-4 pt-2"
-        contentRef={wizardContentRef}
-      >
-        <CompraWizard />
-      </BottomSheet>
-      <PvpConfirmSheet containerRef={wizardContentRef} />
-    </>
+    <Dialog open={sheetOpen} onOpenChange={(open) => { if (!open) closeSheet() }}>
+      <DialogContent className="p-0 gap-0 max-w-none w-full h-[100dvh] rounded-none flex flex-col">
+        <DialogHeader className="px-4 pt-4 pb-3 border-b shrink-0">
+          <DialogTitle className="text-base font-semibold">Nueva Factura de Compra</DialogTitle>
+        </DialogHeader>
+        <div className="flex-1 overflow-hidden">
+          <CompraWizard />
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }

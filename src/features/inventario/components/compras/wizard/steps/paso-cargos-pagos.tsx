@@ -6,6 +6,7 @@ import { Plus, Trash, X, CashRegister, Vault, Warning } from '@phosphor-icons/re
 import { useCompraWizardStore } from '@/stores/compra-wizard-store'
 import { useMetodosCxP } from '@/features/configuracion/hooks/use-payment-methods'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { SelectSheet } from '@/components/shared/select-sheet'
 import { db } from '@/core/db/powersync/db'
 import { formatHora } from '@/lib/format'
 import { formatUsd, formatBs } from '@/lib/currency'
@@ -376,46 +377,49 @@ export function PasoCargosPagos() {
                   </button>
                 </div>
 
-                <select
-                  value={pago.metodo_cobro_id}
-                  onChange={(e) => handleMetodoChange(index, e.target.value)}
-                  disabled={loadingMetodos}
-                  className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="">{loadingMetodos ? 'Cargando...' : 'Seleccionar método'}</option>
-                  {metodos.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.nombre} ({m.moneda})
-                    </option>
-                  ))}
-                </select>
-
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-muted-foreground">Monto</label>
-                  {pendienteUsd > 0 && metodoSeleccionado && (
-                    <button
-                      type="button"
-                      onClick={() => handleMax(index)}
-                      className="text-xs text-primary hover:underline"
-                    >
-                      Max
-                    </button>
-                  )}
+                {/* Metodo | Monto en la misma linea */}
+                <div className="grid grid-cols-2 gap-2 items-start">
+                  <SelectSheet
+                    value={pago.metodo_cobro_id}
+                    onChange={(val) => handleMetodoChange(index, val)}
+                    disabled={loadingMetodos}
+                    title="Seleccionar método de pago"
+                    placeholder={loadingMetodos ? 'Cargando...' : 'Método'}
+                    searchPlaceholder="Buscar método..."
+                    emptyMessage="No hay métodos de pago"
+                    options={metodos.map((m) => ({
+                      value: m.id,
+                      label: m.nombre,
+                      sublabel: m.moneda,
+                      keywords: `${m.nombre} ${m.moneda}`,
+                    }))}
+                  />
+                  <div>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={pago.monto === 0 ? '' : String(pago.monto)}
+                      onChange={(e) => {
+                        const clamped = clampNumeric(e.target.value, MONTO_LIMIT.max, MONTO_LIMIT.decimals)
+                        const num = parseFloat(clamped)
+                        actualizarPago(index, { monto: isNaN(num) ? 0 : num })
+                      }}
+                      onKeyDown={handleNumericKeyDown}
+                      onPaste={handleNumericPaste}
+                      placeholder={`Monto ${pago.moneda}`}
+                      className="w-full rounded-xl border border-input px-3 py-2 text-sm text-right bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    {pendienteUsd > 0 && metodoSeleccionado && (
+                      <button
+                        type="button"
+                        onClick={() => handleMax(index)}
+                        className="mt-1 text-xs text-primary hover:underline block ml-auto"
+                      >
+                        Usar máximo
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={pago.monto === 0 ? '' : String(pago.monto)}
-                  onChange={(e) => {
-                    const clamped = clampNumeric(e.target.value, MONTO_LIMIT.max, MONTO_LIMIT.decimals)
-                    const num = parseFloat(clamped)
-                    actualizarPago(index, { monto: isNaN(num) ? 0 : num })
-                  }}
-                  onKeyDown={handleNumericKeyDown}
-                  onPaste={handleNumericPaste}
-                  placeholder={`Monto ${pago.moneda}`}
-                  className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                />
 
                 {requiereReferencia && (
                   <input

@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import type React from 'react'
-import { UserPlus, Warning, Info, Money } from '@phosphor-icons/react'
+import { UserPlus, Warning, Info } from '@phosphor-icons/react'
 import { useCompraWizardStore } from '@/stores/compra-wizard-store'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { ProveedorForm } from '@/features/proveedores/components/proveedor-form'
-import { convertirMontoRawEntreMonedas } from '@/features/inventario/lib/convertir-monto-moneda'
+import { SelectSheet } from '@/components/shared/select-sheet'
+import { Button } from '@/components/ui/button'
 import { db } from '@/core/db/powersync/db'
 import { todayStr } from '@/lib/dates'
 
@@ -116,14 +117,11 @@ export function PasoCabecera() {
     nroFactura,
     nroControl,
     proveedorId,
-    moneda,
     usaTasaParalela,
     tasaInterna,
     tasaInternaManual,
     tasaProveedor,
-    lineasCargo,
     setCabecera,
-    actualizarCargo,
   } = useCompraWizardStore()
 
   const { proveedores, isLoading: loadingProveedores } = useProveedoresActivos()
@@ -180,27 +178,83 @@ export function PasoCabecera() {
 
   const hoy = todayStr()
   const fechaEsFutura = Boolean(fechaFactura && fechaFactura > hoy)
-  const tasaFacturaNum = usaTasaParalela ? tasaProveedor : tasaInterna
-
-  /**
-   * Cambia la moneda del documento. Reconvierte `lineasCargo.monto_input`
-   * (Material de Empaque / Flete) igual que `compra-form.tsx::handleMonedaSwitch`
-   * L961-1022 — los productos (Paso 2) siempre estan vacios en este PR
-   * (placeholder), asi que no hay lineas de producto que reconvertir aun.
-   */
-  function handleMonedaSwitch(newMoneda: 'USD' | 'BS') {
-    if (newMoneda === moneda || tasaFacturaNum <= 0) return
-    for (const cargo of lineasCargo) {
-      actualizarCargo(cargo.id, {
-        monto_input: convertirMontoRawEntreMonedas(cargo.monto_input, newMoneda, tasaFacturaNum),
-      })
-    }
-    setCabecera({ moneda: newMoneda })
-  }
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <div className="space-y-4 pt-2">
+      {/* ── Proveedor (SelectSheet) + crear proveedor ── */}
+      <div>
+        <label className="block text-xs font-medium text-muted-foreground mb-1">
+          Proveedor <span className="text-destructive">*</span>
+        </label>
+        <SelectSheet
+          value={proveedorId}
+          onChange={(val) => setCabecera({ proveedorId: val })}
+          disabled={loadingProveedores}
+          title="Seleccionar proveedor"
+          placeholder={loadingProveedores ? 'Cargando...' : 'Seleccionar proveedor'}
+          searchPlaceholder="Buscar por RIF o razón social..."
+          emptyMessage="No se encontraron proveedores"
+          options={proveedores.map((p) => ({
+            value: p.id,
+            label: p.razon_social,
+            sublabel: p.rif,
+            keywords: `${p.rif} ${p.razon_social}`,
+          }))}
+          footerAction={(close) => (
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full h-11 rounded-xl gap-2"
+              onClick={() => {
+                close()
+                setCrearProveedorOpen(true)
+              }}
+            >
+              <UserPlus className="h-4 w-4" />
+              Crear nuevo proveedor
+            </Button>
+          )}
+        />
+      </div>
+
+      {/* ── Nro Factura | Nro Control ── */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-muted-foreground mb-1">
+            Nro. Factura <span className="text-destructive">*</span>
+          </label>
+          <input
+            type="text"
+            value={nroFactura}
+            onChange={(e) => setCabecera({ nroFactura: e.target.value.toUpperCase() })}
+            onKeyDown={handleSafeTextKeyDown}
+            onPaste={handleSafeTextPaste}
+            placeholder="00012345"
+            maxLength={50}
+            autoComplete="off"
+            className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-muted-foreground mb-1">
+            Nro. Control <span className="font-normal opacity-60">(opcional)</span>
+          </label>
+          <input
+            type="text"
+            value={nroControl}
+            onChange={(e) => setCabecera({ nroControl: e.target.value.toUpperCase() })}
+            onKeyDown={handleSafeTextKeyDown}
+            onPaste={handleSafeTextPaste}
+            placeholder="00-0012345"
+            maxLength={20}
+            autoComplete="off"
+            className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+          />
+        </div>
+      </div>
+
+      {/* ── Fecha | Tasa Interna ── */}
+      <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-xs font-medium text-muted-foreground mb-1">
             Fecha Factura <span className="text-destructive">*</span>
@@ -212,143 +266,43 @@ export function PasoCabecera() {
             className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
           />
           {fechaEsFutura && (
-            <p className="mt-1 text-amber-600 dark:text-amber-400 text-[11px]">
-              ⚠ La fecha es posterior a hoy. Verifique que sea correcta.
-            </p>
+            <p className="mt-1 text-amber-600 dark:text-amber-400 text-[11px]">⚠ Fecha posterior a hoy</p>
           )}
         </div>
-
         <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">
-            Nro. Factura <span className="text-destructive">*</span>
-          </label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs font-medium text-muted-foreground">
+              Tasa (Bs/USD) <span className="text-destructive">*</span>
+            </label>
+            {tasaInternaManual ? (
+              <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                <Warning className="h-3 w-3" />
+                Manual
+              </span>
+            ) : (
+              tasaInternaRaw && (
+                <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground/70">
+                  <Info className="h-3 w-3" />
+                  Auto
+                </span>
+              )
+            )}
+          </div>
           <input
             type="text"
-            value={nroFactura}
-            onChange={(e) => setCabecera({ nroFactura: e.target.value.toUpperCase() })}
-            onKeyDown={handleSafeTextKeyDown}
-            onPaste={handleSafeTextPaste}
-            placeholder="Ej: 00012345"
-            maxLength={50}
-            autoComplete="off"
-            className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+            inputMode="decimal"
+            value={tasaInternaRaw}
+            onChange={(e) => handleTasaInternaChange(e.target.value)}
+            onKeyDown={handleNumericKeyDown}
+            placeholder="0.0000"
+            className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
           />
         </div>
       </div>
 
-      <div>
-        <label className="block text-xs font-medium text-muted-foreground mb-1">
-          Nro. Control <span className="font-normal opacity-60">(opcional)</span>
-        </label>
-        <input
-          type="text"
-          value={nroControl}
-          onChange={(e) => setCabecera({ nroControl: e.target.value.toUpperCase() })}
-          onKeyDown={handleSafeTextKeyDown}
-          onPaste={handleSafeTextPaste}
-          placeholder="Ej: 00-0012345"
-          maxLength={20}
-          autoComplete="off"
-          className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
-        />
-      </div>
-
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="block text-xs font-medium text-muted-foreground">
-            Proveedor <span className="text-destructive">*</span>
-          </label>
-          <button
-            type="button"
-            onClick={() => setCrearProveedorOpen(true)}
-            className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
-          >
-            <UserPlus className="h-3.5 w-3.5" />
-            Nuevo
-          </button>
-        </div>
-        <select
-          value={proveedorId}
-          onChange={(e) => setCabecera({ proveedorId: e.target.value })}
-          disabled={loadingProveedores}
-          className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-        >
-          <option value="">{loadingProveedores ? 'Cargando...' : 'Seleccionar proveedor'}</option>
-          {proveedores.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.rif} - {p.razon_social}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="block text-xs font-medium text-muted-foreground mb-1">
-          Moneda del documento fisico
-        </label>
-        <p className="text-[11px] text-muted-foreground/70 mb-2">
-          Solo afecta la visualizacion. El asiento contable siempre se genera en Bolivares.
-        </p>
-        <div className="inline-flex rounded-xl border border-input overflow-hidden">
-          <button
-            type="button"
-            onClick={() => handleMonedaSwitch('USD')}
-            className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors ${
-              moneda === 'USD'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-background text-muted-foreground hover:bg-muted'
-            }`}
-          >
-            <Money className="h-4 w-4" />
-            USD
-          </button>
-          <button
-            type="button"
-            onClick={() => handleMonedaSwitch('BS')}
-            className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors ${
-              moneda === 'BS'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-background text-muted-foreground hover:bg-muted'
-            }`}
-          >
-            <Money className="h-4 w-4" />
-            Bs
-          </button>
-        </div>
-      </div>
-
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="text-xs font-medium text-muted-foreground">
-            Tasa Interna (Bs/USD) <span className="text-destructive">*</span>
-          </label>
-          {tasaInternaManual ? (
-            <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
-              <Warning className="h-3 w-3" />
-              Sin tasa para esta fecha
-            </span>
-          ) : (
-            tasaInternaRaw && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/70">
-                <Info className="h-3 w-3" />
-                Detectada automáticamente
-              </span>
-            )
-          )}
-        </div>
-        <input
-          type="text"
-          inputMode="decimal"
-          value={tasaInternaRaw}
-          onChange={(e) => handleTasaInternaChange(e.target.value)}
-          onKeyDown={handleNumericKeyDown}
-          placeholder="0.0000"
-          className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-        />
-      </div>
-
-      <div>
-        <div className="flex items-center gap-2">
+      {/* ── Checkbox tasa paralela + input condicional ── */}
+      <div className="rounded-xl border border-border bg-muted/20 px-4 py-3 space-y-3">
+        <label htmlFor="wizard-tasa-paralela-check" className="flex items-center gap-2.5 cursor-pointer select-none">
           <input
             id="wizard-tasa-paralela-check"
             type="checkbox"
@@ -356,14 +310,12 @@ export function PasoCabecera() {
             onChange={(e) => setCabecera({ usaTasaParalela: e.target.checked })}
             className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
           />
-          <label htmlFor="wizard-tasa-paralela-check" className="text-sm text-foreground cursor-pointer select-none">
-            Proveedor usa tasa paralela (distinta a la tasa interna BCV)
-          </label>
-        </div>
+          <span className="text-sm text-foreground">Proveedor usa tasa paralela</span>
+        </label>
         {usaTasaParalela && (
-          <div className="mt-3 p-3 rounded-lg bg-amber-50/80 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 space-y-2">
-            <label className="block text-xs font-medium text-amber-800 dark:text-amber-300 mb-1">
-              Tasa Proveedor (Paralela) (Bs/USD) <span className="text-destructive">*</span>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">
+              Tasa Proveedor (Bs/USD) <span className="text-destructive">*</span>
             </label>
             <input
               type="text"
@@ -372,13 +324,17 @@ export function PasoCabecera() {
               onChange={(e) => handleTasaProveedorChange(e.target.value)}
               onKeyDown={handleNumericKeyDown}
               placeholder="0.0000"
-              className="w-full rounded-xl border border-amber-200 dark:border-amber-700 px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
           </div>
         )}
       </div>
 
-      <ProveedorForm isOpen={crearProveedorOpen} onClose={() => setCrearProveedorOpen(false)} />
+      <ProveedorForm
+        isOpen={crearProveedorOpen}
+        onClose={() => setCrearProveedorOpen(false)}
+        presentation="sheet"
+      />
     </div>
   )
 }

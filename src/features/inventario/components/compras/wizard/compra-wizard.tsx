@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type React from 'react'
 import Decimal from 'decimal.js'
 import { toast } from 'sonner'
-import { ArrowLeft, ArrowRight, CheckCircle, Warning } from '@phosphor-icons/react'
+import { ArrowLeft, ArrowRight, CheckCircle, Warning, CaretUp, CaretDown, X, Trash } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { WizardStepIndicator } from '@/components/shared/wizard-step-indicator'
-import { WizardAcumulador, type WizardAcumuladorLinea } from '@/components/shared/wizard-acumulador'
+import { type WizardAcumuladorLinea } from '@/components/shared/wizard-acumulador'
 import { useCompraWizardStore, type LineaWizardCompra } from '@/stores/compra-wizard-store'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
@@ -201,16 +202,119 @@ function ResumenCompra({
 }
 
 /**
- * Orquestador del wizard de compra — `WizardStepIndicator` + `WizardAcumulador`
- * + routing 1→2→3 + resumen de confirmacion + submit (`crearCompra`, MISMA
- * mutacion que `compra-form.tsx`). Sin props: consume `useCompraWizardStore()`
- * para todo el estado, incluida la recuperacion de borrador y el submit final.
+ * Panel de carrito deslizable — lista los productos confirmados (`lineas`) +
+ * cargos, con boton de desconfirmar por producto. Se abre desde el boton de
+ * resumen en el footer (o swipe-up). Reemplaza al `WizardAcumulador` fijo.
+ */
+function PanelCarrito({
+  open,
+  onClose,
+  lineas,
+  cargosLineas,
+  total,
+  moneda,
+  onDesconfirmar,
+}: {
+  open: boolean
+  onClose: () => void
+  lineas: LineaWizardCompra[]
+  cargosLineas: WizardAcumuladorLinea[]
+  total: { usd: number; bs: number }
+  moneda: 'USD' | 'BS'
+  onDesconfirmar: (idx: number) => void
+}) {
+  return (
+    <div
+      className={`absolute inset-x-0 bottom-0 z-10 bg-card border-t rounded-t-2xl shadow-lg transition-transform duration-300 ease-in-out ${
+        open ? 'translate-y-0' : 'translate-y-full'
+      }`}
+      style={{ maxHeight: '65%' }}
+    >
+      <div className="flex items-center justify-between px-4 py-2 border-b">
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          Carrito ({lineas.length} producto{lineas.length !== 1 ? 's' : ''})
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground transition-colors p-1"
+          aria-label="Cerrar carrito"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="overflow-y-auto px-4 py-3 space-y-2" style={{ maxHeight: 'calc(65vh - 48px)' }}>
+        {lineas.length === 0 && cargosLineas.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-4">Aún no hay productos confirmados</p>
+        ) : (
+          <>
+            {lineas.map((l, idx) => {
+              const subtotal = getLineSubtotal(l)
+              return (
+                <div key={l.producto_id} className="flex items-center justify-between gap-2 text-sm">
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground truncate">{l.nombre}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {l.cantidad_input} x {l.codigo}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-semibold text-foreground tabular-nums">
+                      {moneda === 'USD' ? formatUsd(subtotal) : formatBs(subtotal)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onDesconfirmar(idx)}
+                      title="Quitar del carrito"
+                      className="text-muted-foreground hover:text-destructive transition-colors"
+                      aria-label="Desconfirmar producto"
+                    >
+                      <Trash className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+            {cargosLineas.map((c) => (
+              <div key={c.id} className="flex items-center justify-between gap-2 text-sm">
+                <div className="min-w-0">
+                  <p className="font-medium text-foreground truncate">{c.titulo}</p>
+                  {c.subtitulo && <p className="text-xs text-muted-foreground">{c.subtitulo}</p>}
+                </div>
+                <span className="font-semibold text-foreground tabular-nums shrink-0">{formatUsd(c.montoUsd)}</span>
+              </div>
+            ))}
+            <div className="border-t pt-2 mt-1 flex justify-between font-bold text-foreground text-base">
+              <span>Total</span>
+              <div className="text-right">
+                <p className="tabular-nums">{formatUsd(total.usd)}</p>
+                <p className="text-xs font-normal text-muted-foreground tabular-nums">{formatBs(total.bs)}</p>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Orquestador del wizard de compra (fullscreen mobile). Navegacion libre entre
+ * los 3 pasos (clic en indicador + swipe horizontal + botones Atras/Continuar).
+ * Solo el boton "Registrar compra" se bloquea hasta que los 3 pasos sean
+ * validos. El carrito de productos confirmados vive en `PanelCarrito`
+ * (deslizable). La logica fiscal del submit (`handleConfirmar`) es intacta.
  */
 export function CompraWizard() {
   const { user } = useCurrentUser()
   const [guardando, setGuardando] = useState(false)
   const [mostrarRestaurar, setMostrarRestaurar] = useState(false)
   const [mostrarResumen, setMostrarResumen] = useState(false)
+  const [carritoOpen, setCarritoOpen] = useState(false)
+
+  const touchStartX = useRef<number | null>(null)
+  const SWIPE_THRESHOLD = 50
 
   const {
     step,
@@ -235,6 +339,8 @@ export function CompraWizard() {
     isStep3Valid,
     guardarDraft,
     restaurarDraft,
+    descartarBorrador,
+    desconfirmarLinea,
   } = useCompraWizardStore()
 
   const { proveedores } = useProveedoresActivos()
@@ -334,32 +440,25 @@ export function CompraWizard() {
 
   const STEP_COMPONENTS = [<PasoCabecera key="1" />, <PasoProductos key="2" />, <PasoCargosPagos key="3" />]
 
-  function canGoNext(): boolean {
-    if (step === 1) return isStep1Valid()
-    if (step === 2) return isStep2Valid()
-    if (step === 3) return isStep3Valid()
-    return false
+  const canProcesar = isStep1Valid() && isStep2Valid() && isStep3Valid() && lineas.length > 0
+
+  function irAPaso(n: 1 | 2 | 3) {
+    setCarritoOpen(false)
+    setMostrarResumen(false)
+    setStep(n)
   }
 
-  function goNext() {
-    if (step < 3) {
-      setStep((step + 1) as 1 | 2 | 3)
-    } else {
-      setMostrarResumen(true)
-    }
+  function handleTouchStart(e: React.TouchEvent) {
+    touchStartX.current = e.touches[0].clientX
   }
 
-  function goBack() {
-    if (mostrarResumen) {
-      setMostrarResumen(false)
-      return
-    }
-    if (step > 1) {
-      setStep((step - 1) as 1 | 2 | 3)
-    } else {
-      reset()
-      closeSheet()
-    }
+  function handleTouchEnd(e: React.TouchEvent) {
+    if (touchStartX.current === null) return
+    const delta = e.changedTouches[0].clientX - touchStartX.current
+    touchStartX.current = null
+    if (Math.abs(delta) < SWIPE_THRESHOLD) return
+    if (delta < 0 && step < 3) irAPaso((step + 1) as 1 | 2 | 3)
+    if (delta > 0 && step > 1) irAPaso((step - 1) as 1 | 2 | 3)
   }
 
   async function handleConfirmar() {
@@ -529,7 +628,7 @@ export function CompraWizard() {
               variant="secondary"
               className="h-10 rounded-xl"
               onClick={() => {
-                reset()
+                descartarBorrador()
                 setMostrarRestaurar(false)
               }}
             >
@@ -542,27 +641,24 @@ export function CompraWizard() {
         </DialogContent>
       </Dialog>
 
-      <div className="flex flex-col gap-4">
-        <WizardStepIndicator
-          steps={STEPS}
-          currentStep={step}
-          completedSteps={
-            mostrarResumen ? [1, 2, 3] : Array.from({ length: step - 1 }, (_, i) => i + 1)
-          }
-          onStepClick={(n: number) => {
-            setMostrarResumen(false)
-            setStep(n as 1 | 2 | 3)
-          }}
-        />
+      <div className="flex flex-col h-full relative">
+        {/* Indicador de pasos — navegacion libre (solo activo iluminado) */}
+        <div className="px-4 pt-3 pb-2 shrink-0">
+          <WizardStepIndicator
+            steps={STEPS}
+            currentStep={step}
+            completedSteps={[]}
+            onStepClick={(n: number) => irAPaso(n as 1 | 2 | 3)}
+            freeNavigation
+          />
+        </div>
 
-        <WizardAcumulador
-          lineas={acumuladorLineas}
-          total={acumuladorTotal}
-          defaultCollapsed={step !== 3}
-          emptyMessage="Aún no hay productos ni cargos agregados"
-        />
-
-        <div className="flex-1">
+        {/* Contenido — scrolleable + swipe horizontal */}
+        <div
+          className="flex-1 overflow-y-auto px-4 pb-4"
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+        >
           {mostrarResumen ? (
             <ResumenCompra
               proveedorNombre={proveedorSeleccionado?.razon_social ?? '—'}
@@ -584,31 +680,87 @@ export function CompraWizard() {
           ) : (
             STEP_COMPONENTS[step - 1]
           )}
-        </div>
 
-        <div className="sticky bottom-0 bg-background pt-4 pb-2 border-t flex gap-3 mt-2">
-          <Button variant="secondary" className="h-10 rounded-xl gap-2.5" onClick={goBack}>
-            <ArrowLeft size={16} />
-            {step === 1 && !mostrarResumen ? 'Cancelar' : 'Atrás'}
-          </Button>
-          <div className="flex-1" />
-          {!mostrarResumen ? (
-            <Button className="h-11 rounded-xl text-base gap-2" onClick={goNext} disabled={!canGoNext()}>
-              Continuar
-              <ArrowRight size={16} />
-            </Button>
-          ) : (
-            <Button
-              className="h-11 rounded-xl text-base gap-2 bg-green-600 hover:bg-green-700"
-              onClick={handleConfirmar}
-              disabled={guardando || lineas.length === 0}
-              title={lineas.length === 0 ? 'Agregá al menos un producto en el Paso 2' : undefined}
-            >
-              <CheckCircle size={16} />
-              {guardando ? 'Registrando...' : 'Registrar compra'}
-            </Button>
+          {/* Hint de swipe */}
+          {!mostrarResumen && step < 3 && (
+            <p className="mt-4 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground/60 select-none">
+              <ArrowLeft size={12} className="animate-pulse" />
+              Deslizá o usá los botones para avanzar
+              <ArrowRight size={12} className="animate-pulse" />
+            </p>
           )}
         </div>
+
+        {/* Footer — 2 filas: navegacion + acciones */}
+        <div className="shrink-0 border-t bg-background px-4 py-3 space-y-2.5">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="secondary"
+              className="h-11 rounded-xl gap-2 flex-1 text-base"
+              onClick={() => {
+                if (mostrarResumen) { setMostrarResumen(false); return }
+                irAPaso((step - 1) as 1 | 2 | 3)
+              }}
+              disabled={!mostrarResumen && step === 1}
+            >
+              <ArrowLeft size={18} />
+              Atrás
+            </Button>
+            {!mostrarResumen && (
+              <Button
+                className="h-11 rounded-xl gap-2 flex-1 text-base"
+                onClick={() => irAPaso((step + 1) as 1 | 2 | 3)}
+                disabled={step === 3}
+              >
+                Continuar
+                <ArrowRight size={18} />
+              </Button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setCarritoOpen((v) => !v)}
+              className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+              aria-label={carritoOpen ? 'Cerrar carrito' : 'Ver carrito'}
+            >
+              {carritoOpen ? <CaretDown className="h-3.5 w-3.5" /> : <CaretUp className="h-3.5 w-3.5" />}
+              {lineas.length > 0 ? `${lineas.length} item(s)` : 'Carrito'}
+            </button>
+
+            <div className="flex-1" />
+
+            <Button
+              variant="ghost"
+              className="h-10 rounded-xl text-muted-foreground"
+              onClick={() => { reset(); closeSheet() }}
+            >
+              Cancelar
+            </Button>
+
+            <Button
+              className="h-11 rounded-xl text-base gap-2 bg-green-600 hover:bg-green-700"
+              onClick={() => (mostrarResumen ? handleConfirmar() : setMostrarResumen(true))}
+              disabled={!canProcesar || guardando}
+              title={!canProcesar ? 'Completá los datos y agregá al menos un producto' : undefined}
+            >
+              <CheckCircle size={16} />
+              {guardando ? 'Registrando...' : mostrarResumen ? 'Confirmar' : 'Registrar'}
+            </Button>
+          </div>
+        </div>
+
+        {/* Panel carrito deslizable */}
+        <PanelCarrito
+          open={carritoOpen}
+          onClose={() => setCarritoOpen(false)}
+          lineas={lineas}
+          cargosLineas={acumuladorLineas.filter((a) => !lineas.some((l) => l.producto_id === a.id))}
+          total={acumuladorTotal}
+          moneda={moneda}
+          onDesconfirmar={(idx) => desconfirmarLinea(idx)}
+        />
       </div>
     </>
   )
