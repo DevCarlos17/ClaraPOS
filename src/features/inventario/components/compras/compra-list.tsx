@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { useComprasPorFecha, type CompraConProveedor } from '@/features/inventario/hooks/use-compras'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
-import { todayStr, startOfMonth } from '@/lib/dates'
+import { todayStr, daysAgo } from '@/lib/dates'
 import { CompraForm } from './compra-form'
 import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
 import { CompraReportes } from './compra-reportes'
@@ -71,7 +71,7 @@ function getDaysDiff(from: string, to: string): number {
 
 function getDefaultDates() {
   return {
-    desde: startOfMonth(),
+    desde: daysAgo(4),
     hasta: todayStr(),
   }
 }
