@@ -53,15 +53,19 @@ function SheetContent({
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
   /**
-   * Contenedor del portal (Radix `Dialog.Portal container`). Cuando este sheet
-   * se abre desde otro modal en la top layer del navegador (`<dialog>` con
-   * showModal()), portalizar al `document.body` (default) lo deja POR DEBAJO de
-   * la top layer. Pasar el nodo DOM del modal padre lo apila encima.
+   * Contenedor del portal (Radix `Dialog.Portal container`, Sheet reusa el
+   * mismo primitivo de Dialog). Por defecto Radix portaliza al
+   * `document.body`. Cuando este sheet se abre desde otro modal en la top
+   * layer del navegador (`<dialog>` con showModal(), ej.
+   * `nota-credito-pos-modal.tsx`) o ENCIMA de otro `Sheet` ya abierto (ej.
+   * `PvpConfirmSheet` sobre el wizard de compra), pasar el nodo DOM del padre
+   * como `container` apila el hijo correctamente por encima. `undefined`
+   * (default) preserva el comportamiento actual para todo consumidor existente.
    */
-  container?: HTMLElement | null
+  container?: React.ComponentProps<typeof SheetPortal>['container']
 }) {
   return (
-    <SheetPortal container={container ?? undefined}>
+    <SheetPortal container={container}>
       <SheetOverlay />
       <SheetPrimitive.Content
         data-slot="sheet-content"

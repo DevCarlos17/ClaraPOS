@@ -11,6 +11,9 @@ import { todayStr, startOfMonth } from '@/lib/dates'
 import { CompraForm } from './compra-form'
 import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
 import { CompraReportes } from './compra-reportes'
+import { CompraWizardSheet } from './wizard/compra-wizard-sheet'
+import { useCompraWizardStore } from '@/stores/compra-wizard-store'
+import { useMobile } from '@/hooks/use-mobile'
 
 const MAX_RANGE_DAYS = 62 // ~2 meses
 
@@ -108,6 +111,8 @@ export function CompraList() {
   const defaults = getDefaultDates()
   const [showForm, setShowForm] = useState(false)
   const [detalleId, setDetalleId] = useState<string | null>(null)
+  const isMobile = useMobile(1024)
+  const openCompraWizardSheet = useCompraWizardStore((s) => s.openSheet)
 
   // Date range filter: estado "staged" (Desde/Hasta editados por el usuario)
   // separado de consultaActiva (lo que dispara la query) — Consultar copia
@@ -135,7 +140,7 @@ export function CompraList() {
 
   const hasConsulta = Boolean(consultaActiva.desde && consultaActiva.hasta)
 
-  if (showForm) {
+  if (showForm && !isMobile) {
     return <CompraForm onClose={() => setShowForm(false)} />
   }
 
@@ -264,7 +269,8 @@ export function CompraList() {
               />
             </div>
             {/* Fila 2: acciones — grid reparte el ancho, nunca desborda.
-                Consultar | Reportes (si hay) | Registrar en la misma linea. */}
+                Consultar | Reportes (si hay) | Registrar en la misma linea.
+                En mobile "Registrar" abre el wizard fullscreen (W5). */}
             <div className={`grid gap-2 ${hasConsulta ? 'grid-cols-3' : 'grid-cols-2'} sm:flex sm:items-center`}>
               <Button
                 type="button"
@@ -285,7 +291,7 @@ export function CompraList() {
               <Button
                 type="button"
                 className="h-10 rounded-xl min-w-0 px-2 sm:px-4"
-                onClick={() => setShowForm(true)}
+                onClick={() => (isMobile ? openCompraWizardSheet() : setShowForm(true))}
               >
                 Registrar
               </Button>
@@ -301,6 +307,7 @@ export function CompraList() {
         isOpen={!!detalleId}
         onClose={() => setDetalleId(null)}
       />
+      {isMobile && <CompraWizardSheet />}
     </div>
   )
 }

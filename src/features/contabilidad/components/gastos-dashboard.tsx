@@ -22,6 +22,9 @@ import { montoCostoGasto, montoIvaGasto, montoTotalGasto } from '@/features/cont
 import { GastoForm } from './gasto-form'
 import { CuentaGastoModal } from './cuenta-gasto-modal'
 import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
+import { GastoWizardSheet } from './wizard/gasto-wizard-sheet'
+import { useGastoWizardStore } from '@/stores/gasto-wizard-store'
+import { useMobile } from '@/hooks/use-mobile'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   PieChart, Pie, Cell,
@@ -126,6 +129,8 @@ export function GastosDashboard() {
   const defaultMesDesde = today.slice(0, 7)
   const { user } = useCurrentUser()
   const { company } = useCompany()
+  const isMobile = useMobile(1024)
+  const openGastoWizardSheet = useGastoWizardStore((s) => s.openSheet)
 
   // ── Estado de filtros
   const [criterio, setCriterio]       = useState<Criterio>('TODAS')
@@ -584,7 +589,7 @@ export function GastosDashboard() {
     )
   }
 
-  if (formOpen) {
+  if (formOpen && !isMobile) {
     return <GastoForm onClose={() => setFormOpen(false)} />
   }
 
@@ -728,7 +733,7 @@ export function GastosDashboard() {
             </button>
             <button
               type="button"
-              onClick={() => setFormOpen(true)}
+              onClick={() => (isMobile ? openGastoWizardSheet() : setFormOpen(true))}
               className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
             >
               <Plus className="h-4 w-4" />
@@ -992,6 +997,7 @@ export function GastosDashboard() {
         isOpen={cuentaModalOpen}
         onClose={() => setCuentaModalOpen(false)}
       />
+      {isMobile && <GastoWizardSheet />}
     </div>
   )
 }
