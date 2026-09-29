@@ -252,7 +252,8 @@ export function CompraList() {
         }
         renderMobileCard={renderCompraMobileCard}
         toolbarSlot={
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
+            {/* Fila 1: rango de fechas */}
             <DateRangeField
               value={{ desde: fechaDesde, hasta: fechaHasta }}
               onChange={(v) => {
@@ -260,25 +261,32 @@ export function CompraList() {
                 setFechaHasta(v.hasta)
               }}
             />
-            <Button
-              type="button"
-              variant="secondary"
-              className="h-10 rounded-xl gap-2.5"
-              onClick={handleConsultar}
-              disabled={!!rangeError || !fechaDesde || !fechaHasta}
-            >
-              Consultar
-            </Button>
-            {hasConsulta && (
-              <CompraReportes
-                compras={compras}
-                fechaDesde={consultaActiva.desde}
-                fechaHasta={consultaActiva.hasta}
-              />
-            )}
-            <Button type="button" className="h-11 rounded-xl text-base" onClick={() => setShowForm(true)}>
-              Registrar compra
-            </Button>
+            {/* Fila 2: acciones — Consultar | Reportes | Registrar en la misma linea */}
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-10 rounded-xl flex-1 sm:flex-none"
+                onClick={handleConsultar}
+                disabled={!!rangeError || !fechaDesde || !fechaHasta}
+              >
+                Consultar
+              </Button>
+              {hasConsulta && (
+                <CompraReportes
+                  compras={compras}
+                  fechaDesde={consultaActiva.desde}
+                  fechaHasta={consultaActiva.hasta}
+                />
+              )}
+              <Button
+                type="button"
+                className="h-10 rounded-xl flex-1 sm:flex-none"
+                onClick={() => setShowForm(true)}
+              >
+                Registrar compra
+              </Button>
+            </div>
           </div>
         }
       />

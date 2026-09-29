@@ -160,6 +160,12 @@ export function ConsultaFacturaModal({
         }}
         title="Consulta de Factura"
         bodyClassName="flex flex-col gap-4 p-4"
+        // Mismo motivo que la rama Dialog: cuando este modal se abre desde otro
+        // modal en la top layer del navegador (`<dialog>` con showModal(), ej.
+        // nota-credito-pos-modal), portalizar al body deja el sheet POR DEBAJO
+        // de la top layer (bug: solo se veia el overlay). Pasar el contenedor
+        // del padre lo apila correctamente encima.
+        portalContainer={portalContainer ?? undefined}
         footer={
           onAplicarNc && (
             <Button

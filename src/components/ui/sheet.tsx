@@ -47,13 +47,21 @@ function SheetContent({
   children,
   side = "right",
   showCloseButton = true,
+  container,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
+  /**
+   * Contenedor del portal (Radix `Dialog.Portal container`). Cuando este sheet
+   * se abre desde otro modal en la top layer del navegador (`<dialog>` con
+   * showModal()), portalizar al `document.body` (default) lo deja POR DEBAJO de
+   * la top layer. Pasar el nodo DOM del modal padre lo apila encima.
+   */
+  container?: HTMLElement | null
 }) {
   return (
-    <SheetPortal>
+    <SheetPortal container={container ?? undefined}>
       <SheetOverlay />
       <SheetPrimitive.Content
         data-slot="sheet-content"

@@ -36,6 +36,14 @@ export interface BottomSheetProps {
   footer?: ReactNode
   /** Clase adicional para el cuerpo scrolleable (ej. ajustar padding). */
   bodyClassName?: string
+  /**
+   * Contenedor del portal, forwardeado al `container` de `SheetContent`.
+   * Necesario cuando este sheet se abre desde otro modal en la top layer del
+   * navegador (`<dialog>` con showModal()): sin esto se portaliza al body y
+   * queda POR DEBAJO de la top layer (bug del modal de reimprimir). `undefined`
+   * (default) preserva el portal a `document.body`.
+   */
+  portalContainer?: HTMLElement | null
 }
 
 export function BottomSheet({
@@ -45,10 +53,11 @@ export function BottomSheet({
   children,
   footer,
   bodyClassName,
+  portalContainer,
 }: BottomSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="max-h-[90vh] rounded-t-2xl bg-card p-0">
+      <SheetContent side="bottom" container={portalContainer} className="max-h-[90vh] rounded-t-2xl bg-card p-0">
         {title && (
           <SheetHeader className="border-b pb-3">
             <SheetTitle>{title}</SheetTitle>
