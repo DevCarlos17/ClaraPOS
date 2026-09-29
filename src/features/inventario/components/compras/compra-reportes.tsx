@@ -524,19 +524,19 @@ export function CompraReportes({ compras, fechaDesde, fechaHasta }: CompraReport
   }
 
   return (
-    <div className="relative">
+    <div className="relative w-full sm:w-auto">
       <button
         onClick={() => setMenuOpen(!menuOpen)}
         disabled={generating}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary bg-primary/10 rounded-md hover:bg-primary/20 transition-colors disabled:opacity-50"
+        className="inline-flex w-full sm:w-auto h-10 sm:h-auto items-center justify-center gap-1.5 px-2 sm:px-3 sm:py-1.5 text-sm font-medium text-primary bg-primary/10 rounded-xl sm:rounded-md hover:bg-primary/20 transition-colors disabled:opacity-50 min-w-0"
       >
         {generating ? (
-          <CircleNotch className="h-4 w-4 animate-spin" />
+          <CircleNotch className="h-4 w-4 animate-spin shrink-0" />
         ) : (
-          <FileText className="h-4 w-4" />
+          <FileText className="h-4 w-4 shrink-0" />
         )}
         Reportes
-        <CaretDown className="h-3.5 w-3.5" />
+        <CaretDown className="h-3.5 w-3.5 shrink-0" />
       </button>
 
       {menuOpen && (

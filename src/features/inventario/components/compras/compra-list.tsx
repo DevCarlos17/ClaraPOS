@@ -252,21 +252,24 @@ export function CompraList() {
         }
         renderMobileCard={renderCompraMobileCard}
         toolbarSlot={
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
-            {/* Fila 1: rango de fechas */}
-            <DateRangeField
-              value={{ desde: fechaDesde, hasta: fechaHasta }}
-              onChange={(v) => {
-                setFechaDesde(v.desde)
-                setFechaHasta(v.hasta)
-              }}
-            />
-            {/* Fila 2: acciones — Consultar | Reportes | Registrar en la misma linea */}
-            <div className="flex items-center gap-2">
+          <div className="w-full flex flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            {/* Fila 1: rango de fechas — ocupa el ancho, pickers justificados */}
+            <div className="w-full sm:w-auto">
+              <DateRangeField
+                value={{ desde: fechaDesde, hasta: fechaHasta }}
+                onChange={(v) => {
+                  setFechaDesde(v.desde)
+                  setFechaHasta(v.hasta)
+                }}
+              />
+            </div>
+            {/* Fila 2: acciones — grid reparte el ancho, nunca desborda.
+                Consultar | Reportes (si hay) | Registrar en la misma linea. */}
+            <div className={`grid gap-2 ${hasConsulta ? 'grid-cols-3' : 'grid-cols-2'} sm:flex sm:items-center`}>
               <Button
                 type="button"
                 variant="secondary"
-                className="h-10 rounded-xl flex-1 sm:flex-none"
+                className="h-10 rounded-xl min-w-0 px-2 sm:px-4"
                 onClick={handleConsultar}
                 disabled={!!rangeError || !fechaDesde || !fechaHasta}
               >
@@ -281,10 +284,10 @@ export function CompraList() {
               )}
               <Button
                 type="button"
-                className="h-10 rounded-xl flex-1 sm:flex-none"
+                className="h-10 rounded-xl min-w-0 px-2 sm:px-4"
                 onClick={() => setShowForm(true)}
               >
-                Registrar compra
+                Registrar
               </Button>
             </div>
           </div>
