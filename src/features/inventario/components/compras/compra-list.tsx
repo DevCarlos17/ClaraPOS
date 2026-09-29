@@ -257,37 +257,45 @@ export function CompraList() {
         }
         renderMobileCard={renderCompraMobileCard}
         toolbarSlot={
-          <div className="flex items-center gap-2 flex-wrap">
-            <DateRangeField
-              value={{ desde: fechaDesde, hasta: fechaHasta }}
-              onChange={(v) => {
-                setFechaDesde(v.desde)
-                setFechaHasta(v.hasta)
-              }}
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              className="h-10 rounded-xl gap-2.5"
-              onClick={handleConsultar}
-              disabled={!!rangeError || !fechaDesde || !fechaHasta}
-            >
-              Consultar
-            </Button>
-            {hasConsulta && (
-              <CompraReportes
-                compras={compras}
-                fechaDesde={consultaActiva.desde}
-                fechaHasta={consultaActiva.hasta}
+          <div className="w-full flex flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            {/* Fila 1: rango de fechas — ocupa el ancho, pickers justificados */}
+            <div className="w-full sm:w-auto">
+              <DateRangeField
+                value={{ desde: fechaDesde, hasta: fechaHasta }}
+                onChange={(v) => {
+                  setFechaDesde(v.desde)
+                  setFechaHasta(v.hasta)
+                }}
               />
-            )}
-            <Button
-              type="button"
-              className="h-11 rounded-xl text-base"
-              onClick={() => (isMobile ? openCompraWizardSheet() : setShowForm(true))}
-            >
-              Registrar compra
-            </Button>
+            </div>
+            {/* Fila 2: acciones — grid reparte el ancho, nunca desborda.
+                Consultar | Reportes (si hay) | Registrar en la misma linea.
+                En mobile "Registrar" abre el wizard fullscreen (W5). */}
+            <div className={`grid gap-2 ${hasConsulta ? 'grid-cols-3' : 'grid-cols-2'} sm:flex sm:items-center`}>
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-10 rounded-xl min-w-0 px-2 sm:px-4"
+                onClick={handleConsultar}
+                disabled={!!rangeError || !fechaDesde || !fechaHasta}
+              >
+                Consultar
+              </Button>
+              {hasConsulta && (
+                <CompraReportes
+                  compras={compras}
+                  fechaDesde={consultaActiva.desde}
+                  fechaHasta={consultaActiva.hasta}
+                />
+              )}
+              <Button
+                type="button"
+                className="h-10 rounded-xl min-w-0 px-2 sm:px-4"
+                onClick={() => (isMobile ? openCompraWizardSheet() : setShowForm(true))}
+              >
+                Registrar
+              </Button>
+            </div>
           </div>
         }
       />

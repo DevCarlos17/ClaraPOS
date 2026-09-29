@@ -38,10 +38,12 @@ export interface BottomSheetProps {
   bodyClassName?: string
   /**
    * Contenedor del portal, forwardeado al `container` de `SheetContent`
-   * (Radix `Dialog.Portal container`). Pasar el nodo DOM de OTRO
-   * `BottomSheet`/`SheetContent` ya abierto apila este sheet correctamente
-   * por encima (ej. `PvpConfirmSheet` sobre `CompraWizardSheet`). `undefined`
-   * (default) preserva el comportamiento actual: portal a `document.body`.
+   * (Radix `Dialog.Portal container`). Necesario cuando este sheet se abre
+   * desde otro modal en la top layer del navegador (`<dialog>` con
+   * showModal()): sin esto se portaliza al body y queda POR DEBAJO de la top
+   * layer (bug del modal de reimprimir). Tambien sirve para apilar un sheet
+   * sobre otro (ej. `PvpConfirmSheet` sobre `CompraWizardSheet`). `undefined`
+   * (default) preserva el portal a `document.body`.
    */
   portalContainer?: HTMLElement | null
   /**
