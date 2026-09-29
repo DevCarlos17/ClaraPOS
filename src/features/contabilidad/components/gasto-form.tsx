@@ -16,6 +16,12 @@ import { todayStr, localNow } from '@/lib/dates'
 import { db } from '@/core/db/powersync/db'
 import { v4 as uuidv4 } from 'uuid'
 import { useGastoBorradorStore } from '@/features/contabilidad/stores/gasto-borrador-store'
+import {
+  calcIvaFactura,
+  calcMontoContableUsd,
+  calcMontoProveedorUsd,
+  calcTotalFactura,
+} from '@/features/contabilidad/lib/gasto-totales'
 
 // ─── Tipos locales ──────────────────────────────────────────
 
@@ -475,31 +481,26 @@ export function GastoForm({ onClose }: GastoFormProps) {
 
   // totalFactura = base + IVA (en moneda_factura)
   // montoFactura es la BASE (antes de IVA)
-  const ivaFactura = tipoImpuesto === 'Gravable'
-    ? Number((montoFacturaNum * (porcentajeIvaNum / 100)).toFixed(2))
-    : 0
-  const totalFacturaNum = Number((montoFacturaNum + ivaFactura).toFixed(2))
+  const ivaFactura = calcIvaFactura(montoFacturaNum, porcentajeIvaNum, tipoImpuesto)
+  const totalFacturaNum = calcTotalFactura(montoFacturaNum, ivaFactura)
 
-  const montoContableUsd = (() => {
-    if (totalFacturaNum <= 0 || tasaInternaNum <= 0) return null
-    if (monedaFactura === 'BS') {
-      return totalFacturaNum / tasaInternaNum
-    }
-    if (usaTasaParalela && tasaProveedorNum > 0) {
-      return (totalFacturaNum * tasaProveedorNum) / tasaInternaNum
-    }
-    return totalFacturaNum
-  })()
+  const montoContableUsd = calcMontoContableUsd({
+    totalFacturaNum,
+    monedaFactura,
+    usaTasaParalela,
+    tasaInternaNum,
+    tasaProveedorNum,
+  })
 
   // ─── Monto desde perspectiva proveedor ────────────────────
 
-  const montoProveedorUsd = (() => {
-    if (totalFacturaNum <= 0) return null
-    if (monedaFactura === 'USD') return totalFacturaNum
-    // BS: dividir por tasa proveedor si aplica, sino por interna
-    const tasaRef = usaTasaParalela && tasaProveedorNum > 0 ? tasaProveedorNum : tasaInternaNum
-    return tasaRef > 0 ? totalFacturaNum / tasaRef : null
-  })()
+  const montoProveedorUsd = calcMontoProveedorUsd({
+    totalFacturaNum,
+    monedaFactura,
+    usaTasaParalela,
+    tasaInternaNum,
+    tasaProveedorNum,
+  })
 
   // ─── Auto-fill monto del primer pago ──────────────────────
 

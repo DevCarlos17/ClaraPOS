@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ReactNode, Ref } from 'react'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 
@@ -36,6 +36,19 @@ export interface BottomSheetProps {
   footer?: ReactNode
   /** Clase adicional para el cuerpo scrolleable (ej. ajustar padding). */
   bodyClassName?: string
+  /**
+   * Contenedor del portal, forwardeado al `container` de `SheetContent`
+   * (Radix `Dialog.Portal container`). Pasar el nodo DOM de OTRO
+   * `BottomSheet`/`SheetContent` ya abierto apila este sheet correctamente
+   * por encima (ej. `PvpConfirmSheet` sobre `CompraWizardSheet`). `undefined`
+   * (default) preserva el comportamiento actual: portal a `document.body`.
+   */
+  portalContainer?: HTMLElement | null
+  /**
+   * Ref opcional hacia el nodo DOM del `SheetContent` de ESTE sheet, para que
+   * un sheet hijo pueda recibirlo como `portalContainer` y stackear encima.
+   */
+  contentRef?: Ref<HTMLDivElement>
 }
 
 export function BottomSheet({
@@ -45,10 +58,17 @@ export function BottomSheet({
   children,
   footer,
   bodyClassName,
+  portalContainer,
+  contentRef,
 }: BottomSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="max-h-[90vh] rounded-t-2xl bg-card p-0">
+      <SheetContent
+        ref={contentRef}
+        container={portalContainer}
+        side="bottom"
+        className="max-h-[90vh] rounded-t-2xl bg-card p-0"
+      >
         {title && (
           <SheetHeader className="border-b pb-3">
             <SheetTitle>{title}</SheetTitle>

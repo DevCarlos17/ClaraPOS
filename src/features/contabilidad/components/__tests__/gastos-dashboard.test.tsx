@@ -32,6 +32,14 @@ vi.mock('../cuenta-gasto-modal', () => ({ CuentaGastoModal: () => null }))
 vi.mock('@/features/compras/components/factura-proveedor-modal', () => ({
   FacturaProveedorModal: () => null,
 }))
+// Mock completo (sin importActual): la cadena real del wizard mobile
+// (GastoWizardSheet → GastoWizard → paso-identificacion/paso-pagos) importa
+// src/core/db/powersync/db.ts a nivel de modulo, que falla con "Worker is
+// not defined" en happy-dom (mismo motivo que el mock de use-plan-cuentas
+// arriba). isMobile es false en este entorno (innerWidth=1024 fijo en
+// happy-dom, useMobile(1024) exige `< 1024`), asi que el wizard nunca se
+// renderiza, pero el import estatico igual se evalua.
+vi.mock('../wizard/gasto-wizard-sheet', () => ({ GastoWizardSheet: () => null }))
 
 const mockedUseGastos = vi.mocked(useGastos)
 const mockedUseGruposGastoConSubcuentas = vi.mocked(useGruposGastoConSubcuentas)
