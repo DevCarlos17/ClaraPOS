@@ -1,14 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { toast } from 'sonner'
-import { ArrowLeft, ArrowRight, CheckCircle, Warning } from '@phosphor-icons/react'
+import { CheckCircle, CaretUp, CaretDown, X } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { WizardStepIndicator } from '@/components/shared/wizard-step-indicator'
-import { WizardAcumulador } from '@/components/shared/wizard-acumulador'
 import { useGastoWizardStore } from '@/stores/gasto-wizard-store'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { useCuentasDetallePorTipo } from '@/features/contabilidad/hooks/use-plan-cuentas'
-import { useProveedores } from '@/features/proveedores/hooks/use-proveedores'
 import { useMetodosCxP } from '@/features/configuracion/hooks/use-payment-methods'
 import { useGastoTotales } from '@/features/contabilidad/lib/use-gasto-totales'
 import { gastoSchema } from '@/features/contabilidad/schemas/gasto-schema'
@@ -21,99 +18,97 @@ import { PasoPagos } from './paso-pagos'
 const STEPS = [{ label: 'Identificación' }, { label: 'Monto' }, { label: 'Pagos' }]
 
 /**
- * Resumen de confirmacion — version compacta del `ResumenConfirm` de
- * `gasto-form.tsx`, adaptada al espacio reducido del BottomSheet mobile.
- * Componente local, no exportado (mismo patron que `gasto-form.tsx`).
+ * Panel de resumen deslizable — se muestra desde el borde inferior del wizard
+ * al pulsar el handle o hacer swipe-up. Lista los abonos registrados y el
+ * total contable. Se cierra al pulsar el handle de nuevo o el boton X.
  */
-function ResumenGasto({
-  cuentaNombre,
-  proveedorNombre,
-  descripcion,
-  fecha,
-  monedaFactura,
-  totalFacturaNum,
-  montoContableUsd,
-  pagosCount,
-  saldoPendienteProveedor,
+function PanelResumenAbonos({
+  open,
+  onClose,
+  lineas,
+  total,
+  emptyMessage,
 }: {
-  cuentaNombre: string
-  proveedorNombre: string | null
-  descripcion: string
-  fecha: string
-  monedaFactura: 'USD' | 'BS'
-  totalFacturaNum: number
-  montoContableUsd: number | null
-  pagosCount: number
-  saldoPendienteProveedor: number
+  open: boolean
+  onClose: () => void
+  lineas: { id: string; titulo: string; subtitulo?: string; montoUsd: number; montoBs: number }[]
+  total: { usd: number; bs: number }
+  emptyMessage: string
 }) {
   return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="text-base font-semibold text-foreground mb-1">Resumen del Gasto</h3>
-        <p className="text-xs text-muted-foreground">Verifica los datos antes de confirmar</p>
+    <div
+      className={`absolute inset-x-0 bottom-0 z-10 bg-card border-t rounded-t-2xl shadow-lg transition-transform duration-300 ease-in-out ${
+        open ? 'translate-y-0' : 'translate-y-full'
+      }`}
+      style={{ maxHeight: '60%' }}
+    >
+      {/* Handle */}
+      <div className="flex items-center justify-between px-4 py-2 border-b">
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          Resumen de abonos
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground transition-colors p-1"
+          aria-label="Cerrar resumen"
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
 
-      <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-2 text-sm shadow-sm">
-        <div className="flex justify-between">
-          <span className="text-muted-foreground">Cuenta:</span>
-          <span className="font-semibold text-foreground text-right max-w-[220px] truncate">{cuentaNombre}</span>
-        </div>
-        {proveedorNombre && (
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Proveedor:</span>
-            <span className="font-semibold text-foreground">{proveedorNombre}</span>
-          </div>
-        )}
-        <div className="flex justify-between">
-          <span className="text-muted-foreground">Fecha:</span>
-          <span className="font-mono text-foreground">{fecha}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-muted-foreground">Descripción:</span>
-          <span className="text-foreground text-right max-w-[220px]">{descripcion}</span>
-        </div>
-        <div className="border-t border-border pt-2 mt-1">
-          <div className="flex justify-between font-semibold">
-            <span className="text-foreground">Total Factura:</span>
-            <span className="text-foreground">
-              {totalFacturaNum.toFixed(2)} {monedaFactura}
-            </span>
-          </div>
-          {montoContableUsd !== null && (
-            <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
-              <span>Total Contable USD:</span>
-              <span>{formatUsd(montoContableUsd)}</span>
+      <div className="overflow-y-auto px-4 py-3 space-y-2" style={{ maxHeight: 'calc(60vh - 48px)' }}>
+        {lineas.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-4">{emptyMessage}</p>
+        ) : (
+          <>
+            {lineas.map((l) => (
+              <div key={l.id} className="flex items-center justify-between text-sm">
+                <div className="min-w-0">
+                  <p className="font-medium text-foreground truncate">{l.titulo}</p>
+                  {l.subtitulo && <p className="text-xs text-muted-foreground truncate">{l.subtitulo}</p>}
+                </div>
+                <div className="text-right shrink-0 ml-3">
+                  <p className="font-semibold text-foreground tabular-nums">{formatUsd(l.montoUsd)}</p>
+                  <p className="text-xs text-muted-foreground tabular-nums">
+                    {l.montoBs.toFixed(2)} Bs
+                  </p>
+                </div>
+              </div>
+            ))}
+            <div className="border-t pt-2 mt-1 flex justify-between font-bold text-foreground text-base">
+              <span>Total</span>
+              <div className="text-right">
+                <p className="tabular-nums">{formatUsd(total.usd)}</p>
+                <p className="text-xs font-normal text-muted-foreground tabular-nums">
+                  {total.bs.toFixed(2)} Bs
+                </p>
+              </div>
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
-
-      <p className="text-xs text-muted-foreground">
-        {pagosCount > 0 ? `${pagosCount} abono(s) registrado(s)` : 'Sin abonos — se registra a crédito'}
-      </p>
-
-      {saldoPendienteProveedor > 0.005 && (
-        <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center gap-2 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-400">
-          <Warning className="h-3.5 w-3.5 shrink-0" />
-          Saldo pendiente: {formatUsd(saldoPendienteProveedor)} — quedará en Cuentas por Pagar
-        </div>
-      )}
     </div>
   )
 }
 
 /**
- * Orquestador del wizard de gasto — `WizardStepIndicator` + `WizardAcumulador`
- * + routing 1→2→3 + resumen de confirmacion + submit (`crearGasto`, MISMA
- * mutacion que `gasto-form.tsx`). Sin props: consume `useGastoWizardStore()`
- * (Zustand global) para todo el estado, incluida la recuperacion de
- * borrador y el submit final.
+ * Orquestador del wizard de gasto (fullscreen mobile). Navegacion libre entre
+ * los 3 pasos via clic en el indicador de pasos — sin bloqueos por paso. Solo
+ * el boton "Registrar gasto" se bloquea hasta que los 3 pasos sean validos.
+ *
+ * El `WizardAcumulador` fue reemplazado por `PanelResumenAbonos`, un panel
+ * deslizable desde el borde inferior activado por un handle/boton en el footer.
  */
 export function GastoWizard() {
   const { user } = useCurrentUser()
   const [guardando, setGuardando] = useState(false)
   const [mostrarRestaurar, setMostrarRestaurar] = useState(false)
-  const [mostrarResumen, setMostrarResumen] = useState(false)
+  const [resumenOpen, setResumenOpen] = useState(false)
+
+  // Swipe horizontal para cambiar de paso
+  const touchStartX = useRef<number | null>(null)
+  const SWIPE_THRESHOLD = 50
 
   const {
     step,
@@ -144,18 +139,14 @@ export function GastoWizard() {
     guardarDraft,
   } = useGastoWizardStore()
 
-  const { cuentas } = useCuentasDetallePorTipo('GASTO')
-  const { proveedores } = useProveedores()
   const { metodos } = useMetodosCxP()
 
-  // Detectar borrador huerfano al montar (mismo patron que nueva-cita-wizard.tsx)
   useEffect(() => {
     const hayDraft = hidratarDesdeBorrador()
     if (hayDraft) setMostrarRestaurar(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Auto-guardado del borrador mientras se completa el wizard
   useEffect(() => {
     if (!user?.empresa_id) return
     const hasData = Boolean(cuentaId || descripcion.trim() || montoFactura)
@@ -183,11 +174,9 @@ export function GastoWizard() {
   ])
 
   const {
-    totalFacturaNum,
     montoContableUsd,
     abonoPagoProveedorUsd,
     abonoPagoInternoUsd,
-    saldoPendienteProveedor,
   } = useGastoTotales({
     monedaFactura,
     usaTasaParalela,
@@ -199,8 +188,6 @@ export function GastoWizard() {
     pagos,
   })
 
-  const cuentaSeleccionada = cuentas.find((c) => c.id === cuentaId)
-  const proveedorSeleccionado = proveedores.find((p) => p.id === proveedorId)
   const tasaInternaNum = parseFloat(tasaInterna) || 0
 
   const acumuladorLineas = pagos.map((p) => {
@@ -219,34 +206,26 @@ export function GastoWizard() {
     bs: usdToBs(montoContableUsd ?? 0, tasaInternaNum).toNumber(),
   }
 
+  const canProcesar = isStep1Valid() && isStep2Valid() && isStep3Valid()
+
   const STEP_COMPONENTS = [<PasoIdentificacion key="1" />, <PasoMonto key="2" />, <PasoPagos key="3" />]
 
-  function canGoNext(): boolean {
-    if (step === 1) return isStep1Valid()
-    if (step === 2) return isStep2Valid()
-    if (step === 3) return isStep3Valid()
-    return false
+  function handleStepClick(n: number) {
+    setResumenOpen(false)
+    setStep(n as 1 | 2 | 3)
   }
 
-  function goNext() {
-    if (step < 3) {
-      setStep((step + 1) as 1 | 2 | 3)
-    } else {
-      setMostrarResumen(true)
-    }
+  function handleTouchStart(e: React.TouchEvent) {
+    touchStartX.current = e.touches[0].clientX
   }
 
-  function goBack() {
-    if (mostrarResumen) {
-      setMostrarResumen(false)
-      return
-    }
-    if (step > 1) {
-      setStep((step - 1) as 1 | 2 | 3)
-    } else {
-      reset()
-      closeSheet()
-    }
+  function handleTouchEnd(e: React.TouchEvent) {
+    if (touchStartX.current === null) return
+    const delta = e.changedTouches[0].clientX - touchStartX.current
+    touchStartX.current = null
+    if (Math.abs(delta) < SWIPE_THRESHOLD) return
+    if (delta < 0 && step < 3) setStep((step + 1) as 1 | 2 | 3)
+    if (delta > 0 && step > 1) setStep((step - 1) as 1 | 2 | 3)
   }
 
   async function handleConfirmar() {
@@ -344,8 +323,16 @@ export function GastoWizard() {
     }
   }
 
+  // Indicador de pasos completados (solo visual, no bloquea navegacion)
+  const completedSteps = [
+    isStep1Valid() ? 1 : null,
+    isStep2Valid() ? 2 : null,
+    isStep3Valid() ? 3 : null,
+  ].filter(Boolean) as number[]
+
   return (
     <>
+      {/* Dialog de borrador encontrado */}
       <Dialog open={mostrarRestaurar} onOpenChange={setMostrarRestaurar}>
         <DialogContent>
           <DialogHeader>
@@ -372,68 +359,70 @@ export function GastoWizard() {
         </DialogContent>
       </Dialog>
 
-      <div className="flex flex-col gap-4">
-        <WizardStepIndicator
-          steps={STEPS}
-          currentStep={step}
-          completedSteps={
-            mostrarResumen ? [1, 2, 3] : Array.from({ length: step - 1 }, (_, i) => i + 1)
-          }
-          onStepClick={(n: number) => {
-            setMostrarResumen(false)
-            setStep(n as 1 | 2 | 3)
-          }}
-        />
+      {/* Layout fullscreen: indicador arriba, contenido scrolleable, footer fijo */}
+      <div className="flex flex-col h-full relative">
+        {/* Indicador de pasos — clic libre entre pasos */}
+        <div className="px-4 pt-3 pb-2 shrink-0">
+          <WizardStepIndicator
+            steps={STEPS}
+            currentStep={step}
+            completedSteps={completedSteps}
+            onStepClick={handleStepClick}
+          />
+        </div>
 
-        <WizardAcumulador
+        {/* Contenido del paso actual — scrolleable, swipe horizontal */}
+        <div
+          className="flex-1 overflow-y-auto px-4 pb-4"
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+        >
+          {STEP_COMPONENTS[step - 1]}
+        </div>
+
+        {/* Footer fijo: handle del panel de resumen + boton Registrar */}
+        <div className="shrink-0 border-t bg-background px-4 py-3 flex items-center gap-3">
+          {/* Boton handle para abrir/cerrar el panel de resumen */}
+          <button
+            type="button"
+            onClick={() => setResumenOpen((v) => !v)}
+            className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            aria-label={resumenOpen ? 'Cerrar resumen de abonos' : 'Ver resumen de abonos'}
+          >
+            {resumenOpen ? <CaretDown className="h-3.5 w-3.5" /> : <CaretUp className="h-3.5 w-3.5" />}
+            {pagos.length > 0 ? `${pagos.length} abono(s)` : 'Resumen'}
+          </button>
+
+          <div className="flex-1" />
+
+          {/* Boton cancelar */}
+          <Button
+            variant="secondary"
+            className="h-10 rounded-xl"
+            onClick={() => { reset(); closeSheet() }}
+          >
+            Cancelar
+          </Button>
+
+          {/* Boton procesar — se habilita solo cuando los 3 pasos son validos */}
+          <Button
+            className="h-11 rounded-xl text-base gap-2 bg-green-600 hover:bg-green-700"
+            onClick={handleConfirmar}
+            disabled={!canProcesar || guardando}
+          >
+            <CheckCircle size={16} />
+            {guardando ? 'Registrando...' : 'Registrar'}
+          </Button>
+        </div>
+
+        {/* Panel de resumen de abonos — deslizable desde el borde inferior */}
+        <PanelResumenAbonos
+          open={resumenOpen}
+          onClose={() => setResumenOpen(false)}
           lineas={acumuladorLineas}
           total={acumuladorTotal}
-          defaultCollapsed={step !== 3}
           emptyMessage="Aún no hay abonos registrados"
         />
-
-        <div className="flex-1">
-          {mostrarResumen ? (
-            <ResumenGasto
-              cuentaNombre={
-                cuentaSeleccionada ? `${cuentaSeleccionada.codigo} - ${cuentaSeleccionada.nombre}` : cuentaId
-              }
-              proveedorNombre={proveedorSeleccionado?.razon_social ?? null}
-              descripcion={descripcion.trim()}
-              fecha={fecha}
-              monedaFactura={monedaFactura}
-              totalFacturaNum={totalFacturaNum}
-              montoContableUsd={montoContableUsd}
-              pagosCount={pagos.length}
-              saldoPendienteProveedor={saldoPendienteProveedor}
-            />
-          ) : (
-            STEP_COMPONENTS[step - 1]
-          )}
-        </div>
-
-        <div className="sticky bottom-0 bg-background pt-4 pb-2 border-t flex gap-3 mt-2">
-          <Button variant="secondary" className="h-10 rounded-xl gap-2.5" onClick={goBack}>
-            <ArrowLeft size={16} />
-            {step === 1 && !mostrarResumen ? 'Cancelar' : 'Atrás'}
-          </Button>
-          <div className="flex-1" />
-          {!mostrarResumen ? (
-            <Button className="h-11 rounded-xl text-base gap-2" onClick={goNext} disabled={!canGoNext()}>
-              Continuar
-              <ArrowRight size={16} />
-            </Button>
-          ) : (
-            <Button
-              className="h-11 rounded-xl text-base gap-2 bg-green-600 hover:bg-green-700"
-              onClick={handleConfirmar}
-              disabled={guardando}
-            >
-              <CheckCircle size={16} />
-              {guardando ? 'Registrando...' : 'Registrar gasto'}
-            </Button>
-          )}
-        </div>
       </div>
     </>
   )

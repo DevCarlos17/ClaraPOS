@@ -12,10 +12,14 @@ const noSpinner =
   '[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none'
 
 /**
- * Paso 3 del wizard de gasto — Pagos/Abonos. Sin props: lee/escribe
- * `useGastoWizardStore()` directamente. La deteccion de sesion de caja
- * activa (efecto con I/O a PowerSync) vive ACA, no en el store — mismo
- * patron que `gasto-form.tsx` L368-397 (design.md Open Questions).
+ * Paso 3 del wizard de gasto (mobile fullscreen) — Abonos.
+ *
+ * Orden de campos:
+ *   1. Origen de los fondos (Sesion de caja / Tesoreria)
+ *   2. Lista de abonos: cada linea tiene [Metodo de pago | Monto] en grid 2-col
+ *      + campo de referencia condicional debajo
+ *   3. Resumen: total abonado / pendiente
+ *   4. Observaciones adicionales
  */
 export function PasoPagos() {
   const { user } = useCurrentUser()
@@ -27,6 +31,7 @@ export function PasoPagos() {
     destinoCobro,
     sesionActivaId,
     setDestinoCobro,
+    observaciones,
     monedaFactura,
     usaTasaParalela,
     tasaInterna,
@@ -34,6 +39,7 @@ export function PasoPagos() {
     montoFactura,
     tipoImpuesto,
     porcentajeIva,
+    setIdentificacion,
   } = useGastoWizardStore()
   const { metodos, isLoading: loadingMetodos } = useMetodosCxP()
   const [sesionActivaHora, setSesionActivaHora] = useState<string | null>(null)
@@ -82,12 +88,51 @@ export function PasoPagos() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pt-2">
+      {/* ── Origen de los fondos ── */}
+      <div>
+        <p className="text-xs font-medium text-muted-foreground mb-2">Origen de los fondos</p>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            disabled={!sesionActivaId}
+            onClick={() => setDestinoCobro({ destinoCobro: 'CAJA', sesionActivaId })}
+            className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-sm font-medium transition-colors ${
+              destinoCobro === 'CAJA'
+                ? 'bg-green-600 text-white border-green-600'
+                : 'bg-background border-border hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed'
+            }`}
+          >
+            <CashRegister size={15} /> Sesión de caja
+          </button>
+          <button
+            type="button"
+            onClick={() => setDestinoCobro({ destinoCobro: 'TESORERIA', sesionActivaId })}
+            className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-sm font-medium transition-colors ${
+              destinoCobro === 'TESORERIA'
+                ? 'bg-primary text-white border-primary'
+                : 'bg-background border-border hover:bg-muted'
+            }`}
+          >
+            <Vault size={15} /> Tesorería
+          </button>
+        </div>
+        {destinoCobro === 'CAJA' && sesionActivaHora && (
+          <p className="mt-1 text-[11px] text-green-600">✓ Sesión activa desde las {sesionActivaHora}</p>
+        )}
+        {!sesionActivaId && (
+          <p className="mt-1 text-[11px] text-amber-600">
+            Sin sesión de caja abierta — los pagos irán a Tesorería.
+          </p>
+        )}
+      </div>
+
+      {/* ── Header abonos + boton agregar ── */}
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-foreground">
           Abonos
           <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-            (opcional — dejar vacío para registrar a crédito)
+            (opcional — dejar vacío registra a crédito)
           </span>
         </p>
         <button
@@ -96,44 +141,8 @@ export function PasoPagos() {
           className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80 transition-colors"
         >
           <Plus className="h-3.5 w-3.5" />
-          Agregar abono
+          Agregar
         </button>
-      </div>
-
-      {/* ── ¿Dónde salen estos pagos? ── */}
-      <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">¿Dónde salen estos pagos?</label>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            disabled={!sesionActivaId}
-            onClick={() => setDestinoCobro({ destinoCobro: 'CAJA', sesionActivaId })}
-            className={`flex items-center justify-center gap-2 py-1.5 px-3 rounded-lg border text-xs font-medium transition-colors ${
-              destinoCobro === 'CAJA'
-                ? 'bg-green-600 text-white border-green-600'
-                : 'bg-background border-border hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed'
-            }`}
-          >
-            <CashRegister size={13} /> Sesión de caja
-          </button>
-          <button
-            type="button"
-            onClick={() => setDestinoCobro({ destinoCobro: 'TESORERIA', sesionActivaId })}
-            className={`flex items-center justify-center gap-2 py-1.5 px-3 rounded-lg border text-xs font-medium transition-colors ${
-              destinoCobro === 'TESORERIA'
-                ? 'bg-primary text-white border-primary'
-                : 'bg-background border-border hover:bg-muted'
-            }`}
-          >
-            <Vault size={13} /> Tesorería
-          </button>
-        </div>
-        {destinoCobro === 'CAJA' && sesionActivaHora && (
-          <p className="text-[11px] text-green-600">✓ Sesión activa desde las {sesionActivaHora}</p>
-        )}
-        {!sesionActivaId && (
-          <p className="text-[11px] text-amber-600">Sin sesión de caja abierta — los pagos irán a Tesorería.</p>
-        )}
       </div>
 
       {pagos.length === 0 && (
@@ -144,6 +153,7 @@ export function PasoPagos() {
         </div>
       )}
 
+      {/* ── Lista de abonos: metodo | monto en la misma linea ── */}
       <div className="space-y-3">
         {pagos.map((pago, index) => {
           const metodoSeleccionado = metodos.find((m) => m.id === pago.metodo_cobro_id)
@@ -163,30 +173,33 @@ export function PasoPagos() {
                 </button>
               </div>
 
-              <select
-                value={pago.metodo_cobro_id}
-                onChange={(e) => handleMetodoChange(pago.id, e.target.value)}
-                disabled={loadingMetodos}
-                className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="">{loadingMetodos ? 'Cargando...' : 'Seleccionar método'}</option>
-                {metodos.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.nombre} ({m.moneda})
-                  </option>
-                ))}
-              </select>
+              {/* Metodo | Monto en misma linea */}
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={pago.metodo_cobro_id}
+                  onChange={(e) => handleMetodoChange(pago.id, e.target.value)}
+                  disabled={loadingMetodos}
+                  className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">{loadingMetodos ? 'Cargando...' : 'Método'}</option>
+                  {metodos.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.nombre} ({m.moneda})
+                    </option>
+                  ))}
+                </select>
 
-              <input
-                type="number"
-                step="0.01"
-                min="0.01"
-                value={pago.monto}
-                onChange={(e) => actualizarPago(pago.id, 'monto', e.target.value)}
-                onWheel={(e) => (e.target as HTMLInputElement).blur()}
-                placeholder={`Monto ${pago.moneda}`}
-                className={`w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner}`}
-              />
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={pago.monto}
+                  onChange={(e) => actualizarPago(pago.id, 'monto', e.target.value)}
+                  onWheel={(e) => (e.target as HTMLInputElement).blur()}
+                  placeholder={`Monto ${pago.moneda}`}
+                  className={`w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner}`}
+                />
+              </div>
 
               {requiereReferencia && (
                 <input
@@ -202,32 +215,60 @@ export function PasoPagos() {
         })}
       </div>
 
+      {/* ── Resumen: total abonado / pendiente ── */}
       {pagos.length > 0 && montoProveedorUsd !== null && montoProveedorUsd > 0 && (
         <div
-          className={`rounded-md px-3 py-2 text-xs flex justify-between items-center ${
+          className={`rounded-xl px-4 py-3 space-y-1.5 text-sm border ${
             pagosSuperanTotal
-              ? 'bg-destructive/10 border border-destructive/30 text-destructive'
+              ? 'bg-destructive/10 border-destructive/30'
               : saldoPendienteProveedor < 0.01
-                ? 'bg-green-50 border border-green-200 text-green-700 dark:bg-green-950/30 dark:border-green-800 dark:text-green-400'
-                : 'bg-muted/50 border border-border text-muted-foreground'
+                ? 'bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800'
+                : 'bg-muted/50 border-border'
           }`}
         >
-          <span>Abonado: {formatUsd(totalAbonadoProveedorUsd)}</span>
-          <span className="font-semibold text-foreground">Total: {formatUsd(montoProveedorUsd)}</span>
-          <span className={pagosSuperanTotal ? 'font-medium' : ''}>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Total factura:</span>
+            <span className="font-semibold text-foreground tabular-nums">{formatUsd(montoProveedorUsd)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Total abonado:</span>
+            <span className="font-semibold text-foreground tabular-nums">{formatUsd(totalAbonadoProveedorUsd)}</span>
+          </div>
+          <div className="flex justify-between border-t pt-1.5 mt-0.5 font-bold text-base">
             {pagosSuperanTotal ? (
-              <span className="inline-flex items-center gap-1">
-                <Warning className="h-3.5 w-3.5" />
-                Excede {formatUsd(totalAbonadoProveedorUsd - montoProveedorUsd)}
-              </span>
+              <>
+                <span className="text-destructive flex items-center gap-1">
+                  <Warning className="h-4 w-4" /> Excede
+                </span>
+                <span className="text-destructive tabular-nums">
+                  {formatUsd(totalAbonadoProveedorUsd - montoProveedorUsd)}
+                </span>
+              </>
             ) : saldoPendienteProveedor < 0.01 ? (
-              'Cancelado'
+              <span className="text-green-700 dark:text-green-400 w-full text-center">Cancelado ✓</span>
             ) : (
-              `Pendiente: ${formatUsd(saldoPendienteProveedor)}`
+              <>
+                <span className="text-foreground">Pendiente:</span>
+                <span className="text-foreground tabular-nums">{formatUsd(saldoPendienteProveedor)}</span>
+              </>
             )}
-          </span>
+          </div>
         </div>
       )}
+
+      {/* ── Observaciones adicionales ── */}
+      <div>
+        <label className="block text-xs font-medium text-muted-foreground mb-1">
+          Observaciones <span className="font-normal opacity-60">(opcional)</span>
+        </label>
+        <textarea
+          value={observaciones}
+          onChange={(e) => setIdentificacion({ observaciones: e.target.value })}
+          placeholder="Notas adicionales..."
+          rows={2}
+          className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+        />
+      </div>
     </div>
   )
 }

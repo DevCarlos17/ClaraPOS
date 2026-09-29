@@ -182,17 +182,27 @@ export const useGastoWizardStore = create<GastoWizardState>()((set, get) => ({
   setDestinoCobro: (patch) => set(patch),
 
   isStep1Valid: () => {
-    const { cuentaId, descripcion, fecha } = get()
-    return Boolean(cuentaId) && descripcion.trim() !== '' && Boolean(fecha)
+    // Paso 1 (Identificacion): fecha obligatoria + tasa interna obligatoria
+    // + tasa proveedor si usa tasa paralela. Proveedor/nroFactura/nroControl
+    // son opcionales. Cuenta contable se movio al Paso 2.
+    const { fecha, tasaInterna, usaTasaParalela, tasaProveedor } = get()
+    const tasaInternaNum = parseFloat(tasaInterna) || 0
+    const tasaProveedorNum = parseFloat(tasaProveedor) || 0
+    if (!fecha || tasaInternaNum <= 0) return false
+    if (usaTasaParalela && tasaProveedorNum <= 0) return false
+    return true
   },
 
   isStep2Valid: () => {
-    const { montoFactura, tasaInterna, usaTasaParalela, tasaProveedor, tipoImpuesto, porcentajeIva } = get()
+    // Paso 2 (Monto): cuenta contable + monto + tasa interna ya validada en
+    // paso 1 pero se re-chequea por si el usuario llega sin pasar por paso 1.
+    const { cuentaId, montoFactura, tasaInterna, usaTasaParalela, tasaProveedor, tipoImpuesto, porcentajeIva } = get()
     const montoFacturaNum = parseFloat(montoFactura) || 0
     const tasaInternaNum = parseFloat(tasaInterna) || 0
     const tasaProveedorNum = parseFloat(tasaProveedor) || 0
     const porcentajeIvaNum = parseFloat(porcentajeIva) || 0
 
+    if (!cuentaId) return false
     if (montoFacturaNum <= 0 || tasaInternaNum <= 0) return false
     if (usaTasaParalela && tasaProveedorNum <= 0) return false
     if (tipoImpuesto === 'Gravable' && porcentajeIvaNum <= 0) return false
