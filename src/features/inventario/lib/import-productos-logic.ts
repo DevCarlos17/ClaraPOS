@@ -163,3 +163,82 @@ export function validarPreciosMergeados(merged: MergedPrecios, columnasPresentes
 
   return errores
 }
+
+/** Deposito activo minimo necesario para resolver la columna `deposito` de una fila (PR3b). */
+export interface DepositoParaResolucion {
+  id: string
+  nombre: string
+}
+
+export interface ResolverDepositoFilaResult {
+  /** Presente cuando la fila DEBE actualizar/asignar un deposito (CREAR siempre,
+   * ACTUALIZAR solo si la celda vino tocada con un nombre valido). Ausente = no tocar. */
+  deposito_id?: string
+  error?: string
+}
+
+/**
+ * spec-pr3 R9-R11 (PR3b): resuelve la columna `deposito` (opcional, ya
+ * normalizada `.trim().toUpperCase()` por el llamador) de UNA fila contra la
+ * lista de depositos ACTIVOS de la empresa (`depositosActivos`, ya filtrada
+ * por el llamador via `useDepositosActivos()` — R17, esta funcion NO filtra
+ * por `is_active` de nuevo).
+ *
+ * - Celda tocada (columna presente en el header Y celda no vacia) con nombre
+ *   EXACTO encontrado -> `{ deposito_id }` (aplica a CREAR y a ACTUALIZAR por
+ *   igual: R11 permite cambiar el deposito default de un producto existente).
+ * - Celda tocada sin coincidencia -> error de fila (R9), mismo patron que el
+ *   error de `departamento`.
+ * - Celda NO tocada (columna ausente O celda vacia — equivalentes, mismo
+ *   criterio que R7) en fila CREAR -> fallback al deposito principal
+ *   (`principalId`, ya resuelto UNA vez por el llamador antes de la tx —
+ *   equivalente a `resolveDepositoIngreso(null, principalId)` de
+ *   `stock-deposito.ts`, reimplementado aqui para no importar ese modulo —
+ *   que trae PowerSync a nivel de modulo — en este archivo puro). Si no hay
+ *   principal (`null`), retorna `{}` (sin deposito_id, sin error): el
+ *   llamador (`ejecutarStockInicialImport`) ya maneja el caso "empresa sin
+ *   depositos activos" para el batch de stock (spec-pr1 R5).
+ * - Celda NO tocada en fila ACTUALIZAR -> `{}` (NUNCA toca
+ *   `producto.deposito_id` existente, R11).
+ */
+export function resolverDepositoFila(
+  celda: string,
+  accion: AccionFila,
+  columnasPresentes: ColumnasPresentes,
+  depositosActivos: DepositoParaResolucion[],
+  principalId: string | null
+): ResolverDepositoFilaResult {
+  const tocado = columnasPresentes.has('deposito') && celda.trim() !== ''
+
+  if (tocado) {
+    const match = depositosActivos.find((d) => d.nombre === celda)
+    if (!match) {
+      return { error: `deposito "${celda}" no existe o no esta activo` }
+    }
+    return { deposito_id: match.id }
+  }
+
+  if (accion === 'CREAR') {
+    return principalId ? { deposito_id: principalId } : {}
+  }
+
+  return {}
+}
+
+/**
+ * spec-pr3 R12 (PR3b): decide si la celda `stock_inicial` de una fila
+ * `ACTUALIZAR` debe IGNORARSE (no genera movimiento de kardex, la fila sigue
+ * VALIDA — solo una advertencia no bloqueante en el preview). El stock de un
+ * producto EXISTENTE nunca se mueve via import (regla de negocio #3,
+ * Kardex-only) — el ajuste masivo de stock es responsabilidad del modulo
+ * Ajustes, fuera de alcance de PR3 (`spec-pr3.md`, "Fuera de Alcance").
+ *
+ * `'0'`/vacio NO cuenta como intento de mover stock (nada que ignorar):
+ * mismo criterio de "valor > 0" que ya usa `validateRowCrear` para
+ * `stock_inicial`.
+ */
+export function debeIgnorarStockInicial(accion: AccionFila, stockInicialCell: string): boolean {
+  if (accion !== 'ACTUALIZAR') return false
+  const valor = parseFloat(stockInicialCell)
+  return !isNaN(valor) && valor > 0
+}

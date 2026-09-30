@@ -1,7 +1,9 @@
 import {
   clasificarAccionFila,
+  debeIgnorarStockInicial,
   detectarColumnasPresentes,
   mergearProductoParaUpdate,
+  resolverDepositoFila,
   validarFormatoPreciosTocados,
   validarPreciosMergeados,
 } from '../import-productos-logic'
@@ -185,5 +187,87 @@ describe('validarFormatoPreciosTocados (guard NaN extraido de validateRowActuali
     const row = { costo_usd: 'abc', precio_venta_usd: '', precio_mayor_usd: '' }
 
     expect(validarFormatoPreciosTocados(row, columnas)).toEqual([])
+  })
+})
+
+describe('resolverDepositoFila (spec-pr3 R9-R11, PR3b)', () => {
+  const depositosActivos = [
+    { id: 'dep-1', nombre: 'SUCURSAL NORTE' },
+    { id: 'dep-2', nombre: 'SUCURSAL SUR' },
+  ]
+
+  it('SC11: celda con nombre exacto de un deposito activo => deposito_id apunta a ese deposito, sin error', () => {
+    const columnas = detectarColumnasPresentes(['deposito'])
+
+    const result = resolverDepositoFila('SUCURSAL NORTE', 'CREAR', columnas, depositosActivos, null)
+
+    expect(result).toEqual({ deposito_id: 'dep-1' })
+  })
+
+  it('SC12: celda sin coincidencia contra depositos activos => error de fila nombrando la celda', () => {
+    const columnas = detectarColumnasPresentes(['deposito'])
+
+    const result = resolverDepositoFila('BODEGA FANTASMA', 'CREAR', columnas, depositosActivos, null)
+
+    expect(result.deposito_id).toBeUndefined()
+    expect(result.error).toBe('deposito "BODEGA FANTASMA" no existe o no esta activo')
+  })
+
+  it('SC13: fila CREAR con celda vacia y columna deposito ausente del header => fallback al deposito principal resuelto', () => {
+    const columnas = detectarColumnasPresentes(['codigo', 'nombre'])
+
+    const result = resolverDepositoFila('', 'CREAR', columnas, depositosActivos, 'dep-principal')
+
+    expect(result).toEqual({ deposito_id: 'dep-principal' })
+  })
+
+  it('triangulacion: fila CREAR con columna deposito presente pero celda vacia => tambien cae al principal (ausente y vacio son equivalentes)', () => {
+    const columnas = detectarColumnasPresentes(['deposito'])
+
+    const result = resolverDepositoFila('', 'CREAR', columnas, depositosActivos, 'dep-principal')
+
+    expect(result).toEqual({ deposito_id: 'dep-principal' })
+  })
+
+  it('SC14: fila ACTUALIZAR con celda vacia => no se resuelve ningun deposito_id (no tocar producto.deposito_id existente)', () => {
+    const columnas = detectarColumnasPresentes(['codigo', 'deposito'])
+
+    const result = resolverDepositoFila('', 'ACTUALIZAR', columnas, depositosActivos, 'dep-principal')
+
+    expect(result).toEqual({})
+  })
+
+  it('triangulacion: fila CREAR sin deposito principal resuelto (empresa sin depositos activos) y celda vacia => sin deposito_id ni error', () => {
+    const columnas = detectarColumnasPresentes(['codigo'])
+
+    const result = resolverDepositoFila('', 'CREAR', columnas, [], null)
+
+    expect(result).toEqual({})
+  })
+
+  it('triangulacion: fila ACTUALIZAR con celda valida => SI se resuelve deposito_id (cambia el default, R11)', () => {
+    const columnas = detectarColumnasPresentes(['deposito'])
+
+    const result = resolverDepositoFila('SUCURSAL SUR', 'ACTUALIZAR', columnas, depositosActivos, 'dep-1')
+
+    expect(result).toEqual({ deposito_id: 'dep-2' })
+  })
+})
+
+describe('debeIgnorarStockInicial (spec-pr3 R12, PR3b)', () => {
+  it('SC16: fila ACTUALIZAR con stock_inicial > 0 => true (se ignora, advertencia no bloqueante)', () => {
+    expect(debeIgnorarStockInicial('ACTUALIZAR', '50')).toBe(true)
+  })
+
+  it('fila ACTUALIZAR con stock_inicial vacio => false (nada que ignorar)', () => {
+    expect(debeIgnorarStockInicial('ACTUALIZAR', '')).toBe(false)
+  })
+
+  it('triangulacion: fila ACTUALIZAR con stock_inicial="0" => false (cero no cuenta como intento de mover stock)', () => {
+    expect(debeIgnorarStockInicial('ACTUALIZAR', '0')).toBe(false)
+  })
+
+  it('triangulacion: fila CREAR con stock_inicial > 0 => false (la regla solo aplica a ACTUALIZAR, en CREAR se usa normalmente)', () => {
+    expect(debeIgnorarStockInicial('CREAR', '50')).toBe(false)
   })
 })
