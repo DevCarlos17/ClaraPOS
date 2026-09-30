@@ -21,7 +21,8 @@ import {
   type Producto,
 } from '@/features/inventario/hooks/use-productos'
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
-import { useDepositos } from '@/features/inventario/hooks/use-depositos'
+import { useDepositos, useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
+import { useExistenciasPorDeposito } from '@/features/inventario/hooks/use-inventario-stock'
 import { useTodasLasRecetas } from '@/features/inventario/hooks/use-recetas'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
@@ -56,6 +57,8 @@ export function ProductoList() {
   // deposito_id apuntando a uno desactivado y aun asi debe mostrar su nombre
   // real en la columna, no '-'. Mismo criterio que useDepartamentos (no-activos).
   const { depositos } = useDepositos()
+  const { depositos: depositosActivos } = useDepositosActivos()
+  const { rows: existenciasRows } = useExistenciasPorDeposito()
   const { tasaValor } = useTasaActual()
   const { valorTotal, stockCritico } = useResumenInventario()
   const { recetas } = useTodasLasRecetas()
@@ -206,7 +209,10 @@ export function ProductoList() {
       toast.error('No hay productos para exportar')
       return
     }
-    exportarProductosCsv(productos, departamentos, recetas, productosMap)
+    exportarProductosCsv(productos, departamentos, depositos, recetas, productosMap, {
+      rows: existenciasRows,
+      depositosActivos,
+    })
     toast.success('Inventario exportado a CSV')
     setExportMenuOpen(false)
   }
@@ -216,7 +222,10 @@ export function ProductoList() {
       toast.error('No hay productos para exportar')
       return
     }
-    exportarProductosExcel(productos, departamentos, recetas, productosMap)
+    exportarProductosExcel(productos, departamentos, depositos, recetas, productosMap, {
+      rows: existenciasRows,
+      depositosActivos,
+    })
     toast.success('Inventario exportado a Excel')
     setExportMenuOpen(false)
   }

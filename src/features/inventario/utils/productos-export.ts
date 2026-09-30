@@ -3,6 +3,9 @@ import { todayStr } from '@/lib/dates'
 import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
 import type { Receta } from '@/features/inventario/hooks/use-recetas'
+import type { Deposito } from '@/features/inventario/hooks/use-depositos'
+import type { ExistenciaRow } from '@/features/inventario/hooks/use-inventario-stock'
+import { ordenarDepositosColumnas } from '@/features/inventario/lib/existencias-pivot'
 
 // Columnas del formato de importacion/exportacion (identicas para facilitar re-importacion)
 const COLUMNAS = [
@@ -15,6 +18,7 @@ const COLUMNAS = [
   'precio_mayor_usd',
   'stock_minimo',
   'tipo_impuesto',
+  'deposito',
 ] as const
 
 interface ExportRow {
@@ -27,6 +31,7 @@ interface ExportRow {
   precio_mayor_usd: number | null
   stock_minimo: number
   tipo_impuesto: string
+  deposito: string
 }
 
 interface ComponenteRow {
@@ -37,9 +42,23 @@ interface ComponenteRow {
   cantidad: number
 }
 
-function buildRows(productos: Producto[], departamentos: Departamento[]): ExportRow[] {
+/**
+ * Construye las filas de la hoja/CSV "Inventario". `depositos` MUST ser la
+ * lista COMPLETA de depositos de la empresa (`useDepositos()`, no
+ * `useDepositosActivos()`) para que un `producto.deposito_id` apuntando a un
+ * deposito hoy inactivo siga resolviendo su nombre — mismo criterio que
+ * `depMap` con departamentos (spec-pr2 R1).
+ */
+export function buildRows(
+  productos: Producto[],
+  departamentos: Departamento[],
+  depositos: Deposito[]
+): ExportRow[] {
   const depMap = new Map<string, string>()
   for (const d of departamentos) depMap.set(d.id, d.nombre)
+
+  const depositoMap = new Map<string, string>()
+  for (const d of depositos) depositoMap.set(d.id, d.nombre)
 
   // Exportar P, S y C — todos incluidos en la hoja principal
   return productos.map((p) => ({
@@ -52,6 +71,7 @@ function buildRows(productos: Producto[], departamentos: Departamento[]): Export
       precio_mayor_usd: p.precio_mayor_usd ? parseFloat(p.precio_mayor_usd) : null,
       stock_minimo: parseFloat(p.stock_minimo),
       tipo_impuesto: p.tipo_impuesto,
+      deposito: depositoMap.get(p.deposito_id ?? '') ?? '',
     }))
 }
 
@@ -81,6 +101,86 @@ function buildComponenteRows(
   return rows
 }
 
+/**
+ * Matriz producto x deposito para la hoja/seccion informativa "Existencias
+ * por Deposito" (spec-pr2 R3, R4). Funcion pura: no ejecuta queries ni
+ * resuelve `empresa_id` — consume `rows` (ya pivotadas por
+ * `useExistenciasPorDeposito`) y `depositosOrdenados` (ya ordenados por
+ * `ordenarDepositosColumnas` sobre depositos ACTIVOS, reutilizada de
+ * `existencias-pivot.ts` sin reimplementar el criterio principal-primero).
+ * Ausencia de la clave en `cantidadPorDeposito` -> `'0.000'`.
+ */
+export function buildExistenciasSheet(
+  rows: ExistenciaRow[],
+  depositosOrdenados: { id: string; nombre: string }[]
+): string[][] {
+  const header = ['codigo', 'nombre', ...depositosOrdenados.map((d) => d.nombre)]
+  const dataRows = rows.map((r) => [
+    r.codigo,
+    r.nombre,
+    ...depositosOrdenados.map((d) => r.cantidadPorDeposito[d.id] ?? '0.000'),
+  ])
+  return [header, ...dataRows]
+}
+
+/**
+ * Construye el `XLSX.WorkBook` completo del export de inventario (mismo
+ * patron de extraccion pura y testeable que `buildPlantillaWorkbook` de
+ * PR1). Las hojas 'Componentes Combos' y 'Existencias por Deposito' se
+ * agregan SIEMPRE (aunque vacias, con solo header) para mantener el
+ * `SheetNames` en el orden fijo `['Inventario', 'Componentes Combos',
+ * 'Existencias por Deposito']` — invariante critica de round-trip (spec-pr2
+ * R6): el import lee `workbook.SheetNames[1]` por INDICE asumiendo
+ * ciegamente que es 'Componentes Combos', sin verificar el nombre de la
+ * hoja. Si 'Existencias por Deposito' ocupara el indice 1 por ausencia de
+ * combos, una reimportacion del propio export generaria filas de
+ * "componentes" fantasma con `combo_codigo` vacio.
+ */
+export function buildInventarioWorkbook(
+  rows: ExportRow[],
+  componenteRows: ComponenteRow[],
+  existenciasSheetData: string[][]
+): XLSX.WorkBook {
+  const workbook = XLSX.utils.book_new()
+
+  // Hoja 1: Inventario (P, S y C) - formato identico al de importacion
+  const worksheet = XLSX.utils.json_to_sheet(rows, { header: [...COLUMNAS] })
+  worksheet['!cols'] = [
+    { wch: 14 }, // codigo
+    { wch: 6 },  // tipo
+    { wch: 32 }, // nombre
+    { wch: 14 }, // departamento
+    { wch: 12 }, // costo
+    { wch: 14 }, // precio_venta
+    { wch: 14 }, // precio_mayor
+    { wch: 14 }, // stock_minimo
+    { wch: 14 }, // tipo_impuesto
+    { wch: 16 }, // deposito
+  ]
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventario')
+
+  // Hoja 2: Componentes de combos — SIEMPRE se agrega (aunque vacia) para
+  // preservar el indice 1 (ver docstring de la funcion).
+  const wsComponentes = XLSX.utils.json_to_sheet(componenteRows, {
+    header: ['combo_codigo', 'combo_nombre', 'componente_codigo', 'componente_nombre', 'cantidad'],
+  })
+  wsComponentes['!cols'] = [
+    { wch: 14 },
+    { wch: 28 },
+    { wch: 14 },
+    { wch: 28 },
+    { wch: 10 },
+  ]
+  XLSX.utils.book_append_sheet(workbook, wsComponentes, 'Componentes Combos')
+
+  // Hoja 3: Existencias por Deposito — informativa, nunca leida por el
+  // import (SIEMPRE se agrega, incluso con solo header).
+  const wsExistencias = XLSX.utils.aoa_to_sheet(existenciasSheetData)
+  XLSX.utils.book_append_sheet(workbook, wsExistencias, 'Existencias por Deposito')
+
+  return workbook
+}
+
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -95,10 +195,15 @@ function triggerDownload(blob: Blob, filename: string) {
 export function exportarProductosCsv(
   productos: Producto[],
   departamentos: Departamento[],
+  depositos: Deposito[] = [],
   recetas: Receta[] = [],
-  productosMap: Map<string, Producto> = new Map()
+  productosMap: Map<string, Producto> = new Map(),
+  existencias: { rows: ExistenciaRow[]; depositosActivos: Deposito[] } = {
+    rows: [],
+    depositosActivos: [],
+  }
 ) {
-  const rows = buildRows(productos, departamentos)
+  const rows = buildRows(productos, departamentos, depositos)
   const componenteRows = buildComponenteRows(productos, recetas, productosMap)
 
   const escape = (val: unknown): string => {
@@ -129,6 +234,19 @@ export function exportarProductosCsv(
     }
   }
 
+  // Seccion informativa de existencias por deposito, despues de combos
+  // (spec-pr2 R7) — reutiliza buildExistenciasSheet, mismo patron de
+  // marcador que combos.
+  const existenciasSheetData = buildExistenciasSheet(
+    existencias.rows,
+    ordenarDepositosColumnas(existencias.depositosActivos)
+  )
+  csvLines.push('')
+  csvLines.push('# EXISTENCIAS POR DEPOSITO (informativo - no importable)')
+  for (const r of existenciasSheetData) {
+    csvLines.push(r.map((v) => escape(v)).join(','))
+  }
+
   const csv = '\uFEFF' + csvLines.join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
   triggerDownload(blob, `inventario_${todayStr()}.csv`)
@@ -137,43 +255,22 @@ export function exportarProductosCsv(
 export function exportarProductosExcel(
   productos: Producto[],
   departamentos: Departamento[],
+  depositos: Deposito[] = [],
   recetas: Receta[] = [],
-  productosMap: Map<string, Producto> = new Map()
-) {
-  const rows = buildRows(productos, departamentos)
-  const componenteRows = buildComponenteRows(productos, recetas, productosMap)
-
-  const workbook = XLSX.utils.book_new()
-
-  // Hoja 1: Inventario (P y S) - formato identico al de importacion
-  const worksheet = XLSX.utils.json_to_sheet(rows, { header: [...COLUMNAS] })
-  worksheet['!cols'] = [
-    { wch: 14 }, // codigo
-    { wch: 6 },  // tipo
-    { wch: 32 }, // nombre
-    { wch: 14 }, // departamento
-    { wch: 12 }, // costo
-    { wch: 14 }, // precio_venta
-    { wch: 14 }, // precio_mayor
-    { wch: 14 }, // stock_minimo
-    { wch: 14 }, // tipo_impuesto
-  ]
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventario')
-
-  // Hoja 2: Componentes de combos (si existen)
-  if (componenteRows.length > 0) {
-    const wsComponentes = XLSX.utils.json_to_sheet(componenteRows, {
-      header: ['combo_codigo', 'combo_nombre', 'componente_codigo', 'componente_nombre', 'cantidad'],
-    })
-    wsComponentes['!cols'] = [
-      { wch: 14 },
-      { wch: 28 },
-      { wch: 14 },
-      { wch: 28 },
-      { wch: 10 },
-    ]
-    XLSX.utils.book_append_sheet(workbook, wsComponentes, 'Componentes Combos')
+  productosMap: Map<string, Producto> = new Map(),
+  existencias: { rows: ExistenciaRow[]; depositosActivos: Deposito[] } = {
+    rows: [],
+    depositosActivos: [],
   }
+) {
+  const rows = buildRows(productos, departamentos, depositos)
+  const componenteRows = buildComponenteRows(productos, recetas, productosMap)
+  const existenciasSheetData = buildExistenciasSheet(
+    existencias.rows,
+    ordenarDepositosColumnas(existencias.depositosActivos)
+  )
+
+  const workbook = buildInventarioWorkbook(rows, componenteRows, existenciasSheetData)
 
   const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' })
   const blob = new Blob([excelBuffer], {
