@@ -85,6 +85,35 @@ export function mergearProductoParaUpdate(
   return { costo, venta, mayor }
 }
 
+/**
+ * spec-pr3 R7 (guard financiero, extraido de `validateRowActualizar`): valida
+ * el FORMATO numerico de las celdas de precio tocadas (columna presente en el
+ * header Y celda no vacia) de una fila `ACTUALIZAR`, ANTES de fusionar con
+ * `mergearProductoParaUpdate`. Sin este guard, una celda no numerica produce
+ * `NaN` al parsear, y las comparaciones de `validarPreciosMergeados`
+ * (`NaN >= x`, `NaN > x`) son siempre `false` — la fila invalida pasaria la
+ * regla de negocio #7 silenciosamente. Columna ausente o celda vacia = no
+ * tocada = sin error (misma semantica de "tocado" que el resto de R7).
+ */
+export function validarFormatoPreciosTocados(row: RowPreciosInput, columnasPresentes: ColumnasPresentes): string[] {
+  const errores: string[] = []
+
+  if (columnasPresentes.has('costo_usd') && row.costo_usd.trim() !== '') {
+    const costo = parseFloat(row.costo_usd)
+    if (isNaN(costo) || costo < 0) errores.push('costo_usd invalido')
+  }
+  if (columnasPresentes.has('precio_venta_usd') && row.precio_venta_usd.trim() !== '') {
+    const venta = parseFloat(row.precio_venta_usd)
+    if (isNaN(venta) || venta < 0) errores.push('precio_venta_usd invalido')
+  }
+  if (columnasPresentes.has('precio_mayor_usd') && row.precio_mayor_usd.trim() !== '') {
+    const mayor = parseFloat(row.precio_mayor_usd)
+    if (isNaN(mayor) || mayor < 0) errores.push('precio_mayor_usd invalido')
+  }
+
+  return errores
+}
+
 function mensajeVentaMenorQueCosto(merged: MergedPrecios, columnasPresentes: ColumnasPresentes): string {
   const costoTocado = columnasPresentes.has('costo_usd')
   const ventaTocada = columnasPresentes.has('precio_venta_usd')

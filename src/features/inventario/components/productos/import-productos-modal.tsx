@@ -15,6 +15,7 @@ import {
   clasificarAccionFila,
   detectarColumnasPresentes,
   mergearProductoParaUpdate,
+  validarFormatoPreciosTocados,
   validarPreciosMergeados,
   type AccionFila,
   type ColumnasPresentes,
@@ -249,18 +250,11 @@ export function ImportProductosModal({
     // Formato numerico de las celdas tocadas ANTES de fusionar — sin este guard,
     // un NaN (celda no numerica) haria que las comparaciones de validarPreciosMergeados
     // sean siempre `false` y la fila pasaria invalidamente (simetria con validateRowCrear).
-    if (columnasPresentes.has('costo_usd') && row.costo_usd.trim() !== '') {
-      const costo = parseFloat(row.costo_usd)
-      if (isNaN(costo) || costo < 0) errors.push('costo_usd invalido')
-    }
-    if (columnasPresentes.has('precio_venta_usd') && row.precio_venta_usd.trim() !== '') {
-      const venta = parseFloat(row.precio_venta_usd)
-      if (isNaN(venta) || venta < 0) errors.push('precio_venta_usd invalido')
-    }
-    if (columnasPresentes.has('precio_mayor_usd') && row.precio_mayor_usd.trim() !== '') {
-      const mayor = parseFloat(row.precio_mayor_usd)
-      if (isNaN(mayor) || mayor < 0) errors.push('precio_mayor_usd invalido')
-    }
+    // Extraido a funcion pura y testeada: import-productos-logic.ts.
+    errors.push(...validarFormatoPreciosTocados(
+      { costo_usd: row.costo_usd, precio_venta_usd: row.precio_venta_usd, precio_mayor_usd: row.precio_mayor_usd },
+      columnasPresentes
+    ))
 
     const merged = mergearProductoParaUpdate(
       { costo_usd: row.costo_usd, precio_venta_usd: row.precio_venta_usd, precio_mayor_usd: row.precio_mayor_usd },

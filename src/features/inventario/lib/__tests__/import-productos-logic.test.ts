@@ -2,6 +2,7 @@ import {
   clasificarAccionFila,
   detectarColumnasPresentes,
   mergearProductoParaUpdate,
+  validarFormatoPreciosTocados,
   validarPreciosMergeados,
 } from '../import-productos-logic'
 
@@ -140,5 +141,49 @@ describe('validarPreciosMergeados (spec-pr3 R8, LOCKED — merge-then-validate r
     expect(errors).toHaveLength(1)
     expect(errors[0]).toContain('costo_usd')
     expect(errors[0]).toContain('precio_venta_usd')
+  })
+})
+
+describe('validarFormatoPreciosTocados (guard NaN extraido de validateRowActualizar — ACTUALIZAR, financiero)', () => {
+  it('celda numerica valida en columna presente => sin errores', () => {
+    const columnas = detectarColumnasPresentes(['costo_usd'])
+    const row = { costo_usd: '10.50', precio_venta_usd: '', precio_mayor_usd: '' }
+
+    expect(validarFormatoPreciosTocados(row, columnas)).toEqual([])
+  })
+
+  it('celda no numerica en columna presente+no-vacia => error "costo_usd invalido" (sin el guard, NaN haria que las comparaciones de validarPreciosMergeados sean siempre false)', () => {
+    const columnas = detectarColumnasPresentes(['costo_usd'])
+    const row = { costo_usd: 'abc', precio_venta_usd: '', precio_mayor_usd: '' }
+
+    expect(validarFormatoPreciosTocados(row, columnas)).toEqual(['costo_usd invalido'])
+  })
+
+  it('triangulacion: precio_venta_usd no numerico en columna presente+no-vacia => error "precio_venta_usd invalido"', () => {
+    const columnas = detectarColumnasPresentes(['precio_venta_usd'])
+    const row = { costo_usd: '', precio_venta_usd: 'xyz', precio_mayor_usd: '' }
+
+    expect(validarFormatoPreciosTocados(row, columnas)).toEqual(['precio_venta_usd invalido'])
+  })
+
+  it('triangulacion: precio_mayor_usd negativo en columna presente+no-vacia => error "precio_mayor_usd invalido"', () => {
+    const columnas = detectarColumnasPresentes(['precio_mayor_usd'])
+    const row = { costo_usd: '', precio_venta_usd: '', precio_mayor_usd: '-5' }
+
+    expect(validarFormatoPreciosTocados(row, columnas)).toEqual(['precio_mayor_usd invalido'])
+  })
+
+  it('celda vacia en columna presente => no tocada, sin error (aunque la columna este en el header)', () => {
+    const columnas = detectarColumnasPresentes(['costo_usd'])
+    const row = { costo_usd: '', precio_venta_usd: '', precio_mayor_usd: '' }
+
+    expect(validarFormatoPreciosTocados(row, columnas)).toEqual([])
+  })
+
+  it('columna ausente del header con valor no numerico en la fila => sin error (no se evalua, no esta tocada)', () => {
+    const columnas = detectarColumnasPresentes(['nombre'])
+    const row = { costo_usd: 'abc', precio_venta_usd: '', precio_mayor_usd: '' }
+
+    expect(validarFormatoPreciosTocados(row, columnas)).toEqual([])
   })
 })
