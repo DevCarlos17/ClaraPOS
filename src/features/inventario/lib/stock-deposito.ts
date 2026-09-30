@@ -347,7 +347,7 @@ export async function resolverDepositoPrincipalActivo(empresa_id: string): Promi
     'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
     [empresa_id]
   )
-  if (principalRes.rows?.length) {
+  if (principalRes?.rows?.length) {
     return (principalRes.rows.item(0) as { id: string }).id
   }
 
@@ -355,7 +355,7 @@ export async function resolverDepositoPrincipalActivo(empresa_id: string): Promi
     'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
     [empresa_id]
   )
-  if (fallbackRes.rows?.length) {
+  if (fallbackRes?.rows?.length) {
     return (fallbackRes.rows.item(0) as { id: string }).id
   }
 
@@ -365,11 +365,21 @@ export async function resolverDepositoPrincipalActivo(empresa_id: string): Promi
 export interface EntradaInicialImport {
   producto_id: string
   cantidad: number
+  /**
+   * Deposito RESUELTO por el caller para esta fila especifica (spec-pr3 R10,
+   * PR3b) — antes de PR3b el batch completo usaba un unico `deposito_id`
+   * global (`RegistrarEntradasInicialesBatchParams.deposito_id`, ya removido).
+   * Opcional a este nivel: si una entrada llega sin resolver,
+   * `ejecutarStockInicialImport` la completa con el deposito principal de la
+   * empresa (resuelto UNA sola vez, cacheado, no una vez por fila — R15).
+   * `registrarEntradasInicialesBatch` en cambio EXIGE que ya venga resuelto
+   * (invariante de esta capa — ver su docstring).
+   */
+  deposito_id?: string
 }
 
 export interface RegistrarEntradasInicialesBatchParams {
   entradas: EntradaInicialImport[]
-  deposito_id: string
   usuario_id: string
   empresa_id: string
 }
@@ -398,15 +408,35 @@ const MOTIVO_INVENTARIO_INICIAL = 'INVENTARIO INICIAL'
  * Todo-o-nada (spec-pr1 R6): si cualquier entrada lanza, la promesa de
  * `db.writeTransaction` rechaza y ninguna fila queda persistida — no hay
  * try/catch por entrada, deliberadamente.
+ *
+ * Deposito POR FILA (spec-pr3 R15, PR3b): cada `entrada.deposito_id` MUST
+ * venir YA resuelto por el caller ANTES de abrir esta transaccion (el
+ * caller tipico es `ejecutarStockInicialImport`, que resuelve el fallback de
+ * deposito principal UNA sola vez para las entradas que no traen el suyo
+ * propio — nunca aqui, y nunca por fila). Este helper NO resuelve ningun
+ * deposito por si mismo — lanza si una entrada llega sin `deposito_id`, para
+ * que un caller directo (bypaseando `ejecutarStockInicialImport`) no inserte
+ * silenciosamente un movimiento con deposito indefinido.
+ *
+ * Contrato (SC21): este helper tampoco filtra por tipo de fila — asume que
+ * TODAS las `entradas` recibidas deben alimentar el batch. Es responsabilidad
+ * exclusiva del caller (el modal de import) NUNCA incluir aqui filas
+ * `ACTUALIZAR` (R11/R12: el stock de un producto existente jamas se mueve
+ * via esta columna).
  */
 export async function registrarEntradasInicialesBatch(
   params: RegistrarEntradasInicialesBatchParams
 ): Promise<RegistrarEntradasInicialesBatchResult> {
-  const { entradas, deposito_id, usuario_id, empresa_id } = params
+  const { entradas, usuario_id, empresa_id } = params
   const now = localNow()
 
   await db.writeTransaction(async (tx) => {
     for (const entrada of entradas) {
+      if (!entrada.deposito_id) {
+        throw new Error(
+          `registrarEntradasInicialesBatch: entrada sin deposito_id resuelto (producto_id="${entrada.producto_id}") — el caller debe resolverlo antes de invocar este helper`
+        )
+      }
       const id = uuidv4()
       const cantidadStr = new Decimal(entrada.cantidad).toFixed(3)
 
@@ -419,7 +449,7 @@ export async function registrarEntradasInicialesBatch(
         [
           id,
           entrada.producto_id,
-          deposito_id,
+          entrada.deposito_id,
           cantidadStr,
           cantidadStr,
           MOTIVO_INVENTARIO_INICIAL,
@@ -433,7 +463,7 @@ export async function registrarEntradasInicialesBatch(
       await upsertStockDeposito(tx, {
         empresa_id,
         producto_id: entrada.producto_id,
-        deposito_id,
+        deposito_id: entrada.deposito_id,
         delta: new Decimal(cantidadStr),
         usuario_id,
         now,
@@ -458,9 +488,15 @@ export interface EjecutarStockInicialImportResult {
 
 /**
  * Orquesta el batch de stock inicial de un import: resuelve el deposito
- * destino UNA sola vez (spec-pr1 R4/SC5) y, si existe, delega TODAS las
- * entradas a `registrarEntradasInicialesBatch` (una sola `writeTransaction`
- * para el import completo). Si la empresa no tiene ningun deposito activo,
+ * PRINCIPAL UNA sola vez (spec-pr1 R4/SC5) — pero solo si al menos una
+ * entrada llega SIN `deposito_id` propio (spec-pr3 R15, PR3b) — y lo aplica
+ * como fallback UNICAMENTE a esas entradas; las que ya traen su
+ * `deposito_id` resuelto (el modal las resuelve por fila via
+ * `resolverDepositoFila`, spec-pr3 R10) lo conservan intacto. Si NINGUNA
+ * entrada necesita el fallback, `resolverDepositoPrincipalActivo` ni
+ * siquiera se invoca.
+ *
+ * Si se necesita el fallback y la empresa no tiene ningun deposito activo,
  * retorna sin abrir transaccion (spec-pr1 R5/SC6) — el modal muestra el
  * mismo mensaje de error visible antes de este cambio.
  */
@@ -469,14 +505,21 @@ export async function ejecutarStockInicialImport(
 ): Promise<EjecutarStockInicialImportResult> {
   const { entradas, empresa_id, usuario_id } = params
 
-  const depositoId = await resolverDepositoPrincipalActivo(empresa_id)
-  if (!depositoId) {
-    return { exitosos: 0, sinDeposito: true }
+  const necesitaPrincipal = entradas.some((e) => !e.deposito_id)
+  let principalId: string | null = null
+  if (necesitaPrincipal) {
+    principalId = await resolverDepositoPrincipalActivo(empresa_id)
+    if (!principalId) {
+      return { exitosos: 0, sinDeposito: true }
+    }
   }
 
+  const entradasResueltas: EntradaInicialImport[] = entradas.map((e) =>
+    e.deposito_id ? e : { ...e, deposito_id: principalId! }
+  )
+
   const { exitosos } = await registrarEntradasInicialesBatch({
-    entradas,
-    deposito_id: depositoId,
+    entradas: entradasResueltas,
     usuario_id,
     empresa_id,
   })

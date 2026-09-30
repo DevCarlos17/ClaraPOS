@@ -612,7 +612,7 @@ describe('registrarEntradasInicialesBatch (PR1 — reemplaza el loop de N `regis
   })
 
   function entrada(overrides: Partial<EntradaInicialImport> = {}): EntradaInicialImport {
-    return { producto_id: 'prod-default', cantidad: 1, ...overrides }
+    return { producto_id: 'prod-default', cantidad: 1, deposito_id: 'dep-A', ...overrides }
   }
 
   /**
@@ -664,7 +664,6 @@ describe('registrarEntradasInicialesBatch (PR1 — reemplaza el loop de N `regis
 
     const result = await registrarEntradasInicialesBatch({
       entradas,
-      deposito_id: 'dep-A',
       usuario_id: 'user-1',
       empresa_id: 'emp-1',
     })
@@ -680,7 +679,6 @@ describe('registrarEntradasInicialesBatch (PR1 — reemplaza el loop de N `regis
 
     await registrarEntradasInicialesBatch({
       entradas: [entrada({ producto_id: 'prod-1', cantidad: 12.5 })],
-      deposito_id: 'dep-A',
       usuario_id: 'user-1',
       empresa_id: 'emp-1',
     })
@@ -709,7 +707,6 @@ describe('registrarEntradasInicialesBatch (PR1 — reemplaza el loop de N `regis
 
     await registrarEntradasInicialesBatch({
       entradas: [entrada({ producto_id: 'prod-1', cantidad: 12.5 })],
-      deposito_id: 'dep-A',
       usuario_id: 'user-1',
       empresa_id: 'emp-1',
     })
@@ -730,7 +727,6 @@ describe('registrarEntradasInicialesBatch (PR1 — reemplaza el loop de N `regis
 
     await registrarEntradasInicialesBatch({
       entradas: [entrada({ producto_id: 'prod-1' }), entrada({ producto_id: 'prod-2' })],
-      deposito_id: 'dep-A',
       usuario_id: 'user-1',
       empresa_id: 'emp-xyz',
     })
@@ -747,12 +743,39 @@ describe('registrarEntradasInicialesBatch (PR1 — reemplaza el loop de N `regis
     const entradas = Array.from({ length: 5 }, (_, i) => entrada({ producto_id: `prod-${i + 1}` }))
 
     await expect(
-      registrarEntradasInicialesBatch({ entradas, deposito_id: 'dep-A', usuario_id: 'user-1', empresa_id: 'emp-1' })
+      registrarEntradasInicialesBatch({ entradas, usuario_id: 'user-1', empresa_id: 'emp-1' })
     ).rejects.toThrow(/fallo simulado/)
 
     const inserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
     // entradas 1 y 2 se insertan; la #3 se intenta y lanza; #4 y #5 nunca se procesan
     expect(inserts).toHaveLength(3)
+  })
+
+  it('SC20a (PR3b): cada entrada usa SU PROPIO deposito_id (no uno global) dentro de la MISMA writeTransaction', async () => {
+    const calls = mockBatchTx()
+
+    await registrarEntradasInicialesBatch({
+      entradas: [
+        entrada({ producto_id: 'prod-1', deposito_id: 'dep-X' }),
+        entrada({ producto_id: 'prod-2', deposito_id: 'dep-Y' }),
+      ],
+      usuario_id: 'user-1',
+      empresa_id: 'emp-1',
+    })
+
+    expect(mockedDb.writeTransaction).toHaveBeenCalledTimes(1)
+    const inserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(inserts.find((c) => c.params[1] === 'prod-1')!.params[2]).toBe('dep-X')
+    expect(inserts.find((c) => c.params[1] === 'prod-2')!.params[2]).toBe('dep-Y')
+  })
+
+  it('lanza si una entrada llega SIN deposito_id resuelto (invariante: el caller — ejecutarStockInicialImport o el modal — debe resolverlo antes de llamar a este helper)', async () => {
+    mockBatchTx()
+    const entradas: EntradaInicialImport[] = [{ producto_id: 'prod-1', cantidad: 1 }]
+
+    await expect(
+      registrarEntradasInicialesBatch({ entradas, usuario_id: 'user-1', empresa_id: 'emp-1' })
+    ).rejects.toThrow(/deposito_id/)
   })
 })
 
@@ -821,5 +844,55 @@ describe('ejecutarStockInicialImport (PR1 — orquesta resolucion de deposito + 
 
     expect(result).toEqual({ exitosos: 0, sinDeposito: true })
     expect(mockedDb.writeTransaction).not.toHaveBeenCalled()
+  })
+
+  it('SC20 (PR3b): 3 entradas con deposito_id explicito distinto + 2 sin deposito_id -> las 3 usan su deposito explicito y las 2 usan el principal resuelto UNA sola vez', async () => {
+    mockedDb.execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('es_principal = 1')) {
+        return { rows: { length: 1, item: () => ({ id: 'dep-principal' }) } } as never
+      }
+      throw new Error('no deberia consultar el fallback cuando hay principal activo')
+    })
+    const calls = mockBatchTxSimple()
+    const entradas: EntradaInicialImport[] = [
+      { producto_id: 'prod-1', cantidad: 1, deposito_id: 'dep-X' },
+      { producto_id: 'prod-2', cantidad: 1, deposito_id: 'dep-Y' },
+      { producto_id: 'prod-3', cantidad: 1, deposito_id: 'dep-Z' },
+      { producto_id: 'prod-4', cantidad: 1 },
+      { producto_id: 'prod-5', cantidad: 1 },
+    ]
+
+    const result = await ejecutarStockInicialImport({ entradas, empresa_id: 'emp-1', usuario_id: 'user-1' })
+
+    // resolverDepositoPrincipalActivo se llama 1 sola vez (no 1 por cada entrada sin deposito_id)
+    expect(mockedDb.execute).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({ exitosos: 5, sinDeposito: false })
+
+    const inserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    const depositoPorProducto = new Map(inserts.map((c) => [c.params[1] as string, c.params[2] as string]))
+    expect(depositoPorProducto.get('prod-1')).toBe('dep-X')
+    expect(depositoPorProducto.get('prod-2')).toBe('dep-Y')
+    expect(depositoPorProducto.get('prod-3')).toBe('dep-Z')
+    expect(depositoPorProducto.get('prod-4')).toBe('dep-principal')
+    expect(depositoPorProducto.get('prod-5')).toBe('dep-principal')
+  })
+
+  it('SC21 (contrato): entradas sin campo deposito_id en NINGUNA -> el fallback de principal se aplica a TODAS (documenta que este helper no filtra ACTUALIZAR — responsabilidad exclusiva del caller no incluirlas)', async () => {
+    mockedDb.execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('es_principal = 1')) {
+        return { rows: { length: 1, item: () => ({ id: 'dep-unico' }) } } as never
+      }
+      throw new Error('no deberia consultar el fallback cuando hay principal activo')
+    })
+    const calls = mockBatchTxSimple()
+
+    await ejecutarStockInicialImport({
+      entradas: [{ producto_id: 'prod-1', cantidad: 1 }],
+      empresa_id: 'emp-1',
+      usuario_id: 'user-1',
+    })
+
+    const insert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(insert!.params[2]).toBe('dep-unico')
   })
 })
