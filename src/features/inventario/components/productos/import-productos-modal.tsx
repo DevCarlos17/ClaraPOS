@@ -8,13 +8,16 @@ import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
+import type { Deposito } from '@/features/inventario/hooks/use-depositos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { ejecutarStockInicialImport } from '@/features/inventario/lib/stock-deposito'
+import { ejecutarStockInicialImport, resolverDepositoPrincipalActivo } from '@/features/inventario/lib/stock-deposito'
 import { useUnidadesActivas, type Unidad } from '@/features/inventario/hooks/use-unidades'
 import {
   clasificarAccionFila,
+  debeIgnorarStockInicial,
   detectarColumnasPresentes,
   mergearProductoParaUpdate,
+  resolverDepositoFila,
   validarFormatoPreciosTocados,
   validarPreciosMergeados,
   type AccionFila,
@@ -28,6 +31,11 @@ interface ImportProductosModalProps {
   onClose: () => void
   productos: Producto[]
   departamentos: Departamento[]
+  /** Depositos ACTIVOS de la empresa (spec-pr3 R17, PR3b) — usados para resolver
+   * la columna opcional `deposito` del archivo. `useDepositosActivos()` en
+   * `producto-list.tsx`. Default `[]` para no romper llamadores existentes
+   * (la columna simplemente no se resuelve sin esta prop). */
+  depositos?: Deposito[]
 }
 
 interface ParsedRow {
@@ -43,10 +51,22 @@ interface ParsedRow {
   stock_inicial: string
   unidad: string
   tipo_impuesto: string
+  /** Celda `deposito`, ya `.trim().toUpperCase()` (spec-pr3 R9, PR3b). */
+  deposito: string
   /** Clasificacion base segun modo activo (spec-pr3 R2). `errors.length>0` tiene prioridad visual (R16). */
   accion: AccionFila
   /** Precios fusionados contra el producto existente — solo presente para filas `ACTUALIZAR` (spec-pr3 R7). */
   merged?: MergedPrecios
+  /**
+   * Deposito RESUELTO para esta fila (spec-pr3 R10/R11, PR3b): en `CREAR`
+   * siempre que haya deposito principal o columna valida (usado para el
+   * maestro `productos.deposito_id` Y para el batch de `stock_inicial`); en
+   * `ACTUALIZAR` SOLO si la celda vino tocada con un nombre valido (cambia el
+   * deposito default, nunca mueve stock). `undefined` = no tocar.
+   */
+  depositoId?: string
+  /** Advertencia NO bloqueante (spec-pr3 R12): fila `ACTUALIZAR` con `stock_inicial>0` — la celda se ignora, nunca genera kardex. */
+  stockInicialIgnorado: boolean
   errors: string[]
   isValid: boolean
 }
@@ -116,6 +136,7 @@ export function ImportProductosModal({
   onClose,
   productos,
   departamentos,
+  depositos = [],
 }: ImportProductosModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -327,6 +348,13 @@ export function ImportProductosModal({
 
       const productoPorCodigo = new Map(productos.map((p) => [p.codigo, p]))
 
+      // Deposito principal resuelto UNA sola vez para todo el archivo (spec-pr3
+      // R10/R15, PR3b) — nunca por fila. Usado como fallback SOLO para filas
+      // CREAR cuya celda `deposito` vino vacia/ausente.
+      const principalId = user?.empresa_id
+        ? await resolverDepositoPrincipalActivo(user.empresa_id)
+        : null
+
       const parsed: ParsedRow[] = rawRows.map((r, i) => {
         const row: ParsedRow = {
           rowNum: i + 2,
@@ -346,8 +374,11 @@ export function ImportProductosModal({
             if (raw === 'exonerado') return 'Exonerado'
             return 'Exento'
           })(),
+          deposito: String(r.deposito ?? '').trim().toUpperCase(),
           accion: 'CREAR',
           merged: undefined,
+          depositoId: undefined,
+          stockInicialIgnorado: false,
           errors: [],
           isValid: false,
         }
@@ -356,6 +387,17 @@ export function ImportProductosModal({
         const resultado = validateRow(row, row.accion, existente, columnasPresentes)
         row.errors = resultado.errors
         row.merged = resultado.merged
+
+        if (row.accion !== 'OMITIR') {
+          const depResult = resolverDepositoFila(row.deposito, row.accion, columnasPresentes, depositos, principalId)
+          if (depResult.error) row.errors.push(depResult.error)
+          else row.depositoId = depResult.deposito_id
+
+          if (row.accion === 'ACTUALIZAR') {
+            row.stockInicialIgnorado = debeIgnorarStockInicial(row.accion, row.stock_inicial)
+          }
+        }
+
         row.isValid = row.errors.length === 0
         return row
       })
@@ -468,6 +510,7 @@ export function ImportProductosModal({
           : null,
         presentacion: null as string | null,
         codigo_barras: null as string | null,
+        deposito_id: row.depositoId ?? null,
       }
     })
 
@@ -496,6 +539,10 @@ export function ImportProductosModal({
         const und = unidades.find((u) => u.abreviatura === row.unidad)
         if (und) fields.unidad_base_id = und.id
       }
+      // Deposito (spec-pr3 R11): SOLO se agrega al UPDATE si la celda vino
+      // tocada con un nombre valido (row.depositoId resuelto) — celda
+      // vacia/ausente NUNCA toca producto.deposito_id existente.
+      if (row.depositoId) fields.deposito_id = row.depositoId
 
       return { id: existente.id, fields }
     })
@@ -510,9 +557,9 @@ export function ImportProductosModal({
       await db.writeTransaction(async (tx) => {
         for (const p of productoInserts) {
           await tx.execute(
-            `INSERT INTO productos (id, codigo, tipo, nombre, departamento_id, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd, stock, stock_minimo, costo_promedio, costo_ultimo, tipo_impuesto, impuesto_iva_id, maneja_lotes, is_active, empresa_id, created_at, updated_at, ubicacion, unidad_base_id, presentacion, codigo_barras)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [p.id, p.codigo, p.tipo, p.nombre, p.departamento_id, p.costo_usd, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock, p.stock_minimo, p.costo_promedio, p.costo_ultimo, p.tipo_impuesto, p.impuesto_iva_id, p.maneja_lotes, p.is_active, p.empresa_id, p.created_at, p.updated_at, p.ubicacion, p.unidad_base_id, p.presentacion, p.codigo_barras]
+            `INSERT INTO productos (id, codigo, tipo, nombre, departamento_id, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd, stock, stock_minimo, costo_promedio, costo_ultimo, tipo_impuesto, impuesto_iva_id, maneja_lotes, is_active, empresa_id, created_at, updated_at, ubicacion, unidad_base_id, presentacion, codigo_barras, deposito_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [p.id, p.codigo, p.tipo, p.nombre, p.departamento_id, p.costo_usd, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock, p.stock_minimo, p.costo_promedio, p.costo_ultimo, p.tipo_impuesto, p.impuesto_iva_id, p.maneja_lotes, p.is_active, p.empresa_id, p.created_at, p.updated_at, p.ubicacion, p.unidad_base_id, p.presentacion, p.codigo_barras, p.deposito_id]
           )
         }
         for (const u of productoUpdates) {
@@ -548,6 +595,7 @@ export function ImportProductosModal({
           entradas: productosConStockInicial.map(({ p, row }) => ({
             producto_id: p.id,
             cantidad: parseFloat(row.stock_inicial),
+            deposito_id: row.depositoId,
           })),
           empresa_id: user.empresa_id,
           usuario_id: user.id,
@@ -629,6 +677,7 @@ export function ImportProductosModal({
   const countError = rows.filter((r) => r.errors.length > 0).length
   const totalEscribible = countCrear + countActualizar
   const validCompCount = componentes.filter((c) => c.isValid).length
+  const depositoNombrePorId = new Map(depositos.map((d) => [d.id, d.nombre]))
 
   return (
     <dialog
@@ -703,9 +752,10 @@ export function ImportProductosModal({
                             ['precio_venta_usd', 'Si', 'Mayor o igual al costo'],
                             ['precio_mayor_usd', 'No', 'Menor o igual al precio de venta'],
                             ['stock_minimo', 'Solo tipo P', 'Numero (ej: 5)'],
-                            ['stock_inicial', 'No', 'Solo tipo P. Crea entrada en Kardex con concepto "Inventario Inicial"'],
+                            ['stock_inicial', 'No', 'Solo tipo P. Crea entrada en Kardex con concepto "Inventario Inicial" (solo productos nuevos — ver nota abajo)'],
                             ['unidad', 'No', 'Solo tipo P. Abreviatura de la unidad de medida (ej: UND, KG, LT)'],
                             ['tipo_impuesto', 'No', 'Gravable, Exento o Exonerado'],
+                            ['deposito', 'No', 'Nombre de deposito activo. Vacio = deposito principal (productos nuevos) o no se modifica (productos existentes)'],
                           ].map(([col, req, fmt]) => (
                             <tr key={col} className="border-b border-blue-100">
                               <td className="px-2 py-1.5 font-mono">{col}</td>
@@ -731,8 +781,10 @@ export function ImportProductosModal({
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
                 <p className="font-semibold mb-1">Notas:</p>
                 <ul className="list-disc list-inside space-y-0.5">
-                  <li>Usa <strong>stock_inicial</strong> (solo tipo P) para registrar el stock de apertura. Se creara una entrada en el Kardex con concepto "Inventario Inicial".</li>
+                  <li>Usa <strong>stock_inicial</strong> (solo tipo P) para registrar el stock de apertura de un producto NUEVO. Se creara una entrada en el Kardex con concepto "Inventario Inicial".</li>
                   <li>Si dejas stock_inicial vacio, el producto se crea con stock 0. Podras agregar stock luego desde el Kardex.</li>
+                  <li>En modo <strong>Solo actualizar</strong>/<strong>Agregar y actualizar</strong>, stock_inicial se IGNORA para productos que ya existen (nunca mueve su stock actual) — usa el modulo Ajustes para corregir stock de productos existentes.</li>
+                  <li>En modo actualizar, deja una celda vacia o quita la columna del archivo para NO tocar ese campo del producto existente (incluyendo <strong>deposito</strong>).</li>
                   <li>Puedes exportar el inventario actual y re-importarlo: la estructura es identica.</li>
                   <li>El sistema detecta duplicados dentro del archivo y contra productos existentes.</li>
                   <li>Unidades activas: {unidades.map((u) => u.abreviatura).join(', ') || 'UND, KG, LT...'}</li>
@@ -819,6 +871,7 @@ export function ImportProductosModal({
                         <th className="text-right px-2 py-2 font-medium">Venta</th>
                         <th className="text-right px-2 py-2 font-medium">Stk. Ini.</th>
                         <th className="text-left px-2 py-2 font-medium">Unidad</th>
+                        <th className="text-left px-2 py-2 font-medium">Deposito</th>
                         <th className="text-left px-2 py-2 font-medium">Errores</th>
                       </tr>
                     </thead>
@@ -850,9 +903,20 @@ export function ImportProductosModal({
                           <td className="px-2 py-1.5 text-right tabular-nums">{row.costo_usd}</td>
                           <td className="px-2 py-1.5 text-right tabular-nums">{row.precio_venta_usd}</td>
                           <td className="px-2 py-1.5 text-right tabular-nums text-blue-700">
-                            {row.stock_inicial || '-'}
+                            <span
+                              className="inline-flex items-center gap-1 justify-end"
+                              title={row.stockInicialIgnorado ? 'Se ignora: el producto ya existe, no se mueve stock existente por import (usa Ajustes)' : undefined}
+                            >
+                              {row.stock_inicial || '-'}
+                              {row.stockInicialIgnorado && (
+                                <WarningCircle className="h-3 w-3 text-amber-600 shrink-0" />
+                              )}
+                            </span>
                           </td>
                           <td className="px-2 py-1.5 font-mono text-gray-600">{row.unidad || '-'}</td>
+                          <td className="px-2 py-1.5 font-mono text-gray-600">
+                            {row.depositoId ? depositoNombrePorId.get(row.depositoId) ?? '-' : '-'}
+                          </td>
                           <td className="px-2 py-1.5 text-red-600">{row.errors.join('; ')}</td>
                         </tr>
                         )

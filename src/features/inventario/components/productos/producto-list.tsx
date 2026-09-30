@@ -612,6 +612,7 @@ export function ProductoList() {
         onClose={() => setImportOpen(false)}
         productos={productos}
         departamentos={departamentos}
+        depositos={depositosActivos}
       />
 
       <ComboDetalleModal
