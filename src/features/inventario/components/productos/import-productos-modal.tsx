@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from 'react'
 import { X, Upload, FileText, WarningCircle, CheckCircle } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import * as XLSX from 'xlsx'
+import Decimal from 'decimal.js'
 import { kysely, db } from '@/core/db/kysely/kysely'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
@@ -10,6 +11,16 @@ import type { Departamento } from '@/features/inventario/hooks/use-departamentos
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { ejecutarStockInicialImport } from '@/features/inventario/lib/stock-deposito'
 import { useUnidadesActivas, type Unidad } from '@/features/inventario/hooks/use-unidades'
+import {
+  clasificarAccionFila,
+  detectarColumnasPresentes,
+  mergearProductoParaUpdate,
+  validarPreciosMergeados,
+  type AccionFila,
+  type ColumnasPresentes,
+  type MergedPrecios,
+  type ModoImportacion,
+} from '@/features/inventario/lib/import-productos-logic'
 
 interface ImportProductosModalProps {
   isOpen: boolean
@@ -31,8 +42,24 @@ interface ParsedRow {
   stock_inicial: string
   unidad: string
   tipo_impuesto: string
+  /** Clasificacion base segun modo activo (spec-pr3 R2). `errors.length>0` tiene prioridad visual (R16). */
+  accion: AccionFila
+  /** Precios fusionados contra el producto existente — solo presente para filas `ACTUALIZAR` (spec-pr3 R7). */
+  merged?: MergedPrecios
   errors: string[]
   isValid: boolean
+}
+
+const MODO_LABELS: Record<ModoImportacion, string> = {
+  crear: 'Solo agregar',
+  actualizar: 'Solo actualizar',
+  upsert: 'Agregar y actualizar',
+}
+
+const MODO_DESCRIPCIONES: Record<ModoImportacion, string> = {
+  crear: 'Crea productos nuevos. Las filas cuyo codigo ya existe se omiten (no se modifican).',
+  actualizar: 'Actualiza productos existentes. Las filas con codigo nuevo se omiten. Deja una columna vacia o quitala del archivo para no tocar ese campo.',
+  upsert: 'Crea los productos nuevos y actualiza los existentes en la misma importacion.',
 }
 
 interface ParsedComponente {
@@ -95,6 +122,7 @@ export function ImportProductosModal({
   const { unidades } = useUnidadesActivas()
 
   const [step, setStep] = useState<Step>('instrucciones')
+  const [modo, setModo] = useState<ModoImportacion>('crear')
   const [rows, setRows] = useState<ParsedRow[]>([])
   const [componentes, setComponentes] = useState<ParsedComponente[]>([])
   const [fileName, setFileName] = useState('')
@@ -103,6 +131,7 @@ export function ImportProductosModal({
     if (isOpen) {
       dialogRef.current?.showModal()
       setStep('instrucciones')
+      setModo('crear')
       setRows([])
       setComponentes([])
       setFileName('')
@@ -115,15 +144,14 @@ export function ImportProductosModal({
     if (e.target === dialogRef.current) onClose()
   }
 
-  function validateRow(row: ParsedRow): string[] {
+  /** Fila `CREAR`: se valida igual que antes de PR3 (el producto no existe, sin fusion). */
+  function validateRowCrear(row: ParsedRow): string[] {
     const errors: string[] = []
 
     if (!row.codigo) {
       errors.push('codigo vacio')
     } else if (!/^[A-Z0-9-]+$/.test(row.codigo)) {
       errors.push('codigo invalido (solo mayusculas, numeros y guiones)')
-    } else if (productos.some((p) => p.codigo === row.codigo)) {
-      errors.push('codigo ya existe')
     }
 
     if (!['P', 'S', 'C'].includes(row.tipo)) {
@@ -193,6 +221,79 @@ export function ImportProductosModal({
     return errors
   }
 
+  /**
+   * Fila `ACTUALIZAR`: valida solo los campos updatable (spec-pr3 R6) que
+   * llegaron tocados (columna presente + celda no vacia) contra el producto
+   * EXISTENTE completo — nunca contra valores vacios. `codigo` es solo
+   * lookup (regla #5, inmutable) y nunca se re-valida aqui. Los precios se
+   * fusionan primero (`mergearProductoParaUpdate`) y se validan sobre el
+   * estado YA FUSIONADO (`validarPreciosMergeados`, R7/R8 LOCKED).
+   */
+  function validateRowActualizar(
+    row: ParsedRow,
+    existente: Producto,
+    columnasPresentes: ColumnasPresentes
+  ): { errors: string[]; merged: MergedPrecios } {
+    const errors: string[] = []
+
+    if (columnasPresentes.has('nombre') && row.nombre.trim() !== '' && row.nombre.length < 3) {
+      errors.push('nombre minimo 3 caracteres')
+    }
+
+    if (columnasPresentes.has('departamento') && row.departamento.trim() !== '') {
+      const dep = departamentos.find((d) => d.nombre === row.departamento)
+      if (!dep) errors.push('departamento no encontrado')
+      else if (dep.is_active !== 1) errors.push('departamento inactivo')
+    }
+
+    const merged = mergearProductoParaUpdate(
+      { costo_usd: row.costo_usd, precio_venta_usd: row.precio_venta_usd, precio_mayor_usd: row.precio_mayor_usd },
+      columnasPresentes,
+      {
+        costo_usd: existente.costo_usd,
+        precio_venta_usd: existente.precio_venta_usd,
+        precio_mayor_usd: existente.precio_mayor_usd,
+      }
+    )
+    errors.push(...validarPreciosMergeados(merged, columnasPresentes))
+
+    if (columnasPresentes.has('stock_minimo') && row.stock_minimo.trim() !== '' && existente.tipo === 'P') {
+      const stockMin = parseFloat(row.stock_minimo)
+      if (isNaN(stockMin) || stockMin < 0) errors.push('stock_minimo invalido')
+    }
+
+    if (columnasPresentes.has('unidad') && row.unidad.trim() !== '') {
+      if (existente.tipo !== 'P') {
+        errors.push('unidad solo aplica a productos tipo P')
+      } else if (!unidades.some((u) => u.abreviatura === row.unidad)) {
+        errors.push(`unidad "${row.unidad}" no existe o no esta activa`)
+      }
+    }
+
+    if (columnasPresentes.has('tipo_impuesto') && row.tipo_impuesto.trim() !== '') {
+      if (!['Gravable', 'Exento', 'Exonerado'].includes(row.tipo_impuesto)) {
+        errors.push('tipo_impuesto debe ser Gravable, Exento o Exonerado')
+      }
+    }
+
+    return { errors, merged }
+  }
+
+  /**
+   * Dispatcher segun accion (spec-pr3 R4): `OMITIR` no pasa por ninguna
+   * validacion de campos (solo cuenta en el resumen del preview).
+   */
+  function validateRow(
+    row: ParsedRow,
+    accion: AccionFila,
+    existente: Producto | undefined,
+    columnasPresentes: ColumnasPresentes
+  ): { errors: string[]; merged?: MergedPrecios } {
+    if (accion === 'OMITIR') return { errors: [] }
+    if (accion === 'CREAR') return { errors: validateRowCrear(row) }
+    return validateRowActualizar(row, existente!, columnasPresentes)
+  }
+
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -205,12 +306,16 @@ export function ImportProductosModal({
       // Hoja 1: Inventario (P, S, C)
       const sheetName = workbook.SheetNames[0]
       const sheet = workbook.Sheets[sheetName]
+      const headerRow = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 })[0] ?? []
+      const columnasPresentes = detectarColumnasPresentes(headerRow)
       const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
 
       if (rawRows.length === 0) {
         toast.error('El archivo esta vacio')
         return
       }
+
+      const productoPorCodigo = new Map(productos.map((p) => [p.codigo, p]))
 
       const parsed: ParsedRow[] = rawRows.map((r, i) => {
         const row: ParsedRow = {
@@ -231,10 +336,16 @@ export function ImportProductosModal({
             if (raw === 'exonerado') return 'Exonerado'
             return 'Exento'
           })(),
+          accion: 'CREAR',
+          merged: undefined,
           errors: [],
           isValid: false,
         }
-        row.errors = validateRow(row)
+        const existente = productoPorCodigo.get(row.codigo)
+        row.accion = clasificarAccionFila(!!existente, modo)
+        const resultado = validateRow(row, row.accion, existente, columnasPresentes)
+        row.errors = resultado.errors
+        row.merged = resultado.merged
         row.isValid = row.errors.length === 0
         return row
       })
@@ -302,17 +413,19 @@ export function ImportProductosModal({
       toast.error('No se pudo identificar la empresa')
       return
     }
-    const validRows = rows.filter((r) => r.isValid)
-    if (validRows.length === 0) {
+    const filasCrear = rows.filter((r) => r.accion === 'CREAR' && r.errors.length === 0)
+    const filasActualizar = rows.filter((r) => r.accion === 'ACTUALIZAR' && r.errors.length === 0)
+    if (filasCrear.length === 0 && filasActualizar.length === 0) {
       toast.error('No hay filas validas para importar')
       return
     }
 
     setStep('procesando')
     const now = localNow()
+    const productoPorCodigo = new Map(productos.map((p) => [p.codigo, p]))
 
     // Pre-calcular todos los datos antes de abrir transacciones
-    const productoInserts = validRows.map((row) => {
+    const productoInserts = filasCrear.map((row) => {
       const isServicioOCombo = row.tipo === 'S' || row.tipo === 'C'
       const dep = departamentos.find((d) => d.nombre === row.departamento)!
       const costo = parseFloat(row.costo_usd)
@@ -324,14 +437,14 @@ export function ImportProductosModal({
         tipo: row.tipo,
         nombre: row.nombre,
         departamento_id: dep.id,
-        costo_usd: row.tipo === 'C' ? '0.00' : costo.toFixed(2),
-        precio_venta_usd: venta.toFixed(2),
-        precio_mayor_usd: mayor?.toFixed(2) ?? null,
+        costo_usd: row.tipo === 'C' ? '0.00000000' : new Decimal(costo).toFixed(8),
+        precio_venta_usd: new Decimal(venta).toFixed(8),
+        precio_mayor_usd: mayor !== null ? new Decimal(mayor).toFixed(8) : null,
         precio_especial_usd: null as string | null,
         stock: '0.000',
         stock_minimo: isServicioOCombo ? '0.000' : parseFloat(row.stock_minimo).toFixed(3),
         costo_promedio: '0.00',
-        costo_ultimo: row.tipo === 'C' ? '0.00' : costo.toFixed(2),
+        costo_ultimo: row.tipo === 'C' ? '0.00000000' : new Decimal(costo).toFixed(8),
         tipo_impuesto: row.tipo_impuesto,
         impuesto_iva_id: null as string | null,
         maneja_lotes: 0,
@@ -348,11 +461,41 @@ export function ImportProductosModal({
       }
     })
 
+    // Update parcial: solo los campos tocados por el archivo (columna presente + celda no vacia).
+    // `codigo` NUNCA aparece aqui (regla #5, inmutable — solo se uso como lookup).
+    const productoUpdates = filasActualizar.map((row) => {
+      const existente = productoPorCodigo.get(row.codigo)!
+      const merged = row.merged!
+      const fields: Record<string, string> = { updated_at: now }
+
+      if (row.nombre.trim() !== '') fields.nombre = row.nombre
+      if (row.departamento.trim() !== '') {
+        const dep = departamentos.find((d) => d.nombre === row.departamento)
+        if (dep) fields.departamento_id = dep.id
+      }
+      if (row.costo_usd.trim() !== '') fields.costo_usd = new Decimal(merged.costo).toFixed(8)
+      if (row.precio_venta_usd.trim() !== '') fields.precio_venta_usd = new Decimal(merged.venta).toFixed(8)
+      if (row.precio_mayor_usd.trim() !== '') {
+        fields.precio_mayor_usd = merged.mayor !== null ? new Decimal(merged.mayor).toFixed(8) : ''
+      }
+      if (row.stock_minimo.trim() !== '' && existente.tipo === 'P') {
+        fields.stock_minimo = parseFloat(row.stock_minimo).toFixed(3)
+      }
+      if (row.tipo_impuesto.trim() !== '') fields.tipo_impuesto = row.tipo_impuesto
+      if (row.unidad.trim() !== '' && existente.tipo === 'P') {
+        const und = unidades.find((u) => u.abreviatura === row.unidad)
+        if (und) fields.unidad_base_id = und.id
+      }
+
+      return { id: existente.id, fields }
+    })
+
     // Mapa codigo → id para componentes de combos
     const codigoToId = new Map<string, string>()
     for (const p of productoInserts) codigoToId.set(p.codigo, p.id)
 
-    // Paso 1: un solo writeTransaction para todos los productos (un solo re-render)
+    // Paso 1: UN solo writeTransaction con INSERT (CREAR) y UPDATE (ACTUALIZAR) mezclados —
+    // todo-o-nada (spec-pr3 R14): si cualquier sentencia lanza, ninguna de la fase persiste.
     try {
       await db.writeTransaction(async (tx) => {
         for (const p of productoInserts) {
@@ -362,8 +505,20 @@ export function ImportProductosModal({
             [p.id, p.codigo, p.tipo, p.nombre, p.departamento_id, p.costo_usd, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock, p.stock_minimo, p.costo_promedio, p.costo_ultimo, p.tipo_impuesto, p.impuesto_iva_id, p.maneja_lotes, p.is_active, p.empresa_id, p.created_at, p.updated_at, p.ubicacion, p.unidad_base_id, p.presentacion, p.codigo_barras]
           )
         }
+        for (const u of productoUpdates) {
+          const cols = Object.keys(u.fields)
+          const setClause = cols.map((c) => `${c} = ?`).join(', ')
+          await tx.execute(
+            `UPDATE productos SET ${setClause} WHERE id = ?`,
+            [...cols.map((c) => u.fields[c]), u.id]
+          )
+        }
       })
-      toast.success(`${productoInserts.length} producto(s) importado(s) correctamente`)
+      const totalEscritos = productoInserts.length + productoUpdates.length
+      toast.success(
+        `${totalEscritos} producto(s) importado(s) correctamente` +
+        (productoUpdates.length > 0 ? ` (${productoInserts.length} nuevo(s), ${productoUpdates.length} actualizado(s))` : '')
+      )
     } catch {
       toast.error('Error al importar productos')
       onClose()
@@ -371,8 +526,9 @@ export function ImportProductosModal({
     }
 
     // Paso 2: inventario inicial via kardex para productos tipo P con stock_inicial > 0
+    // (solo filas CREAR — ACTUALIZAR nunca alimenta este batch, R11/R12)
     const productosConStockInicial = productoInserts
-      .map((p, i) => ({ p, row: validRows[i] }))
+      .map((p, i) => ({ p, row: filasCrear[i] }))
       .filter(({ row }) => row.tipo === 'P' && parseFloat(row.stock_inicial) > 0)
 
     if (productosConStockInicial.length > 0) {
@@ -457,8 +613,11 @@ export function ImportProductosModal({
     URL.revokeObjectURL(url)
   }
 
-  const validCount = rows.filter((r) => r.isValid).length
-  const invalidCount = rows.length - validCount
+  const countCrear = rows.filter((r) => r.accion === 'CREAR' && r.errors.length === 0).length
+  const countActualizar = rows.filter((r) => r.accion === 'ACTUALIZAR' && r.errors.length === 0).length
+  const countOmitir = rows.filter((r) => r.accion === 'OMITIR' && r.errors.length === 0).length
+  const countError = rows.filter((r) => r.errors.length > 0).length
+  const totalEscribible = countCrear + countActualizar
   const validCompCount = componentes.filter((c) => c.isValid).length
 
   return (
@@ -488,6 +647,25 @@ export function ImportProductosModal({
         <div className="flex-1 overflow-y-auto p-6">
           {step === 'instrucciones' && (
             <div className="space-y-5">
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-gray-900 mb-2">Modo de importacion</h3>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  {(Object.keys(MODO_LABELS) as ModoImportacion[]).map((m) => (
+                    <label key={m} className="flex items-center gap-2 text-xs text-gray-800">
+                      <input
+                        type="radio"
+                        name="modo-importacion"
+                        value={m}
+                        checked={modo === m}
+                        onChange={() => setModo(m)}
+                      />
+                      {MODO_LABELS[m]}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-600 mt-2">{MODO_DESCRIPCIONES[modo]}</p>
+              </div>
+
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <h3 className="text-sm font-semibold text-blue-900 mb-2">Formato requerido</h3>
                 <p className="text-xs text-blue-700 mb-3">
@@ -579,23 +757,25 @@ export function ImportProductosModal({
 
           {step === 'preview' && (
             <div className="space-y-4">
-              {/* Resumen hoja 1 */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="border rounded-lg p-3">
-                  <p className="text-xs text-gray-600">Total productos</p>
-                  <p className="text-xl font-bold">{rows.length}</p>
+              {/* Resumen hoja 1 — conteos por accion (spec-pr3 R16), coherentes con el modo activo */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="border rounded-lg p-3 border-blue-200 bg-blue-50">
+                  <p className="text-xs text-blue-700">Crear</p>
+                  <p className="text-xl font-bold text-blue-700">{countCrear}</p>
                 </div>
-                <div className="border rounded-lg p-3 border-green-200 bg-green-50">
-                  <p className="text-xs text-green-700 flex items-center gap-1">
-                    <CheckCircle className="h-3.5 w-3.5" /> Validos
-                  </p>
-                  <p className="text-xl font-bold text-green-700">{validCount}</p>
+                <div className="border rounded-lg p-3 border-teal-200 bg-teal-50">
+                  <p className="text-xs text-teal-700">Actualizar</p>
+                  <p className="text-xl font-bold text-teal-700">{countActualizar}</p>
+                </div>
+                <div className="border rounded-lg p-3 border-gray-200 bg-gray-50">
+                  <p className="text-xs text-gray-600">Omitir</p>
+                  <p className="text-xl font-bold text-gray-600">{countOmitir}</p>
                 </div>
                 <div className="border rounded-lg p-3 border-red-200 bg-red-50">
                   <p className="text-xs text-red-700 flex items-center gap-1">
-                    <WarningCircle className="h-3.5 w-3.5" /> Con errores
+                    <WarningCircle className="h-3.5 w-3.5" /> Error
                   </p>
-                  <p className="text-xl font-bold text-red-700">{invalidCount}</p>
+                  <p className="text-xl font-bold text-red-700">{countError}</p>
                 </div>
               </div>
 
@@ -606,9 +786,9 @@ export function ImportProductosModal({
                 </div>
               )}
 
-              {invalidCount > 0 && (
+              {countError > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
-                  Solo se importaran las filas validas. Corrige los errores en tu archivo y vuelve a cargarlo.
+                  Solo se importaran las filas sin errores. Corrige los errores en tu archivo y vuelve a cargarlo.
                 </div>
               )}
 
@@ -620,6 +800,7 @@ export function ImportProductosModal({
                       <tr className="border-b border-gray-200">
                         <th className="text-left px-2 py-2 font-medium">#</th>
                         <th className="text-left px-2 py-2 font-medium">Estado</th>
+                        <th className="text-left px-2 py-2 font-medium">Accion</th>
                         <th className="text-left px-2 py-2 font-medium">Codigo</th>
                         <th className="text-left px-2 py-2 font-medium">Tipo</th>
                         <th className="text-left px-2 py-2 font-medium">Nombre</th>
@@ -632,13 +813,25 @@ export function ImportProductosModal({
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((row) => (
+                      {rows.map((row) => {
+                        const accionMostrada = row.errors.length > 0 ? 'ERROR' : row.accion
+                        return (
                         <tr key={row.rowNum} className={`border-b border-gray-100 ${row.isValid ? '' : 'bg-red-50'}`}>
                           <td className="px-2 py-1.5 text-gray-500">{row.rowNum}</td>
                           <td className="px-2 py-1.5">
                             {row.isValid
                               ? <CheckCircle className="h-3.5 w-3.5 text-green-600" />
                               : <WarningCircle className="h-3.5 w-3.5 text-red-600" />}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <span className={
+                              accionMostrada === 'CREAR' ? 'text-blue-700 font-medium'
+                              : accionMostrada === 'ACTUALIZAR' ? 'text-teal-700 font-medium'
+                              : accionMostrada === 'ERROR' ? 'text-red-700 font-medium'
+                              : 'text-gray-500'
+                            }>
+                              {accionMostrada}
+                            </span>
                           </td>
                           <td className="px-2 py-1.5 font-mono">{row.codigo}</td>
                           <td className="px-2 py-1.5">{row.tipo}</td>
@@ -652,7 +845,8 @@ export function ImportProductosModal({
                           <td className="px-2 py-1.5 font-mono text-gray-600">{row.unidad || '-'}</td>
                           <td className="px-2 py-1.5 text-red-600">{row.errors.join('; ')}</td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -678,10 +872,10 @@ export function ImportProductosModal({
             </button>
             <button
               onClick={handleImportar}
-              disabled={validCount === 0}
+              disabled={totalEscribible === 0}
               className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Importar {validCount} producto(s)
+              Importar {totalEscribible} producto(s)
               {validCompCount > 0 ? ` + ${validCompCount} componente(s)` : ''}
             </button>
           </div>

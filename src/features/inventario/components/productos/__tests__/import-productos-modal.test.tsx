@@ -137,7 +137,13 @@ describe('buildPlantillaWorkbook (PR1 — fix de plantilla: elimina la nota A6 q
   })
 })
 
-describe('ImportProductosModal — validateRow, regla "codigo ya existe" (SC11, sin cambios de comportamiento en PR1)', () => {
+describe('ImportProductosModal — clasificacion de accion en modo "crear" por defecto (spec-pr3 R1/R2/R4)', () => {
+  // NOTA: este describe reemplaza el test original de PR1 (SC11, "codigo ya
+  // existe" como ERROR de fila). PR3 (spec-pr3.md R2) cambia deliberadamente
+  // esa clasificacion: en modo "crear" (default), un codigo existente ahora
+  // se clasifica OMITIR (no se valida ni se muestra como error de fila — R4),
+  // no CREAR con error. El resultado practico es el mismo (esa fila no se
+  // importa), pero la UI ya no muestra "codigo ya existe" como texto de error.
   beforeEach(() => {
     mockedUseCurrentUser.mockReturnValue({
       user: {
@@ -153,7 +159,7 @@ describe('ImportProductosModal — validateRow, regla "codigo ya existe" (SC11, 
     })
   })
 
-  it('marca invalida (con error "codigo ya existe") la fila cuyo codigo ya esta en productos, y valida la fila con codigo nuevo', async () => {
+  it('clasifica OMITIR (sin errores de validacion) la fila cuyo codigo ya existe, y CREAR la fila con codigo nuevo', async () => {
     const user = userEvent.setup()
     const file = buildInventarioFile([
       {
@@ -201,10 +207,11 @@ describe('ImportProductosModal — validateRow, regla "codigo ya existe" (SC11, 
     })
 
     const filaExistente = screen.getByText('EXIST-1').closest('tr')!
-    expect(within(filaExistente).getByText(/codigo ya existe/)).toBeInTheDocument()
+    expect(within(filaExistente).getByText('OMITIR')).toBeInTheDocument()
+    expect(within(filaExistente).queryByText(/codigo ya existe/)).not.toBeInTheDocument()
 
     const filaNueva = screen.getByText('NEW-1').closest('tr')!
-    expect(within(filaNueva).queryByText(/codigo ya existe/)).not.toBeInTheDocument()
+    expect(within(filaNueva).getByText('CREAR')).toBeInTheDocument()
 
     // "Errores" es la ultima celda de la fila: sin errores, queda vacia.
     const celdasFilaNueva = within(filaNueva).getAllByRole('cell')
