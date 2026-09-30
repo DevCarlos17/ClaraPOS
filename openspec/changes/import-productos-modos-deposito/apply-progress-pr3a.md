@@ -1,5 +1,11 @@
 # Apply Progress — PR3a (import-productos-modos-deposito)
 
+> **Update (post-verify, batch adicional)**: auditor WARNING #1 (financial
+> safety) cerrado — el guard NaN de precios tocados fue extraido a funcion
+> pura `validarFormatoPreciosTocados` en `import-productos-logic.ts` y cubierto
+> con 6 tests dedicados. Ver seccion "Guard NaN extraido" mas abajo y el
+> commit `3e8687c`.
+
 Alcance: **PR3a unicamente** — nucleo de clasificacion de 3 modos, merge-then-validate
 de precios, y tx mixta INSERT+UPDATE. Columna `deposito` en el import, warning de
 `stock_inicial` ignorado, y wiring del batch de stock por-fila quedan para **PR3b**
@@ -43,6 +49,10 @@ Esto agrego ~90 lineas extra sobre el subtotal estimado de 3a (ver "Lineas" abaj
 - `validarPreciosMergeados(merged, columnasPresentes)` — regla #7 sobre el estado
   fusionado, mensajes que nombran el campo tocado y sugieren el campo a incluir (R8,
   LOCKED)
+- `validarFormatoPreciosTocados(row, columnasPresentes)` — guard de formato numerico
+  (NaN) de las celdas de precio tocadas, extraido de `validateRowActualizar` en un
+  batch posterior al cierre de auditoria (WARNING #1, financial safety). Mismos
+  mensajes/semantica que el guard inline original — ver "Guard NaN extraido" abajo
 
 ## Wiring (`import-productos-modal.tsx`)
 
@@ -52,10 +62,10 @@ Esto agrego ~90 lineas extra sobre el subtotal estimado de 3a (ver "Lineas" abaj
   por `accion`; `OMITIR` salta toda validacion de campos (R4)
 - `validateRowActualizar`: valida nombre/departamento/stock_minimo/unidad/tipo_impuesto
   SOLO si la columna esta tocada (presente + celda no vacia); fusiona precios y valida
-  con `validarPreciosMergeados`; incluye guard de formato numerico (isNaN) en los 3
-  campos de precio tocados ANTES de fusionar (fix agregado durante el apply — sin el
-  guard, una celda no numerica producia NaN y las comparaciones de
-  `validarPreciosMergeados` eran siempre `false`, dejando pasar la fila invalidamente)
+  con `validarPreciosMergeados`; llama a `validarFormatoPreciosTocados` (extraido a
+  `import-productos-logic.ts`) en los 3 campos de precio tocados ANTES de fusionar —
+  sin este guard, una celda no numerica producia NaN y las comparaciones de
+  `validarPreciosMergeados` eran siempre `false`, dejando pasar la fila invalidamente
 - `handleImportar`: UNA sola `db.writeTransaction` con INSERT (filas CREAR) + UPDATE
   (filas ACTUALIZAR) mezclados, todo-o-nada (R14). `codigo` nunca aparece en el UPDATE
   (regla #5). Paso 2 (stock inicial) sigue alimentandose SOLO de `filasCrear` (R11/R12
@@ -74,15 +84,34 @@ Esto agrego ~90 lineas extra sobre el subtotal estimado de 3a (ver "Lineas" abaj
 | 3-4 (`mergearProductoParaUpdate`) | `import-productos-logic.test.ts` | Unit | N/A (new) | Written | Passed | 3 casos (ausente/vacio/presente) | None needed |
 | 3-4 (`validarPreciosMergeados`) | `import-productos-logic.test.ts` | Unit | N/A (new) | Written | Passed | 8 casos (SC7-SC10 + simetrico + ambos-tocados valido/invalido) | None needed |
 | 5-6 (wiring modal) | `import-productos-modal.test.tsx` | Integration (component, mocks PowerSync) | 4/4 pasando (baseline PR1) | N/A — gap conocido documentado en tasks-pr3.md (mismo criterio PR1/PR2) | — | — | Test SC11 de PR1 actualizado a nueva clasificacion OMITIR (approval-test update, cambio de comportamiento deliberado por R2/R4) |
+| Gap #1 (`validarFormatoPreciosTocados`, post-verify) | `import-productos-logic.test.ts` | Unit | 18/18 pasando (baseline previo a este batch) | Written — confirmado fallo `TypeError: validarFormatoPreciosTocados is not a function` en 6/6 tests nuevos antes de implementar | Passed — 24/24 en el archivo tras extraer | 4 casos (numerico valido, no-numerico en cada uno de los 3 campos, negativo en `precio_mayor_usd`) + 2 casos de "no tocado" (celda vacia, columna ausente) | None needed — extraccion 1:1, misma logica/mensajes que el guard inline |
 
 ### Test Summary
-- **Total tests nuevos**: 18 (`import-productos-logic.test.ts`)
+- **Total tests nuevos (PR3a completo, incluye gap #1)**: 24 (`import-productos-logic.test.ts`: 18 + 6)
 - **Tests actualizados**: 1 (`import-productos-modal.test.tsx`, SC11 de PR1 → OMITIR)
-- **Total suite**: 1978 tests, 1975 passing + 3 fallas preexistentes no relacionadas
-  (`cxc-list.test.tsx` x2, `cliente-detalle.test.tsx` x1 — confirmadas en 2 corridas
-  independientes de `yarn test:run`)
-- **Pure functions creadas**: 4 (`clasificarAccionFila`, `detectarColumnasPresentes`,
-  `mergearProductoParaUpdate`, `validarPreciosMergeados`)
+- **Total suite tras gap #1**: 1984 tests, 1980 passing + 4 fallas preexistentes no
+  relacionadas (`cliente-detalle.test.tsx` x1, `cxc-list.test.tsx` x2, mas un worker
+  error intermitente en `cxc-cliente-detalle.test.tsx` — ninguno toca archivos de
+  `import-productos-*`; confirmado por `yarn test:run` completo)
+- **Pure functions creadas**: 5 (`clasificarAccionFila`, `detectarColumnasPresentes`,
+  `mergearProductoParaUpdate`, `validarPreciosMergeados`, `validarFormatoPreciosTocados`)
+
+## Guard NaN extraido (cierre de auditoria — WARNING #1, financial safety)
+
+El guard de formato numerico (NaN) sobre celdas de precio tocadas en el path
+`ACTUALIZAR` vivia inline en `validateRowActualizar` (import-productos-modal.tsx) sin
+test directo, pese a ser una validacion financiera (protege la regla de negocio #7
+contra el bug clasico de `NaN >= x` / `NaN > x` siempre `false`).
+
+Se extrajo a `validarFormatoPreciosTocados(row, columnasPresentes)` en
+`import-productos-logic.ts` (funcion pura, mismo patron que `validarPreciosMergeados`),
+y el modal ahora la invoca en el mismo punto donde vivia el bloque inline. Mensajes,
+orden y semantica de "tocado" (columna presente + celda no vacia) quedaron
+byte-for-byte identicos — confirmado por los 4 tests de integracion del modal
+(`import-productos-modal.test.tsx`) que siguen en verde sin modificacion.
+
+Diff: 80 lineas (29 ins en `import-productos-logic.ts`, 45 ins en su test, 18
+ins/12 del netos en `import-productos-modal.tsx`). Commit `3e8687c`.
 
 ## Verificacion
 
