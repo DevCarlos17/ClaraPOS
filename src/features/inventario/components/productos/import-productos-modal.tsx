@@ -9,7 +9,7 @@ import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { registrarMovimiento } from '@/features/inventario/hooks/use-kardex'
-import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
+import { useUnidadesActivas, type Unidad } from '@/features/inventario/hooks/use-unidades'
 
 interface ImportProductosModalProps {
   isOpen: boolean
@@ -45,6 +45,43 @@ interface ParsedComponente {
 }
 
 type Step = 'instrucciones' | 'preview' | 'procesando'
+
+/**
+ * Construye el `XLSX.WorkBook` de la plantilla de importacion (hojas
+ * "Inventario" + "Componentes Combos"), sin ningun texto informativo
+ * inyectado en las celdas de datos — extraida como funcion pura y testeable
+ * (spec-pr1 R8). Antes de este cambio, `handleDescargarPlantilla` escribia
+ * una nota "Unidades activas: ..." en la celda A6 via `sheet_add_aoa`, que
+ * se convertia en una fila fantasma con `codigo` invalido si el usuario
+ * reimportaba la plantilla sin llenarla (bug documentado en
+ * `exploration.md`). El texto de unidades activas vive ahora en el bloque
+ * de instrucciones del modal (`step === 'instrucciones'`).
+ */
+export function buildPlantillaWorkbook(departamentos: Departamento[], unidades: Unidad[]): XLSX.WorkBook {
+  const wb = XLSX.utils.book_new()
+
+  // Hoja 1: Inventario (misma estructura que la exportacion)
+  const headers = [['codigo', 'tipo', 'nombre', 'departamento', 'costo_usd', 'precio_venta_usd', 'precio_mayor_usd', 'stock_minimo', 'stock_inicial', 'unidad', 'tipo_impuesto']]
+  const ejemplos = [
+    ['PROD-001', 'P', 'PRODUCTO FISICO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '10.00', '15.00', '13.00', '5', '100', unidades[0]?.abreviatura ?? 'UND', 'Exento'],
+    ['SERV-001', 'S', 'SERVICIO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '5.00', '20.00', '', '0', '', '', 'Exento'],
+    ['COMBO-001', 'C', 'COMBO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '0.00', '35.00', '', '0', '', '', 'Exento'],
+  ]
+  const ws1 = XLSX.utils.aoa_to_sheet([...headers, ...ejemplos])
+  ws1['!cols'] = [{ wch: 14 }, { wch: 6 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 10 }, { wch: 12 }]
+  XLSX.utils.book_append_sheet(wb, ws1, 'Inventario')
+
+  // Hoja 2: Componentes Combos (misma estructura que la exportacion)
+  const headers2 = [['combo_codigo', 'combo_nombre', 'componente_codigo', 'componente_nombre', 'cantidad']]
+  const ejemplos2 = [
+    ['COMBO-001', 'COMBO EJEMPLO', 'PROD-001', 'PRODUCTO FISICO EJEMPLO', '2'],
+  ]
+  const ws2 = XLSX.utils.aoa_to_sheet([...headers2, ...ejemplos2])
+  ws2['!cols'] = [{ wch: 14 }, { wch: 24 }, { wch: 14 }, { wch: 24 }, { wch: 10 }]
+  XLSX.utils.book_append_sheet(wb, ws2, 'Componentes Combos')
+
+  return wb
+}
 
 export function ImportProductosModal({
   isOpen,
@@ -409,31 +446,7 @@ export function ImportProductosModal({
   }
 
   function handleDescargarPlantilla() {
-    const wb = XLSX.utils.book_new()
-
-    // Hoja 1: Inventario (misma estructura que la exportacion)
-    const unidadesDisponibles = unidades.map((u) => u.abreviatura).join(', ') || 'UND, KG, LT...'
-    const headers = [['codigo', 'tipo', 'nombre', 'departamento', 'costo_usd', 'precio_venta_usd', 'precio_mayor_usd', 'stock_minimo', 'stock_inicial', 'unidad', 'tipo_impuesto']]
-    const ejemplos = [
-      ['PROD-001', 'P', 'PRODUCTO FISICO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '10.00', '15.00', '13.00', '5', '100', unidades[0]?.abreviatura ?? 'UND', 'Exento'],
-      ['SERV-001', 'S', 'SERVICIO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '5.00', '20.00', '', '0', '', '', 'Exento'],
-      ['COMBO-001', 'C', 'COMBO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '0.00', '35.00', '', '0', '', '', 'Exento'],
-    ]
-    const ws1 = XLSX.utils.aoa_to_sheet([...headers, ...ejemplos])
-    ws1['!cols'] = [{ wch: 14 }, { wch: 6 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 10 }, { wch: 12 }]
-    // Nota informativa en celda A6
-    XLSX.utils.sheet_add_aoa(ws1, [[`Unidades activas: ${unidadesDisponibles}`]], { origin: 'A6' })
-    XLSX.utils.book_append_sheet(wb, ws1, 'Inventario')
-
-    // Hoja 2: Componentes Combos (misma estructura que la exportacion)
-    const headers2 = [['combo_codigo', 'combo_nombre', 'componente_codigo', 'componente_nombre', 'cantidad']]
-    const ejemplos2 = [
-      ['COMBO-001', 'COMBO EJEMPLO', 'PROD-001', 'PRODUCTO FISICO EJEMPLO', '2'],
-    ]
-    const ws2 = XLSX.utils.aoa_to_sheet([...headers2, ...ejemplos2])
-    ws2['!cols'] = [{ wch: 14 }, { wch: 24 }, { wch: 14 }, { wch: 24 }, { wch: 10 }]
-    XLSX.utils.book_append_sheet(wb, ws2, 'Componentes Combos')
-
+    const wb = buildPlantillaWorkbook(departamentos, unidades)
     const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
     const blob = new Blob([buffer], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -538,6 +551,7 @@ export function ImportProductosModal({
                   <li>Si dejas stock_inicial vacio, el producto se crea con stock 0. Podras agregar stock luego desde el Kardex.</li>
                   <li>Puedes exportar el inventario actual y re-importarlo: la estructura es identica.</li>
                   <li>El sistema detecta duplicados dentro del archivo y contra productos existentes.</li>
+                  <li>Unidades activas: {unidades.map((u) => u.abreviatura).join(', ') || 'UND, KG, LT...'}</li>
                 </ul>
               </div>
 
