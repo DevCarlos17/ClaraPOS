@@ -246,6 +246,22 @@ export function ImportProductosModal({
       else if (dep.is_active !== 1) errors.push('departamento inactivo')
     }
 
+    // Formato numerico de las celdas tocadas ANTES de fusionar — sin este guard,
+    // un NaN (celda no numerica) haria que las comparaciones de validarPreciosMergeados
+    // sean siempre `false` y la fila pasaria invalidamente (simetria con validateRowCrear).
+    if (columnasPresentes.has('costo_usd') && row.costo_usd.trim() !== '') {
+      const costo = parseFloat(row.costo_usd)
+      if (isNaN(costo) || costo < 0) errors.push('costo_usd invalido')
+    }
+    if (columnasPresentes.has('precio_venta_usd') && row.precio_venta_usd.trim() !== '') {
+      const venta = parseFloat(row.precio_venta_usd)
+      if (isNaN(venta) || venta < 0) errors.push('precio_venta_usd invalido')
+    }
+    if (columnasPresentes.has('precio_mayor_usd') && row.precio_mayor_usd.trim() !== '') {
+      const mayor = parseFloat(row.precio_mayor_usd)
+      if (isNaN(mayor) || mayor < 0) errors.push('precio_mayor_usd invalido')
+    }
+
     const merged = mergearProductoParaUpdate(
       { costo_usd: row.costo_usd, precio_venta_usd: row.precio_venta_usd, precio_mayor_usd: row.precio_mayor_usd },
       columnasPresentes,
@@ -466,7 +482,7 @@ export function ImportProductosModal({
     const productoUpdates = filasActualizar.map((row) => {
       const existente = productoPorCodigo.get(row.codigo)!
       const merged = row.merged!
-      const fields: Record<string, string> = { updated_at: now }
+      const fields: Record<string, string | null> = { updated_at: now }
 
       if (row.nombre.trim() !== '') fields.nombre = row.nombre
       if (row.departamento.trim() !== '') {
@@ -476,7 +492,7 @@ export function ImportProductosModal({
       if (row.costo_usd.trim() !== '') fields.costo_usd = new Decimal(merged.costo).toFixed(8)
       if (row.precio_venta_usd.trim() !== '') fields.precio_venta_usd = new Decimal(merged.venta).toFixed(8)
       if (row.precio_mayor_usd.trim() !== '') {
-        fields.precio_mayor_usd = merged.mayor !== null ? new Decimal(merged.mayor).toFixed(8) : ''
+        fields.precio_mayor_usd = merged.mayor !== null ? new Decimal(merged.mayor).toFixed(8) : null
       }
       if (row.stock_minimo.trim() !== '' && existente.tipo === 'P') {
         fields.stock_minimo = parseFloat(row.stock_minimo).toFixed(3)
