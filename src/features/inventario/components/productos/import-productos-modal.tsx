@@ -8,7 +8,7 @@ import { localNow } from '@/lib/dates'
 import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { registrarMovimiento } from '@/features/inventario/hooks/use-kardex'
+import { ejecutarStockInicialImport } from '@/features/inventario/lib/stock-deposito'
 import { useUnidadesActivas, type Unidad } from '@/features/inventario/hooks/use-unidades'
 
 interface ImportProductosModalProps {
@@ -376,25 +376,21 @@ export function ImportProductosModal({
       .filter(({ row }) => row.tipo === 'P' && parseFloat(row.stock_inicial) > 0)
 
     if (productosConStockInicial.length > 0) {
-      let kardexExitosos = 0
-      let kardexFallidos = 0
-      for (const { p, row } of productosConStockInicial) {
-        try {
-          await registrarMovimiento({
+      const totalEntradas = productosConStockInicial.length
+      try {
+        const { exitosos, sinDeposito } = await ejecutarStockInicialImport({
+          entradas: productosConStockInicial.map(({ p, row }) => ({
             producto_id: p.id,
-            tipo: 'E',
             cantidad: parseFloat(row.stock_inicial),
-            motivo: 'INVENTARIO INICIAL',
-            usuario_id: user.id,
-            empresa_id: user.empresa_id,
-          })
-          kardexExitosos++
-        } catch {
-          kardexFallidos++
-        }
+          })),
+          empresa_id: user.empresa_id,
+          usuario_id: user.id,
+        })
+        if (exitosos > 0) toast.success(`${exitosos} entrada(s) de inventario inicial registradas en Kardex`)
+        if (sinDeposito) toast.error(`${totalEntradas} entrada(s) de inventario inicial fallaron (sin deposito?)`)
+      } catch {
+        toast.error(`${totalEntradas} entrada(s) de inventario inicial fallaron`)
       }
-      if (kardexExitosos > 0) toast.success(`${kardexExitosos} entrada(s) de inventario inicial registradas en Kardex`)
-      if (kardexFallidos > 0) toast.error(`${kardexFallidos} entrada(s) de inventario inicial fallaron (sin deposito?)`)
     }
 
     // Paso 3: componentes de combos (hoja 2), tambien en una sola transaccion
