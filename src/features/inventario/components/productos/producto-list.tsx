@@ -22,6 +22,8 @@ import {
 } from '@/features/inventario/hooks/use-productos'
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
 import { useDepositos, useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
+import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
+import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
 import { useExistenciasPorDeposito } from '@/features/inventario/hooks/use-inventario-stock'
 import { useTodasLasRecetas } from '@/features/inventario/hooks/use-recetas'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -58,6 +60,8 @@ export function ProductoList() {
   // real en la columna, no '-'. Mismo criterio que useDepartamentos (no-activos).
   const { depositos } = useDepositos()
   const { depositos: depositosActivos } = useDepositosActivos()
+  const { unidades } = useUnidadesActivas()
+  const { impuestos } = useImpuestosActivos()
   const { rows: existenciasRows } = useExistenciasPorDeposito()
   const { tasaValor } = useTasaActual()
   const { valorTotal, stockCritico } = useResumenInventario()
@@ -212,7 +216,7 @@ export function ProductoList() {
     exportarProductosCsv(productos, departamentos, depositos, recetas, productosMap, {
       rows: existenciasRows,
       depositosActivos,
-    })
+    }, unidades)
     toast.success('Inventario exportado a CSV')
     setExportMenuOpen(false)
   }
@@ -225,7 +229,7 @@ export function ProductoList() {
     exportarProductosExcel(productos, departamentos, depositos, recetas, productosMap, {
       rows: existenciasRows,
       depositosActivos,
-    })
+    }, unidades)
     toast.success('Inventario exportado a Excel')
     setExportMenuOpen(false)
   }
@@ -613,6 +617,7 @@ export function ProductoList() {
         productos={productos}
         departamentos={departamentos}
         depositos={depositosActivos}
+        impuestos={impuestos}
       />
 
       <ComboDetalleModal

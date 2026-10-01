@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react'
+import { Fragment, useRef, useEffect, useState } from 'react'
 import { X, Upload, FileText, WarningCircle, CheckCircle } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import * as XLSX from 'xlsx'
@@ -9,6 +9,7 @@ import { localNow } from '@/lib/dates'
 import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
 import type { Deposito } from '@/features/inventario/hooks/use-depositos'
+import type { Impuesto } from '@/features/configuracion/hooks/use-impuestos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { ejecutarStockInicialImport, resolverDepositoPrincipalActivo } from '@/features/inventario/lib/stock-deposito'
 import { useUnidadesActivas, type Unidad } from '@/features/inventario/hooks/use-unidades'
@@ -16,7 +17,9 @@ import {
   clasificarAccionFila,
   debeIgnorarStockInicial,
   detectarColumnasPresentes,
+  estimarPesoSync,
   mergearProductoParaUpdate,
+  parseTipoImpuesto,
   resolverDepositoFila,
   validarFormatoPreciosTocados,
   validarPreciosMergeados,
@@ -36,6 +39,19 @@ interface ImportProductosModalProps {
    * `producto-list.tsx`. Default `[]` para no romper llamadores existentes
    * (la columna simplemente no se resuelve sin esta prop). */
   depositos?: Deposito[]
+  /** Tasas de impuesto de la empresa (Fase A commit 3) — usadas para resolver
+   * `impuesto_iva_id` a partir de la celda `tipo_impuesto` ("Gravable 16").
+   * `useImpuestosActivos()` en `producto-list.tsx`. Default `[]`. */
+  impuestos?: Impuesto[]
+}
+
+/** SI/S/1/TRUE/VERDADERO -> 1; NO/N/0/FALSE/FALSO -> 0; vacio -> 0 (default). */
+function normalizarManejaLotes(raw: string): { valor: number; invalido: boolean } {
+  const v = raw.trim().toUpperCase()
+  if (v === '') return { valor: 0, invalido: false }
+  if (['SI', 'S', '1', 'TRUE', 'VERDADERO'].includes(v)) return { valor: 1, invalido: false }
+  if (['NO', 'N', '0', 'FALSE', 'FALSO'].includes(v)) return { valor: 0, invalido: false }
+  return { valor: 0, invalido: true }
 }
 
 interface ParsedRow {
@@ -47,12 +63,34 @@ interface ParsedRow {
   costo_usd: string
   precio_venta_usd: string
   precio_mayor_usd: string
+  /** Precio especial (Fase A commit 3) — solo se valida especial < costo, nunca vs venta (B1.1). */
+  precio_especial_usd: string
   stock_minimo: string
   stock_inicial: string
   unidad: string
   tipo_impuesto: string
   /** Celda `deposito`, ya `.trim().toUpperCase()` (spec-pr3 R9, PR3b). */
   deposito: string
+  /** Codigo de barras (Fase A commit 3) — texto libre, sin transformacion de mayusculas. */
+  codigo_barras: string
+  /** Presentacion fisica (Fase A commit 3) — solo aplica a tipo P. */
+  presentacion: string
+  /** Ubicacion fisica en deposito (Fase A commit 3) — solo aplica a tipo P. */
+  ubicacion: string
+  /** Celda cruda `maneja_lotes` (Fase A commit 3) — ver `maneja_lotes_parsed` para el valor resuelto. */
+  maneja_lotes: string
+  /** Valor normalizado 0/1 de `maneja_lotes`, solo valido cuando `!manejaLotesInvalido`. */
+  maneja_lotes_parsed: number
+  /** `true` cuando la celda `maneja_lotes` no es un valor SI/NO reconocido. */
+  manejaLotesInvalido: boolean
+  /** Celda cruda `tipo_impuesto` antes de `parseTipoImpuesto` (Fase A commit 3), para mostrar en el preview. */
+  tipo_impuesto_raw: string
+  /** Porcentaje de IVA parseado de la celda (ej: "Gravable 16" -> 16), null si no aplica o no vino. */
+  tipo_impuesto_porcentaje: number | null
+  /** `true` cuando `tipo_impuesto` no coincide con ningun formato reconocido por `parseTipoImpuesto`. */
+  tipoImpuestoInvalido: boolean
+  /** FK resuelta contra `impuestos` (tipo_tributo=IVA, activo) por porcentaje — null = sin resolver. */
+  impuesto_iva_id: string | null
   /** Clasificacion base segun modo activo (spec-pr3 R2). `errors.length>0` tiene prioridad visual (R16). */
   accion: AccionFila
   /** Precios fusionados contra el producto existente — solo presente para filas `ACTUALIZAR` (spec-pr3 R7). */
@@ -105,18 +143,47 @@ type Step = 'instrucciones' | 'preview' | 'procesando'
  * `exploration.md`). El texto de unidades activas vive ahora en el bloque
  * de instrucciones del modal (`step === 'instrucciones'`).
  */
-export function buildPlantillaWorkbook(departamentos: Departamento[], unidades: Unidad[]): XLSX.WorkBook {
+export function buildPlantillaWorkbook(
+  departamentos: Departamento[],
+  unidades: Unidad[],
+  depositos: Deposito[] = []
+): XLSX.WorkBook {
   const wb = XLSX.utils.book_new()
+  const deptoNombre = departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO'
+  const depositoNombre = depositos[0]?.nombre ?? ''
 
-  // Hoja 1: Inventario (misma estructura que la exportacion)
-  const headers = [['codigo', 'tipo', 'nombre', 'departamento', 'costo_usd', 'precio_venta_usd', 'precio_mayor_usd', 'stock_minimo', 'stock_inicial', 'unidad', 'tipo_impuesto']]
+  // Hoja 1: Inventario (misma estructura que la exportacion + stock_inicial, solo-import)
+  const headers = [[
+    'codigo', 'tipo', 'nombre', 'departamento', 'costo_usd', 'precio_venta_usd',
+    'precio_mayor_usd', 'precio_especial_usd', 'stock_minimo', 'stock_inicial',
+    'unidad', 'tipo_impuesto', 'codigo_barras', 'presentacion', 'ubicacion',
+    'maneja_lotes', 'deposito',
+  ]]
   const ejemplos = [
-    ['PROD-001', 'P', 'PRODUCTO FISICO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '10.00', '15.00', '13.00', '5', '100', unidades[0]?.abreviatura ?? 'UND', 'Exento'],
-    ['SERV-001', 'S', 'SERVICIO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '5.00', '20.00', '', '0', '', '', 'Exento'],
-    ['COMBO-001', 'C', 'COMBO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '0.00', '35.00', '', '0', '', '', 'Exento'],
+    ['PROD-001', 'P', 'PRODUCTO FISICO EJEMPLO', deptoNombre, '10.00', '15.00', '13.00', '', '5', '100', unidades[0]?.abreviatura ?? 'UND', 'Exento', '7591234567890', 'CAJA x 12', 'A-01-1', 'NO', depositoNombre],
+    ['SERV-001', 'S', 'SERVICIO EJEMPLO', deptoNombre, '5.00', '20.00', '', '', '0', '', '', 'Exento', '', '', '', '', ''],
+    ['COMBO-001', 'C', 'COMBO EJEMPLO', deptoNombre, '0.00', '35.00', '', '', '0', '', '', 'Exento', '', '', '', '', ''],
   ]
   const ws1 = XLSX.utils.aoa_to_sheet([...headers, ...ejemplos])
-  ws1['!cols'] = [{ wch: 14 }, { wch: 6 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 10 }, { wch: 12 }]
+  ws1['!cols'] = [
+    { wch: 14 }, // codigo
+    { wch: 6 },  // tipo
+    { wch: 28 }, // nombre
+    { wch: 14 }, // departamento
+    { wch: 10 }, // costo_usd
+    { wch: 14 }, // precio_venta_usd
+    { wch: 14 }, // precio_mayor_usd
+    { wch: 14 }, // precio_especial_usd
+    { wch: 12 }, // stock_minimo
+    { wch: 13 }, // stock_inicial
+    { wch: 10 }, // unidad
+    { wch: 12 }, // tipo_impuesto
+    { wch: 16 }, // codigo_barras
+    { wch: 18 }, // presentacion
+    { wch: 14 }, // ubicacion
+    { wch: 12 }, // maneja_lotes
+    { wch: 16 }, // deposito
+  ]
   XLSX.utils.book_append_sheet(wb, ws1, 'Inventario')
 
   // Hoja 2: Componentes Combos (misma estructura que la exportacion)
@@ -137,6 +204,7 @@ export function ImportProductosModal({
   productos,
   departamentos,
   depositos = [],
+  impuestos = [],
 }: ImportProductosModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -148,6 +216,8 @@ export function ImportProductosModal({
   const [rows, setRows] = useState<ParsedRow[]>([])
   const [componentes, setComponentes] = useState<ParsedComponente[]>([])
   const [fileName, setFileName] = useState('')
+  const [columnasPresentes, setColumnasPresentes] = useState<ColumnasPresentes>(new Set())
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     if (isOpen) {
@@ -157,10 +227,21 @@ export function ImportProductosModal({
       setRows([])
       setComponentes([])
       setFileName('')
+      setColumnasPresentes(new Set())
+      setExpandedRows(new Set())
     } else {
       dialogRef.current?.close()
     }
   }, [isOpen])
+
+  function toggleExpandRow(rowNum: number) {
+    setExpandedRows((prev) => {
+      const next = new Set(prev)
+      if (next.has(rowNum)) next.delete(rowNum)
+      else next.add(rowNum)
+      return next
+    })
+  }
 
   function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
     if (e.target === dialogRef.current) onClose()
@@ -208,9 +289,21 @@ export function ImportProductosModal({
       const mayor = parseFloat(row.precio_mayor_usd)
       if (isNaN(mayor) || mayor < 0) {
         errors.push('precio_mayor_usd invalido')
-      } else if (!isNaN(venta) && mayor > venta) {
-        errors.push('precio_mayor_usd > precio_venta_usd')
       }
+      // B1.1: ya no se valida mayor > venta — nunca sabemos que tiene en
+      // mente el usuario para su precio mayorista.
+    }
+
+    // B1.2: tipo S ignora precio_especial_usd silenciosamente (decision
+    // explicita de la sesion de diseño de Fase A commit 3).
+    if (row.precio_especial_usd.trim() !== '' && row.tipo !== 'S') {
+      const especial = parseFloat(row.precio_especial_usd)
+      if (isNaN(especial) || especial < 0) {
+        errors.push('precio_especial_usd invalido')
+      } else if (!isNaN(costo) && especial < costo) {
+        errors.push('precio_especial_usd < costo_usd')
+      }
+      // B1.1: nunca se valida especial vs venta.
     }
 
     if (row.tipo === 'P') {
@@ -224,9 +317,10 @@ export function ImportProductosModal({
           errors.push('stock_inicial invalido (debe ser numero >= 0)')
         }
       }
-    } else if (row.stock_inicial.trim() !== '' && parseFloat(row.stock_inicial) > 0) {
-      errors.push('stock_inicial solo aplica a productos tipo P')
     }
+    // B1.2: tipo S/C ignora stock_inicial silenciosamente (no se usa en el
+    // INSERT, ver `productosConStockInicial` en handleImportar) — no es un
+    // error del usuario, es un campo que no aplica a ese tipo.
 
     if (row.unidad.trim() !== '') {
       if (row.tipo !== 'P') {
@@ -236,9 +330,20 @@ export function ImportProductosModal({
       }
     }
 
-    if (!['Gravable', 'Exento', 'Exonerado'].includes(row.tipo_impuesto)) {
-      errors.push('tipo_impuesto debe ser Gravable, Exento o Exonerado')
+    // Fase A commit 3: tipo_impuesto ahora admite "Gravable <porcentaje>".
+    if (row.tipoImpuestoInvalido) {
+      errors.push('tipo_impuesto debe ser Gravable, Exento o Exonerado (ej: "Gravable 16")')
+    } else if (row.tipo_impuesto === 'Gravable' && !row.impuesto_iva_id) {
+      errors.push("tipo_impuesto Gravable requiere porcentaje válido (ej: 'Gravable 16') — no existe tasa IVA activa con ese porcentaje")
     }
+
+    // maneja_lotes solo aplica a tipo P — S/C lo ignoran silenciosamente (B1.2).
+    if (row.tipo === 'P' && row.manejaLotesInvalido) {
+      errors.push('maneja_lotes debe ser SI o NO')
+    }
+
+    // ubicacion y presentacion: sin validacion propia (solo tipo P las usa,
+    // se ignoran silenciosamente para S/C al construir el INSERT).
 
     return errors
   }
@@ -273,17 +378,28 @@ export function ImportProductosModal({
     // sean siempre `false` y la fila pasaria invalidamente (simetria con validateRowCrear).
     // Extraido a funcion pura y testeada: import-productos-logic.ts.
     errors.push(...validarFormatoPreciosTocados(
-      { costo_usd: row.costo_usd, precio_venta_usd: row.precio_venta_usd, precio_mayor_usd: row.precio_mayor_usd },
+      {
+        costo_usd: row.costo_usd,
+        precio_venta_usd: row.precio_venta_usd,
+        precio_mayor_usd: row.precio_mayor_usd,
+        precio_especial_usd: row.precio_especial_usd,
+      },
       columnasPresentes
     ))
 
     const merged = mergearProductoParaUpdate(
-      { costo_usd: row.costo_usd, precio_venta_usd: row.precio_venta_usd, precio_mayor_usd: row.precio_mayor_usd },
+      {
+        costo_usd: row.costo_usd,
+        precio_venta_usd: row.precio_venta_usd,
+        precio_mayor_usd: row.precio_mayor_usd,
+        precio_especial_usd: row.precio_especial_usd,
+      },
       columnasPresentes,
       {
         costo_usd: existente.costo_usd,
         precio_venta_usd: existente.precio_venta_usd,
         precio_mayor_usd: existente.precio_mayor_usd,
+        precio_especial_usd: existente.precio_especial_usd,
       }
     )
     errors.push(...validarPreciosMergeados(merged, columnasPresentes))
@@ -293,18 +409,25 @@ export function ImportProductosModal({
       if (isNaN(stockMin) || stockMin < 0) errors.push('stock_minimo invalido')
     }
 
-    if (columnasPresentes.has('unidad') && row.unidad.trim() !== '') {
-      if (existente.tipo !== 'P') {
-        errors.push('unidad solo aplica a productos tipo P')
-      } else if (!unidades.some((u) => u.abreviatura === row.unidad)) {
+    // B1.2: producto existente tipo S/C ignora la columna unidad
+    // silenciosamente (no aplica, no es error del usuario).
+    if (columnasPresentes.has('unidad') && row.unidad.trim() !== '' && existente.tipo === 'P') {
+      if (!unidades.some((u) => u.abreviatura === row.unidad)) {
         errors.push(`unidad "${row.unidad}" no existe o no esta activa`)
       }
     }
 
-    if (columnasPresentes.has('tipo_impuesto') && row.tipo_impuesto.trim() !== '') {
-      if (!['Gravable', 'Exento', 'Exonerado'].includes(row.tipo_impuesto)) {
-        errors.push('tipo_impuesto debe ser Gravable, Exento o Exonerado')
+    if (columnasPresentes.has('tipo_impuesto') && row.tipo_impuesto_raw.trim() !== '') {
+      if (row.tipoImpuestoInvalido) {
+        errors.push('tipo_impuesto debe ser Gravable, Exento o Exonerado (ej: "Gravable 16")')
+      } else if (row.tipo_impuesto === 'Gravable' && !row.impuesto_iva_id) {
+        errors.push("tipo_impuesto Gravable requiere porcentaje válido (ej: 'Gravable 16') — no existe tasa IVA activa con ese porcentaje")
       }
+    }
+
+    // maneja_lotes: solo aplica a tipo P — S/C lo ignoran silenciosamente (B1.2).
+    if (columnasPresentes.has('maneja_lotes') && row.maneja_lotes.trim() !== '' && existente.tipo === 'P') {
+      if (row.manejaLotesInvalido) errors.push('maneja_lotes debe ser SI o NO')
     }
 
     return { errors, merged }
@@ -356,6 +479,27 @@ export function ImportProductosModal({
         : null
 
       const parsed: ParsedRow[] = rawRows.map((r, i) => {
+        const tipoImpuestoRawCell = String(r.tipo_impuesto ?? '').trim()
+        const parsedImpuesto = parseTipoImpuesto(tipoImpuestoRawCell === '' ? 'Exento' : tipoImpuestoRawCell)
+
+        // Fase A commit 3: resuelve impuesto_iva_id contra las tasas IVA
+        // activas de la empresa por porcentaje (tolerancia ±0.01 para floats).
+        // Si la celda no trae porcentaje ("Gravable" a secas) y existe
+        // exactamente una tasa IVA activa, se usa esa como default.
+        let impuestoIvaId: string | null = null
+        if (parsedImpuesto.tipo === 'Gravable' && !parsedImpuesto.invalid) {
+          const ivasActivas = impuestos.filter((imp) => imp.tipo_tributo === 'IVA' && imp.is_active === 1)
+          if (parsedImpuesto.porcentaje !== null) {
+            const match = ivasActivas.find((imp) => Math.abs(parseFloat(imp.porcentaje) - parsedImpuesto.porcentaje!) <= 0.01)
+            impuestoIvaId = match?.id ?? null
+          } else if (ivasActivas.length === 1) {
+            impuestoIvaId = ivasActivas[0]!.id
+          }
+        }
+
+        const manejaLotesRawCell = String(r.maneja_lotes ?? '').trim()
+        const manejaLotesNorm = normalizarManejaLotes(manejaLotesRawCell)
+
         const row: ParsedRow = {
           rowNum: i + 2,
           codigo: String(r.codigo ?? '').trim().toUpperCase(),
@@ -365,16 +509,22 @@ export function ImportProductosModal({
           costo_usd: String(r.costo_usd ?? '').trim(),
           precio_venta_usd: String(r.precio_venta_usd ?? '').trim(),
           precio_mayor_usd: String(r.precio_mayor_usd ?? '').trim(),
+          precio_especial_usd: String(r.precio_especial_usd ?? '').trim(),
           stock_minimo: String(r.stock_minimo ?? '').trim(),
           stock_inicial: String(r.stock_inicial ?? '').trim(),
           unidad: String(r.unidad ?? '').trim().toUpperCase(),
-          tipo_impuesto: (() => {
-            const raw = String(r.tipo_impuesto ?? 'Exento').trim().toLowerCase()
-            if (raw === 'gravable') return 'Gravable'
-            if (raw === 'exonerado') return 'Exonerado'
-            return 'Exento'
-          })(),
+          tipo_impuesto: parsedImpuesto.tipo,
           deposito: String(r.deposito ?? '').trim().toUpperCase(),
+          codigo_barras: String(r.codigo_barras ?? '').trim(),
+          presentacion: String(r.presentacion ?? '').trim(),
+          ubicacion: String(r.ubicacion ?? '').trim(),
+          maneja_lotes: manejaLotesRawCell,
+          maneja_lotes_parsed: manejaLotesNorm.valor,
+          manejaLotesInvalido: manejaLotesNorm.invalido,
+          tipo_impuesto_raw: tipoImpuestoRawCell,
+          tipo_impuesto_porcentaje: parsedImpuesto.porcentaje,
+          tipoImpuestoInvalido: parsedImpuesto.invalid ?? false,
+          impuesto_iva_id: impuestoIvaId,
           accion: 'CREAR',
           merged: undefined,
           depositoId: undefined,
@@ -451,6 +601,8 @@ export function ImportProductosModal({
 
       setRows(parsed)
       setComponentes(parsedComponentes)
+      setColumnasPresentes(columnasPresentes)
+      setExpandedRows(new Set())
       setStep('preview')
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Error leyendo archivo'
@@ -483,6 +635,12 @@ export function ImportProductosModal({
       const costo = parseFloat(row.costo_usd)
       const venta = parseFloat(row.precio_venta_usd)
       const mayor = row.precio_mayor_usd.trim() !== '' ? parseFloat(row.precio_mayor_usd) : null
+      // B1.2: tipo S ignora precio_especial_usd (ver validateRowCrear) — si
+      // igualmente vino en el archivo para un S, no se persiste (misma
+      // logica de "no aplica" que el resto de campos ignorados por tipo).
+      const especial = row.tipo !== 'S' && row.precio_especial_usd.trim() !== ''
+        ? parseFloat(row.precio_especial_usd)
+        : null
       return {
         id: uuidv4(),
         codigo: row.codigo,
@@ -492,24 +650,24 @@ export function ImportProductosModal({
         costo_usd: row.tipo === 'C' ? '0.00000000' : new Decimal(costo).toFixed(8),
         precio_venta_usd: new Decimal(venta).toFixed(8),
         precio_mayor_usd: mayor !== null ? new Decimal(mayor).toFixed(8) : null,
-        precio_especial_usd: null as string | null,
+        precio_especial_usd: especial !== null ? new Decimal(especial).toFixed(8) : null,
         stock: '0.000',
         stock_minimo: isServicioOCombo ? '0.000' : parseFloat(row.stock_minimo).toFixed(3),
         costo_promedio: '0.00',
         costo_ultimo: row.tipo === 'C' ? '0.00000000' : new Decimal(costo).toFixed(8),
         tipo_impuesto: row.tipo_impuesto,
-        impuesto_iva_id: null as string | null,
-        maneja_lotes: 0,
+        impuesto_iva_id: row.impuesto_iva_id ?? null,
+        maneja_lotes: row.tipo === 'P' ? row.maneja_lotes_parsed : 0,
         is_active: 1,
         empresa_id: user.empresa_id,
         created_at: now,
         updated_at: now,
-        ubicacion: null as string | null,
+        ubicacion: row.tipo === 'P' && row.ubicacion.trim() !== '' ? row.ubicacion : null,
         unidad_base_id: (row.tipo === 'P' && row.unidad.trim() !== '')
           ? (unidades.find((u) => u.abreviatura === row.unidad)?.id ?? null)
           : null,
-        presentacion: null as string | null,
-        codigo_barras: null as string | null,
+        presentacion: !isServicioOCombo && row.presentacion.trim() !== '' ? row.presentacion : null,
+        codigo_barras: row.codigo_barras.trim() !== '' ? row.codigo_barras : null,
         deposito_id: row.depositoId ?? null,
       }
     })
@@ -519,7 +677,7 @@ export function ImportProductosModal({
     const productoUpdates = filasActualizar.map((row) => {
       const existente = productoPorCodigo.get(row.codigo)!
       const merged = row.merged!
-      const fields: Record<string, string | null> = { updated_at: now }
+      const fields: Record<string, string | number | null> = { updated_at: now }
 
       if (row.nombre.trim() !== '') fields.nombre = row.nombre
       if (row.departamento.trim() !== '') {
@@ -531,13 +689,25 @@ export function ImportProductosModal({
       if (row.precio_mayor_usd.trim() !== '') {
         fields.precio_mayor_usd = merged.mayor !== null ? new Decimal(merged.mayor).toFixed(8) : null
       }
+      if (row.precio_especial_usd.trim() !== '') {
+        fields.precio_especial_usd = merged.especial != null ? new Decimal(merged.especial).toFixed(8) : null
+      }
       if (row.stock_minimo.trim() !== '' && existente.tipo === 'P') {
         fields.stock_minimo = parseFloat(row.stock_minimo).toFixed(3)
       }
-      if (row.tipo_impuesto.trim() !== '') fields.tipo_impuesto = row.tipo_impuesto
+      if (row.tipo_impuesto_raw.trim() !== '') {
+        fields.tipo_impuesto = row.tipo_impuesto
+        fields.impuesto_iva_id = row.tipo_impuesto === 'Gravable' ? (row.impuesto_iva_id ?? null) : null
+      }
       if (row.unidad.trim() !== '' && existente.tipo === 'P') {
         const und = unidades.find((u) => u.abreviatura === row.unidad)
         if (und) fields.unidad_base_id = und.id
+      }
+      if (row.codigo_barras.trim() !== '') fields.codigo_barras = row.codigo_barras
+      if (row.presentacion.trim() !== '' && existente.tipo === 'P') fields.presentacion = row.presentacion
+      if (row.ubicacion.trim() !== '' && existente.tipo === 'P') fields.ubicacion = row.ubicacion
+      if (row.maneja_lotes.trim() !== '' && existente.tipo === 'P' && !row.manejaLotesInvalido) {
+        fields.maneja_lotes = row.maneja_lotes_parsed
       }
       // Deposito (spec-pr3 R11): SOLO se agrega al UPDATE si la celda vino
       // tocada con un nombre valido (row.depositoId resuelto) — celda
@@ -656,7 +826,7 @@ export function ImportProductosModal({
   }
 
   function handleDescargarPlantilla() {
-    const wb = buildPlantillaWorkbook(departamentos, unidades)
+    const wb = buildPlantillaWorkbook(departamentos, unidades, depositos)
     const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
     const blob = new Blob([buffer], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -678,6 +848,73 @@ export function ImportProductosModal({
   const totalEscribible = countCrear + countActualizar
   const validCompCount = componentes.filter((c) => c.isValid).length
   const depositoNombrePorId = new Map(depositos.map((d) => [d.id, d.nombre]))
+
+  // Estimado de peso de sync (Fase A commit 3) — solo informativo, nunca
+  // bloqueante. Las filas con error se tratan como OMITIR (no se van a
+  // escribir, no suman al estimado) — mismo criterio visual que `accionMostrada`.
+  const pesoSyncBytes = estimarPesoSync(
+    rows.map((r) => ({
+      accion: r.errors.length > 0 ? 'OMITIR' : r.accion,
+      valores: {
+        codigo: r.codigo,
+        tipo: r.tipo,
+        nombre: r.nombre,
+        departamento: r.departamento,
+        costo_usd: r.costo_usd,
+        precio_venta_usd: r.precio_venta_usd,
+        precio_mayor_usd: r.precio_mayor_usd,
+        precio_especial_usd: r.precio_especial_usd,
+        stock_minimo: r.stock_minimo,
+        stock_inicial: r.stock_inicial,
+        unidad: r.unidad,
+        tipo_impuesto: r.tipo_impuesto_raw,
+        codigo_barras: r.codigo_barras,
+        presentacion: r.presentacion,
+        ubicacion: r.ubicacion,
+        maneja_lotes: r.maneja_lotes,
+        deposito: r.deposito,
+      },
+    })),
+    columnasPresentes
+  )
+  const pesoSyncKb = pesoSyncBytes / 1024
+  const pesoSyncColor =
+    pesoSyncKb < 100 ? 'text-green-700' : pesoSyncKb < 500 ? 'text-amber-700' : 'text-red-700'
+
+  /** Campos de detalle (nivel 2, expandible) de una fila — solo los
+   * presentes en el archivo (`columnasPresentes`), Fase A commit 3. */
+  function buildDetalleCampos(row: ParsedRow): { label: string; value: string }[] {
+    const campos: { label: string; value: string }[] = []
+    if (columnasPresentes.has('departamento')) campos.push({ label: 'Departamento', value: row.departamento || '-' })
+    if (columnasPresentes.has('costo_usd')) campos.push({ label: 'Costo USD', value: row.costo_usd || '-' })
+    if (columnasPresentes.has('precio_venta_usd')) campos.push({ label: 'Precio Venta', value: row.precio_venta_usd || '-' })
+    if (columnasPresentes.has('precio_mayor_usd')) campos.push({ label: 'Precio Mayor', value: row.precio_mayor_usd || '-' })
+    if (columnasPresentes.has('precio_especial_usd')) campos.push({ label: 'Precio Especial', value: row.precio_especial_usd || '-' })
+    if (columnasPresentes.has('stock_minimo')) campos.push({ label: 'Stock Min', value: row.stock_minimo || '-' })
+    if (columnasPresentes.has('stock_inicial')) {
+      campos.push({
+        label: 'Stock Inicial',
+        value: row.stockInicialIgnorado ? `${row.stock_inicial} (ignorado)` : (row.stock_inicial || '-'),
+      })
+    }
+    if (columnasPresentes.has('unidad')) campos.push({ label: 'Unidad', value: row.unidad || '-' })
+    if (columnasPresentes.has('tipo_impuesto')) {
+      campos.push({
+        label: 'Tipo Impuesto',
+        value: row.tipo_impuesto === 'Gravable' && row.tipo_impuesto_porcentaje !== null
+          ? `Gravable ${row.tipo_impuesto_porcentaje}%`
+          : row.tipo_impuesto,
+      })
+    }
+    if (columnasPresentes.has('codigo_barras')) campos.push({ label: 'Codigo Barras', value: row.codigo_barras || '-' })
+    if (columnasPresentes.has('presentacion')) campos.push({ label: 'Presentacion', value: row.presentacion || '-' })
+    if (columnasPresentes.has('ubicacion')) campos.push({ label: 'Ubicacion', value: row.ubicacion || '-' })
+    if (columnasPresentes.has('maneja_lotes')) campos.push({ label: 'Maneja Lotes', value: row.maneja_lotes || '-' })
+    if (columnasPresentes.has('deposito')) {
+      campos.push({ label: 'Deposito', value: row.depositoId ? depositoNombrePorId.get(row.depositoId) ?? '-' : '-' })
+    }
+    return campos
+  }
 
   return (
     <dialog
@@ -841,6 +1078,12 @@ export function ImportProductosModal({
                 </div>
               </div>
 
+              {/* Estimado de peso de la subida a PowerSync/Supabase (Fase A
+                  commit 3) — informativo, nunca bloqueante. */}
+              <p className={`text-xs ${pesoSyncColor}`}>
+                📦 Subida estimada: ~{pesoSyncKb < 1 ? pesoSyncKb.toFixed(2) : pesoSyncKb.toFixed(1)} KB
+              </p>
+
               {validCompCount > 0 && (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-xs text-green-800">
                   <CheckCircle className="h-3.5 w-3.5 inline mr-1" />
@@ -854,9 +1097,11 @@ export function ImportProductosModal({
                 </div>
               )}
 
-              {/* Tabla de preview */}
+              {/* Tabla de preview — 2 niveles (Fase A commit 3): nivel 1
+                  siempre visible, nivel 2 (detalle) se expande al hacer
+                  click en la fila (OMITIR no es expandible). */}
               <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <div className="overflow-x-auto max-h-[40vh]">
+                <div className="overflow-x-auto max-h-[50vh]">
                   <table className="w-full text-xs">
                     <thead className="sticky top-0 bg-gray-50">
                       <tr className="border-b border-gray-200">
@@ -866,59 +1111,56 @@ export function ImportProductosModal({
                         <th className="text-left px-2 py-2 font-medium">Codigo</th>
                         <th className="text-left px-2 py-2 font-medium">Tipo</th>
                         <th className="text-left px-2 py-2 font-medium">Nombre</th>
-                        <th className="text-left px-2 py-2 font-medium">Depto</th>
-                        <th className="text-right px-2 py-2 font-medium">Costo</th>
-                        <th className="text-right px-2 py-2 font-medium">Venta</th>
-                        <th className="text-right px-2 py-2 font-medium">Stk. Ini.</th>
-                        <th className="text-left px-2 py-2 font-medium">Unidad</th>
-                        <th className="text-left px-2 py-2 font-medium">Deposito</th>
                         <th className="text-left px-2 py-2 font-medium">Errores</th>
                       </tr>
                     </thead>
                     <tbody>
                       {rows.map((row) => {
                         const accionMostrada = row.errors.length > 0 ? 'ERROR' : row.accion
+                        const expandible = row.accion !== 'OMITIR'
+                        const expandido = expandible && expandedRows.has(row.rowNum)
                         return (
-                        <tr key={row.rowNum} className={`border-b border-gray-100 ${row.isValid ? '' : 'bg-red-50'}`}>
-                          <td className="px-2 py-1.5 text-gray-500">{row.rowNum}</td>
-                          <td className="px-2 py-1.5">
-                            {row.isValid
-                              ? <CheckCircle className="h-3.5 w-3.5 text-green-600" />
-                              : <WarningCircle className="h-3.5 w-3.5 text-red-600" />}
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <span className={
-                              accionMostrada === 'CREAR' ? 'text-blue-700 font-medium'
-                              : accionMostrada === 'ACTUALIZAR' ? 'text-teal-700 font-medium'
-                              : accionMostrada === 'ERROR' ? 'text-red-700 font-medium'
-                              : 'text-gray-500'
-                            }>
-                              {accionMostrada}
-                            </span>
-                          </td>
-                          <td className="px-2 py-1.5 font-mono">{row.codigo}</td>
-                          <td className="px-2 py-1.5">{row.tipo}</td>
-                          <td className="px-2 py-1.5 truncate max-w-[140px]">{row.nombre}</td>
-                          <td className="px-2 py-1.5">{row.departamento}</td>
-                          <td className="px-2 py-1.5 text-right tabular-nums">{row.costo_usd}</td>
-                          <td className="px-2 py-1.5 text-right tabular-nums">{row.precio_venta_usd}</td>
-                          <td className="px-2 py-1.5 text-right tabular-nums text-blue-700">
-                            <span
-                              className="inline-flex items-center gap-1 justify-end"
-                              title={row.stockInicialIgnorado ? 'Se ignora: el producto ya existe, no se mueve stock existente por import (usa Ajustes)' : undefined}
-                            >
-                              {row.stock_inicial || '-'}
-                              {row.stockInicialIgnorado && (
-                                <WarningCircle className="h-3 w-3 text-amber-600 shrink-0" />
-                              )}
-                            </span>
-                          </td>
-                          <td className="px-2 py-1.5 font-mono text-gray-600">{row.unidad || '-'}</td>
-                          <td className="px-2 py-1.5 font-mono text-gray-600">
-                            {row.depositoId ? depositoNombrePorId.get(row.depositoId) ?? '-' : '-'}
-                          </td>
-                          <td className="px-2 py-1.5 text-red-600">{row.errors.join('; ')}</td>
-                        </tr>
+                        <Fragment key={row.rowNum}>
+                          <tr
+                            onClick={expandible ? () => toggleExpandRow(row.rowNum) : undefined}
+                            className={`border-b border-gray-100 ${row.isValid ? '' : 'bg-red-50'} ${expandible ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+                          >
+                            <td className="px-2 py-1.5 text-gray-500">{row.rowNum}</td>
+                            <td className="px-2 py-1.5">
+                              {row.isValid
+                                ? <CheckCircle className="h-3.5 w-3.5 text-green-600" />
+                                : <WarningCircle className="h-3.5 w-3.5 text-red-600" />}
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <span className={
+                                accionMostrada === 'CREAR' ? 'text-blue-700 font-medium'
+                                : accionMostrada === 'ACTUALIZAR' ? 'text-teal-700 font-medium'
+                                : accionMostrada === 'ERROR' ? 'text-red-700 font-medium'
+                                : 'text-gray-500'
+                              }>
+                                {accionMostrada}
+                              </span>
+                            </td>
+                            <td className="px-2 py-1.5 font-mono">{row.codigo}</td>
+                            <td className="px-2 py-1.5">{row.tipo}</td>
+                            <td className="px-2 py-1.5 truncate max-w-[200px]">{row.nombre}</td>
+                            <td className="px-2 py-1.5 text-red-600">{row.errors.join('; ')}</td>
+                          </tr>
+                          {expandido && (
+                            <tr className="border-b border-gray-100 bg-gray-50/60">
+                              <td colSpan={7} className="px-4 py-3">
+                                <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+                                  {buildDetalleCampos(row).map((campo) => (
+                                    <div key={campo.label} className="flex justify-between gap-2 text-xs">
+                                      <span className="text-gray-500">{campo.label}</span>
+                                      <span className="font-medium text-gray-800">{campo.value}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                         )
                       })}
                     </tbody>

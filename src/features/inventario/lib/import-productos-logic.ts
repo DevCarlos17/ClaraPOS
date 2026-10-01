@@ -42,18 +42,24 @@ export interface RowPreciosInput {
   costo_usd: string
   precio_venta_usd: string
   precio_mayor_usd: string
+  /** Opcional por compatibilidad retro con llamadores de PR3a/PR3b (Fase A commit 3). */
+  precio_especial_usd?: string
 }
 
 export interface ProductoExistentePrecios {
   costo_usd: string
   precio_venta_usd: string
   precio_mayor_usd: string | null
+  /** Opcional por compatibilidad retro (Fase A commit 3). */
+  precio_especial_usd?: string | null
 }
 
 export interface MergedPrecios {
   costo: number
   venta: number
   mayor: number | null
+  /** Opcional por compatibilidad retro (Fase A commit 3). */
+  especial?: number | null
 }
 
 /**
@@ -82,7 +88,15 @@ export function mergearProductoParaUpdate(
       ? parseFloat(productoExistente.precio_mayor_usd)
       : null
 
-  return { costo, venta, mayor }
+  const rowEspecial = row.precio_especial_usd ?? ''
+  const existenteEspecial = productoExistente.precio_especial_usd ?? null
+  const especial = columnasPresentes.has('precio_especial_usd') && rowEspecial.trim() !== ''
+    ? parseFloat(rowEspecial)
+    : existenteEspecial !== null
+      ? parseFloat(existenteEspecial)
+      : null
+
+  return { costo, venta, mayor, especial }
 }
 
 /**
@@ -110,6 +124,11 @@ export function validarFormatoPreciosTocados(row: RowPreciosInput, columnasPrese
     const mayor = parseFloat(row.precio_mayor_usd)
     if (isNaN(mayor) || mayor < 0) errores.push('precio_mayor_usd invalido')
   }
+  const especialRaw = row.precio_especial_usd ?? ''
+  if (columnasPresentes.has('precio_especial_usd') && especialRaw.trim() !== '') {
+    const especial = parseFloat(especialRaw)
+    if (isNaN(especial) || especial < 0) errores.push('precio_especial_usd invalido')
+  }
 
   return errores
 }
@@ -128,27 +147,31 @@ function mensajeVentaMenorQueCosto(merged: MergedPrecios, columnasPresentes: Col
   return `${base} — ajustá costo_usd y/o precio_venta_usd para que el precio de venta sea mayor o igual al costo`
 }
 
-function mensajeMayorMayorQueVenta(merged: MergedPrecios, columnasPresentes: ColumnasPresentes): string {
-  const mayorTocado = columnasPresentes.has('precio_mayor_usd')
-  const ventaTocada = columnasPresentes.has('precio_venta_usd')
-  const base = `el precio mayor ${merged.mayor} supera el precio de venta ${merged.venta}`
+function mensajeEspecialMenorQueCosto(merged: MergedPrecios, columnasPresentes: ColumnasPresentes): string {
+  const costoTocado = columnasPresentes.has('costo_usd')
+  const especialTocado = columnasPresentes.has('precio_especial_usd')
+  const base = `el precio especial ${merged.especial} es menor al costo ${merged.costo}`
 
-  if (mayorTocado && !ventaTocada) {
-    return `${base} — incluí también precio_venta_usd o corregí precio_mayor_usd`
+  if (especialTocado && !costoTocado) {
+    return `${base} — incluí también costo_usd`
   }
-  if (!mayorTocado && ventaTocada) {
-    return `${base} — incluí también precio_mayor_usd para bajarlo, o corregí precio_venta_usd`
+  if (!especialTocado && costoTocado) {
+    return `el costo ${merged.costo} supera el precio especial actual ${merged.especial} — incluí también precio_especial_usd`
   }
-  return `${base} — ajustá precio_venta_usd y/o precio_mayor_usd para que el precio mayor sea menor o igual al de venta`
+  return `${base} — ajustá costo_usd y/o precio_especial_usd para que el precio especial sea mayor o igual al costo`
 }
 
 /**
- * spec-pr3 R8 (LOCKED, decision financiera): aplica la regla de negocio #7
- * (`venta >= costo`, y si `mayor != null`, `mayor <= venta`) sobre los
- * valores YA FUSIONADOS (`mergearProductoParaUpdate`). Cuando el estado
- * fusionado queda invalido, el mensaje nombra el campo tocado por el
- * archivo y sugiere incluir el campo no tocado que resolveria la violacion
- * — nunca ajusta valores automaticamente.
+ * spec-pr3 R8 (aplica solo la parte de la regla de negocio #7 que sigue
+ * vigente tras B1.1): `venta >= costo` y, si `especial != null`,
+ * `especial >= costo`, sobre los valores YA FUSIONADOS
+ * (`mergearProductoParaUpdate`). La restriccion `mayor <= venta` (y la
+ * equivalente `especial <= venta`) se eliminó deliberadamente (B1.1, sesion
+ * 2026-09-30): nunca sabemos que tiene en mente el usuario para sus precios
+ * mayorista/especial — pueden ser legitimamente mayores al de venta detal.
+ * Cuando el estado fusionado queda invalido, el mensaje nombra el campo
+ * tocado por el archivo y sugiere incluir el campo no tocado que
+ * resolveria la violacion — nunca ajusta valores automaticamente.
  */
 export function validarPreciosMergeados(merged: MergedPrecios, columnasPresentes: ColumnasPresentes): string[] {
   const errores: string[] = []
@@ -157,8 +180,8 @@ export function validarPreciosMergeados(merged: MergedPrecios, columnasPresentes
     errores.push(mensajeVentaMenorQueCosto(merged, columnasPresentes))
   }
 
-  if (merged.mayor !== null && merged.mayor > merged.venta) {
-    errores.push(mensajeMayorMayorQueVenta(merged, columnasPresentes))
+  if (merged.especial !== null && merged.especial !== undefined && merged.especial < merged.costo) {
+    errores.push(mensajeEspecialMenorQueCosto(merged, columnasPresentes))
   }
 
   return errores
@@ -241,4 +264,71 @@ export function debeIgnorarStockInicial(accion: AccionFila, stockInicialCell: st
   if (accion !== 'ACTUALIZAR') return false
   const valor = parseFloat(stockInicialCell)
   return !isNaN(valor) && valor > 0
+}
+
+export interface TipoImpuestoParseado {
+  tipo: 'Gravable' | 'Exento' | 'Exonerado'
+  porcentaje: number | null
+  /** `true` cuando la celda no coincide con ningun formato reconocido (Fase A commit 3). */
+  invalid?: boolean
+}
+
+/**
+ * Fase A commit 3: parsea la celda `tipo_impuesto` del import, que ahora
+ * admite el formato `"Gravable <porcentaje>"` (ej: `"Gravable 16"`) para
+ * resolver la tasa de IVA sin forzar al usuario a conocer el UUID interno
+ * de `impuestos_ve`. `"Exento"`/`"Exonerado"` no llevan porcentaje (no son
+ * IVA). Celdas no reconocidas devuelven `invalid: true` — el llamador
+ * (`validateRowCrear`/`validateRowActualizar`) decide como reportarlo.
+ */
+export function parseTipoImpuesto(celda: string): TipoImpuestoParseado {
+  const raw = celda.trim()
+  const lower = raw.toLowerCase()
+
+  if (lower === 'exento') return { tipo: 'Exento', porcentaje: null }
+  if (lower === 'exonerado') return { tipo: 'Exonerado', porcentaje: null }
+  if (lower === 'gravable') return { tipo: 'Gravable', porcentaje: null }
+
+  if (lower.startsWith('gravable')) {
+    const resto = raw.slice('gravable'.length).trim()
+    const porcentaje = parseFloat(resto)
+    if (!isNaN(porcentaje)) return { tipo: 'Gravable', porcentaje }
+  }
+
+  return { tipo: 'Exento', porcentaje: null, invalid: true }
+}
+
+/** Fila minima necesaria para `estimarPesoSync` — desacoplada de `ParsedRow`
+ * (vive en el modal, con DOM/PowerSync) para mantener esta funcion pura. */
+export interface FilaPesoSync {
+  accion: AccionFila
+  valores: Record<string, string>
+}
+
+/**
+ * Fase A commit 3: estima en bytes el peso de la subida a PowerSync/Supabase
+ * de las filas que SI se van a escribir (`accion !== 'OMITIR'`) — solo
+ * informativo en el preview, nunca bloqueante. Formula simple y
+ * conservadora: 150 bytes base por fila (overhead de columnas fijas del
+ * INSERT/UPDATE: id, empresa_id, timestamps, etc. que no vienen del
+ * archivo) + el largo en bytes del JSON de los valores que SI vienen del
+ * archivo (solo las columnas presentes en el header — `columnasPresentes`,
+ * nunca el objeto `valores` completo, para no inflar el estimado con
+ * campos que el usuario no toco).
+ */
+export function estimarPesoSync(filas: FilaPesoSync[], columnasPresentes: ColumnasPresentes): number {
+  let total = 0
+
+  for (const fila of filas) {
+    if (fila.accion === 'OMITIR') continue
+
+    total += 150
+    const valoresTocados: Record<string, string> = {}
+    for (const col of columnasPresentes) {
+      if (col in fila.valores) valoresTocados[col] = fila.valores[col]
+    }
+    total += JSON.stringify(valoresTocados).length
+  }
+
+  return total
 }

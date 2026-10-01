@@ -4,10 +4,14 @@ import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
 import type { Receta } from '@/features/inventario/hooks/use-recetas'
 import type { Deposito } from '@/features/inventario/hooks/use-depositos'
+import type { Unidad } from '@/features/inventario/hooks/use-unidades'
 import type { ExistenciaRow } from '@/features/inventario/hooks/use-inventario-stock'
 import { ordenarDepositosColumnas } from '@/features/inventario/lib/existencias-pivot'
 
-// Columnas del formato de importacion/exportacion (identicas para facilitar re-importacion)
+// Columnas del formato de exportacion. `stock_inicial` NO aparece aqui (es
+// solo-import, no tiene sentido re-exportar un stock de apertura); el resto
+// de columnas es identico al formato de importacion para facilitar
+// re-importacion (Fase A commit 2 — alineacion con el formulario de producto).
 const COLUMNAS = [
   'codigo',
   'tipo',
@@ -16,8 +20,14 @@ const COLUMNAS = [
   'costo_usd',
   'precio_venta_usd',
   'precio_mayor_usd',
+  'precio_especial_usd',
   'stock_minimo',
+  'unidad',
   'tipo_impuesto',
+  'codigo_barras',
+  'presentacion',
+  'ubicacion',
+  'maneja_lotes',
   'deposito',
 ] as const
 
@@ -29,8 +39,14 @@ interface ExportRow {
   costo_usd: number
   precio_venta_usd: number
   precio_mayor_usd: number | null
+  precio_especial_usd: number | null
   stock_minimo: number
+  unidad: string
   tipo_impuesto: string
+  codigo_barras: string
+  presentacion: string
+  ubicacion: string
+  maneja_lotes: string
   deposito: string
 }
 
@@ -52,7 +68,8 @@ interface ComponenteRow {
 export function buildRows(
   productos: Producto[],
   departamentos: Departamento[],
-  depositos: Deposito[]
+  depositos: Deposito[],
+  unidades: Unidad[] = []
 ): ExportRow[] {
   const depMap = new Map<string, string>()
   for (const d of departamentos) depMap.set(d.id, d.nombre)
@@ -60,17 +77,28 @@ export function buildRows(
   const depositoMap = new Map<string, string>()
   for (const d of depositos) depositoMap.set(d.id, d.nombre)
 
+  const unidadMap = new Map<string, string>()
+  for (const u of unidades) unidadMap.set(u.id, u.abreviatura)
+
   // Exportar P, S y C — todos incluidos en la hoja principal
   return productos.map((p) => ({
       codigo: p.codigo,
-      tipo: p.tipo, // P o S (valor raw, igual al formato de importacion)
+      tipo: p.tipo, // P, S o C (valor raw, igual al formato de importacion)
       nombre: p.nombre,
       departamento: depMap.get(p.departamento_id) ?? '',
       costo_usd: parseFloat(p.costo_usd),
       precio_venta_usd: parseFloat(p.precio_venta_usd),
       precio_mayor_usd: p.precio_mayor_usd ? parseFloat(p.precio_mayor_usd) : null,
+      precio_especial_usd: p.precio_especial_usd ? parseFloat(p.precio_especial_usd) : null,
       stock_minimo: parseFloat(p.stock_minimo),
+      unidad: unidadMap.get(p.unidad_base_id ?? '') ?? '',
       tipo_impuesto: p.tipo_impuesto,
+      codigo_barras: p.codigo_barras ?? '',
+      // presentacion y ubicacion solo tienen sentido para productos fisicos
+      // (tipo P) — S y C los dejan en null en BD (use-productos.ts), vacios aqui.
+      presentacion: p.tipo === 'S' || p.tipo === 'C' ? '' : (p.presentacion ?? ''),
+      ubicacion: p.tipo !== 'P' ? '' : (p.ubicacion ?? ''),
+      maneja_lotes: p.tipo !== 'P' ? '' : (p.maneja_lotes === 1 ? 'SI' : 'NO'),
       deposito: depositoMap.get(p.deposito_id ?? '') ?? '',
     }))
 }
@@ -153,8 +181,14 @@ export function buildInventarioWorkbook(
     { wch: 12 }, // costo
     { wch: 14 }, // precio_venta
     { wch: 14 }, // precio_mayor
+    { wch: 14 }, // precio_especial
     { wch: 14 }, // stock_minimo
+    { wch: 10 }, // unidad
     { wch: 14 }, // tipo_impuesto
+    { wch: 16 }, // codigo_barras
+    { wch: 18 }, // presentacion
+    { wch: 14 }, // ubicacion
+    { wch: 12 }, // maneja_lotes
     { wch: 16 }, // deposito
   ]
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventario')
@@ -201,9 +235,10 @@ export function exportarProductosCsv(
   existencias: { rows: ExistenciaRow[]; depositosActivos: Deposito[] } = {
     rows: [],
     depositosActivos: [],
-  }
+  },
+  unidades: Unidad[] = []
 ) {
-  const rows = buildRows(productos, departamentos, depositos)
+  const rows = buildRows(productos, departamentos, depositos, unidades)
   const componenteRows = buildComponenteRows(productos, recetas, productosMap)
 
   const escape = (val: unknown): string => {
@@ -261,9 +296,10 @@ export function exportarProductosExcel(
   existencias: { rows: ExistenciaRow[]; depositosActivos: Deposito[] } = {
     rows: [],
     depositosActivos: [],
-  }
+  },
+  unidades: Unidad[] = []
 ) {
-  const rows = buildRows(productos, departamentos, depositos)
+  const rows = buildRows(productos, departamentos, depositos, unidades)
   const componenteRows = buildComponenteRows(productos, recetas, productosMap)
   const existenciasSheetData = buildExistenciasSheet(
     existencias.rows,

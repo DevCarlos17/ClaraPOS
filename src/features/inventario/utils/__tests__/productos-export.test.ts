@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx'
 import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
 import type { Deposito } from '@/features/inventario/hooks/use-depositos'
+import type { Unidad } from '@/features/inventario/hooks/use-unidades'
 import type { ExistenciaRow } from '@/features/inventario/hooks/use-inventario-stock'
 import { ordenarDepositosColumnas } from '@/features/inventario/lib/existencias-pivot'
 import {
@@ -77,6 +78,21 @@ function deposito(overrides: Partial<Deposito> = {}): Deposito {
   }
 }
 
+function unidad(overrides: Partial<Unidad> = {}): Unidad {
+  return {
+    id: 'und-1',
+    empresa_id: 'emp-1',
+    nombre: 'UNIDAD',
+    abreviatura: 'UND',
+    es_decimal: 0,
+    is_active: 1,
+    created_at: '',
+    updated_at: '',
+    updated_by: null,
+    ...overrides,
+  }
+}
+
 function existenciaRow(overrides: Partial<ExistenciaRow> = {}): ExistenciaRow {
   return {
     producto_id: 'prod-1',
@@ -121,6 +137,69 @@ describe('buildRows — columna deposito (spec-pr2 R1)', () => {
     const rows = buildRows([p], [departamento()], [deposito({ id: 'otro-id' })])
 
     expect(rows[0]!.deposito).toBe('')
+  })
+})
+
+describe('buildRows — campos nuevos (unidad, codigo_barras, presentacion, ubicacion, maneja_lotes, precio_especial_usd)', () => {
+  it('producto tipo P con todos los campos nuevos presentes -> valores correctos en la fila', () => {
+    const und = unidad({ id: 'und-kg', abreviatura: 'KG' })
+    const p = producto({
+      tipo: 'P',
+      unidad_base_id: 'und-kg',
+      codigo_barras: '7591234567890',
+      presentacion: 'CAJA x 12',
+      ubicacion: 'A-01-1',
+      maneja_lotes: 1,
+      precio_especial_usd: '12.50000000',
+    })
+
+    const rows = buildRows([p], [departamento()], [deposito()], [und])
+
+    expect(rows[0]!.unidad).toBe('KG')
+    expect(rows[0]!.codigo_barras).toBe('7591234567890')
+    expect(rows[0]!.presentacion).toBe('CAJA x 12')
+    expect(rows[0]!.ubicacion).toBe('A-01-1')
+    expect(rows[0]!.maneja_lotes).toBe('SI')
+    expect(rows[0]!.precio_especial_usd).toBe(12.5)
+  })
+
+  it('producto tipo S -> maneja_lotes, ubicacion y presentacion vacios (no aplican)', () => {
+    const p = producto({ tipo: 'S', presentacion: 'ALGO', ubicacion: 'ALGO', maneja_lotes: 1 })
+
+    const rows = buildRows([p], [departamento()], [deposito()], [])
+
+    expect(rows[0]!.maneja_lotes).toBe('')
+    expect(rows[0]!.ubicacion).toBe('')
+    expect(rows[0]!.presentacion).toBe('')
+  })
+
+  it('producto tipo C -> maneja_lotes, ubicacion y presentacion vacios (no aplican)', () => {
+    const p = producto({ tipo: 'C', presentacion: 'ALGO', ubicacion: 'ALGO', maneja_lotes: 1 })
+
+    const rows = buildRows([p], [departamento()], [deposito()], [])
+
+    expect(rows[0]!.maneja_lotes).toBe('')
+    expect(rows[0]!.ubicacion).toBe('')
+    expect(rows[0]!.presentacion).toBe('')
+  })
+
+  it('producto tipo P con maneja_lotes=0 -> "NO"; maneja_lotes=1 -> "SI"', () => {
+    const pNo = producto({ tipo: 'P', maneja_lotes: 0 })
+    const pSi = producto({ tipo: 'P', maneja_lotes: 1 })
+
+    const rows = buildRows([pNo, pSi], [departamento()], [deposito()], [])
+
+    expect(rows[0]!.maneja_lotes).toBe('NO')
+    expect(rows[1]!.maneja_lotes).toBe('SI')
+  })
+
+  it('precio_especial_usd null -> null en la fila; unidad_base_id null -> cadena vacia', () => {
+    const p = producto({ precio_especial_usd: null, unidad_base_id: null })
+
+    const rows = buildRows([p], [departamento()], [deposito()], [])
+
+    expect(rows[0]!.precio_especial_usd).toBeNull()
+    expect(rows[0]!.unidad).toBe('')
   })
 })
 
