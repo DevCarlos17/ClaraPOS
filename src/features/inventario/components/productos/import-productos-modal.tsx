@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import * as XLSX from 'xlsx'
 import Decimal from 'decimal.js'
 import { kysely, db } from '@/core/db/kysely/kysely'
+import { connector } from '@/core/db/powersync/connector'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import type { Producto } from '@/features/inventario/hooks/use-productos'
@@ -220,6 +221,7 @@ export function ImportProductosModal({
   const [fileName, setFileName] = useState('')
   const [columnasPresentes, setColumnasPresentes] = useState<ColumnasPresentes>(new Set())
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
+  const [progreso, setProgreso] = useState<{ fase: string; pct: number }>({ fase: '', pct: 0 })
 
   useEffect(() => {
     if (isOpen) {
@@ -231,6 +233,7 @@ export function ImportProductosModal({
       setFileName('')
       setColumnasPresentes(new Set())
       setExpandedRows(new Set())
+      setProgreso({ fase: '', pct: 0 })
     } else {
       dialogRef.current?.close()
     }
@@ -723,26 +726,26 @@ export function ImportProductosModal({
     const codigoToId = new Map<string, string>()
     for (const p of productoInserts) codigoToId.set(p.codigo, p.id)
 
-    // Paso 1: UN solo writeTransaction con INSERT (CREAR) y UPDATE (ACTUALIZAR) mezclados —
-    // todo-o-nada (spec-pr3 R14): si cualquier sentencia lanza, ninguna de la fase persiste.
+    // Paso 1: escritura DIRECTA a Supabase (bypass PowerSync) — import masivo
+    // no pasa por la cola de sync local, evita inflar el CRUD queue de
+    // PowerSync con cientos de operaciones individuales. Todo-o-nada a nivel
+    // de llamada: si el INSERT o cualquier UPDATE falla, se lanza y cae al
+    // catch (spec-pr3 R14, mismo contrato que el writeTransaction anterior).
+    setProgreso({ fase: 'Guardando productos...', pct: 10 })
     try {
-      await db.writeTransaction(async (tx) => {
-        for (const p of productoInserts) {
-          await tx.execute(
-            `INSERT INTO productos (id, codigo, tipo, nombre, departamento_id, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd, stock, stock_minimo, costo_promedio, costo_ultimo, tipo_impuesto, impuesto_iva_id, maneja_lotes, is_active, empresa_id, created_at, updated_at, ubicacion, unidad_base_id, presentacion, codigo_barras, deposito_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [p.id, p.codigo, p.tipo, p.nombre, p.departamento_id, p.costo_usd, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock, p.stock_minimo, p.costo_promedio, p.costo_ultimo, p.tipo_impuesto, p.impuesto_iva_id, p.maneja_lotes, p.is_active, p.empresa_id, p.created_at, p.updated_at, p.ubicacion, p.unidad_base_id, p.presentacion, p.codigo_barras, p.deposito_id]
+      if (productoInserts.length > 0) {
+        const { error: insertError } = await connector.client.from('productos').insert(productoInserts)
+        if (insertError) throw insertError
+      }
+      if (productoUpdates.length > 0) {
+        const updateResults = await Promise.all(
+          productoUpdates.map(({ id, fields }) =>
+            connector.client.from('productos').update(fields).eq('id', id).eq('empresa_id', user.empresa_id)
           )
-        }
-        for (const u of productoUpdates) {
-          const cols = Object.keys(u.fields)
-          const setClause = cols.map((c) => `${c} = ?`).join(', ')
-          await tx.execute(
-            `UPDATE productos SET ${setClause} WHERE id = ?`,
-            [...cols.map((c) => u.fields[c]), u.id]
-          )
-        }
-      })
+        )
+        const updateError = updateResults.find((r) => r.error)?.error
+        if (updateError) throw updateError
+      }
       const totalEscritos = productoInserts.length + productoUpdates.length
       toast.success(
         `${totalEscritos} producto(s) importado(s) correctamente` +
@@ -753,6 +756,7 @@ export function ImportProductosModal({
       onClose()
       return
     }
+    setProgreso({ fase: 'Registrando stock inicial...', pct: 60 })
 
     // Paso 2: inventario inicial via kardex para productos tipo P con stock_inicial > 0
     // (solo filas CREAR — ACTUALIZAR nunca alimenta este batch, R11/R12)
@@ -778,6 +782,8 @@ export function ImportProductosModal({
         toast.error(`${totalEntradas} entrada(s) de inventario inicial fallaron`)
       }
     }
+
+    setProgreso({ fase: 'Importando combos...', pct: 80 })
 
     // Paso 3: componentes de combos (hoja 2), tambien en una sola transaccion
     const validComponentes = componentes.filter((c) => c.isValid)
@@ -824,71 +830,67 @@ export function ImportProductosModal({
       if (compFallidos > 0) toast.error(`${compFallidos} componente(s) no pudieron importarse`)
     }
 
-    // Paso 4: log de auditoria (PowerSync — offline-first, sincroniza a Supabase)
-    // Se escribe SIEMPRE al final, incluyendo filas OMITIR y ERROR, para dar
-    // visibilidad completa de lo que ocurrio en el import.
+    setProgreso({ fase: 'Registrando auditoría...', pct: 90 })
+
+    // Paso 4: log de auditoria — escritura DIRECTA a Supabase (bypass
+    // PowerSync, ver IMMUTABLE_TABLES en connector.ts). Se escribe SIEMPRE al
+    // final, incluyendo filas OMITIR y ERROR, para dar visibilidad completa
+    // de lo que ocurrio en el import. Los campos JSONB (valores_anteriores,
+    // valores_nuevos, errores) se pasan como objetos/arrays crudos — supabase-js
+    // serializa JSONB automaticamente, NO se debe JSON.stringify aqui.
     try {
       const logId = uuidv4()
       const productoPorCodigoLog = new Map(productos.map((p) => [p.codigo, p]))
 
-      await db.writeTransaction(async (tx) => {
-        // Cabecera
-        await tx.execute(
-          `INSERT INTO import_log (id, empresa_id, usuario_id, fecha, modo, archivo_nombre,
-            total_filas, filas_creadas, filas_actualizadas, filas_omitidas, filas_error, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            logId,
-            user.empresa_id,
-            user.id,
-            now,
-            modo,
-            fileName || null,
-            rows.length,
-            filasCrear.length,
-            filasActualizar.length,
-            rows.filter((r) => r.accion === 'OMITIR').length,
-            rows.filter((r) => r.errors.length > 0).length,
-            now,
-          ]
-        )
+      const { error: cabeceraError } = await connector.client.from('import_log').insert({
+        id: logId,
+        empresa_id: user.empresa_id,
+        usuario_id: user.id,
+        fecha: now,
+        modo,
+        archivo_nombre: fileName || null,
+        total_filas: rows.length,
+        filas_creadas: filasCrear.length,
+        filas_actualizadas: filasActualizar.length,
+        filas_omitidas: rows.filter((r) => r.accion === 'OMITIR').length,
+        filas_error: rows.filter((r) => r.errors.length > 0).length,
+        created_at: now,
+      })
+      if (cabeceraError) throw cabeceraError
 
-        // Detalle por fila
-        for (const row of rows) {
-          const accionLog = row.errors.length > 0 ? 'ERROR' : row.accion
-          const productoExistente = productoPorCodigoLog.get(row.codigo)
+      const detalles = rows.map((row) => {
+        const accionLog = row.errors.length > 0 ? 'ERROR' : row.accion
+        const productoExistente = productoPorCodigoLog.get(row.codigo)
 
-          const valoresAnteriores = accionLog === 'ACTUALIZAR' && productoExistente
-            ? extraerCamposAnteriores(productoExistente as unknown as Record<string, unknown>, columnasPresentes)
-            : null
+        const valoresAnteriores = accionLog === 'ACTUALIZAR' && productoExistente
+          ? extraerCamposAnteriores(productoExistente as unknown as Record<string, unknown>, columnasPresentes)
+          : null
 
-          const valoresNuevos = accionLog === 'CREAR' || accionLog === 'ACTUALIZAR'
-            ? extraerValoresNuevos(row, columnasPresentes)
-            : null
+        const valoresNuevos = accionLog === 'CREAR' || accionLog === 'ACTUALIZAR'
+          ? extraerValoresNuevos(row, columnasPresentes)
+          : null
 
-          const erroresLog = row.errors.length > 0 ? row.errors : null
+        const erroresLog = row.errors.length > 0 ? row.errors : null
 
-          await tx.execute(
-            `INSERT INTO import_log_det (id, import_log_id, empresa_id, fila_num, codigo,
-              nombre, tipo, accion, valores_anteriores, valores_nuevos, errores, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              uuidv4(),
-              logId,
-              user.empresa_id,
-              row.rowNum,
-              row.codigo || null,
-              row.nombre || null,
-              row.tipo || null,
-              accionLog,
-              valoresAnteriores ? JSON.stringify(valoresAnteriores) : null,
-              valoresNuevos ? JSON.stringify(valoresNuevos) : null,
-              erroresLog ? JSON.stringify(erroresLog) : null,
-              now,
-            ]
-          )
+        return {
+          id: uuidv4(),
+          import_log_id: logId,
+          empresa_id: user.empresa_id,
+          fila_num: row.rowNum,
+          codigo: row.codigo || null,
+          nombre: row.nombre || null,
+          tipo: row.tipo || null,
+          accion: accionLog,
+          valores_anteriores: valoresAnteriores,
+          valores_nuevos: valoresNuevos,
+          errores: erroresLog,
+          created_at: now,
         }
       })
+
+      const { error: detalleError } = await connector.client.from('import_log_det').insert(detalles)
+      if (detalleError) throw detalleError
+      setProgreso({ fase: 'Completado', pct: 100 })
     } catch (err) {
       // El log es auditoria — un fallo aqui NO debe impedir cerrar el modal ni
       // mostrar error al usuario (el import ya se completo exitosamente).
@@ -1246,7 +1248,16 @@ export function ImportProductosModal({
           {step === 'procesando' && (
             <div className="text-center py-12">
               <div className="inline-block h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3" />
-              <p className="text-sm text-gray-700">Importando productos...</p>
+              <p className="text-sm text-gray-700 mb-4">{progreso.fase || 'Importando productos...'}</p>
+              <div className="max-w-xs mx-auto">
+                <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                    style={{ width: `${progreso.pct}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-1.5">{progreso.pct}%</p>
+              </div>
             </div>
           )}
         </div>
