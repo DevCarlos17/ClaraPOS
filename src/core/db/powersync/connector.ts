@@ -104,6 +104,8 @@ const IMMUTABLE_TABLES = new Set([
   'notas_fiscales_compra_det',    // trg_nf_compra_det_no_update
   'libro_contable',               // trg_libro_contable_protect
   'historico_precios',            // tabla de auditoria inmutable (migracion 0054: solo INSERT, sin policy UPDATE)
+  'import_log',                   // auditoria de imports — inmutable, solo INSERT via Supabase directo (bypass PowerSync)
+  'import_log_det',               // detalle auditoria — inmutable, solo INSERT via Supabase directo (bypass PowerSync)
 ])
 
 function convertBooleans(table: string, payload: Record<string, unknown>): Record<string, unknown> {

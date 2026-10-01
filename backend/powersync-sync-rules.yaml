@@ -155,6 +155,6 @@ bucket_definitions:
       - SELECT * FROM horarios_excepciones WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM horarios_plantillas WHERE empresa_id = bucket.empresa_id
 
-      # --- AUDITORIA DE IMPORTS ---
-      - SELECT * FROM import_log WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM import_log_det WHERE empresa_id = bucket.empresa_id
+      # NOTA: import_log / import_log_det NO se sincronizan via PowerSync a
+      # proposito — el log de auditoria de imports se escribe y consulta DIRECTO
+      # a Supabase (ver use-import-log.ts e import-productos-modal.tsx).

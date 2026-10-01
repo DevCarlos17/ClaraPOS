@@ -1520,39 +1520,11 @@ const cita_log = new Table(
   { indexes: {} }
 )
 
-const import_log = new Table(
-  {
-    empresa_id: column.text,
-    usuario_id: column.text,
-    fecha: column.text,
-    modo: column.text,
-    archivo_nombre: column.text,
-    total_filas: column.integer,
-    filas_creadas: column.integer,
-    filas_actualizadas: column.integer,
-    filas_omitidas: column.integer,
-    filas_error: column.integer,
-    created_at: column.text,
-  },
-  { indexes: {} }
-)
-
-const import_log_det = new Table(
-  {
-    empresa_id: column.text,
-    import_log_id: column.text,
-    fila_num: column.integer,
-    codigo: column.text,
-    nombre: column.text,
-    tipo: column.text,
-    accion: column.text,
-    valores_anteriores: column.text,
-    valores_nuevos: column.text,
-    errores: column.text,
-    created_at: column.text,
-  },
-  { indexes: {} }
-)
+// NOTA: import_log / import_log_det NO estan en el schema PowerSync a proposito.
+// El log de auditoria de imports se escribe y se lee DIRECTO a Supabase
+// (ver import-productos-modal.tsx y use-import-log.ts) — no pasa por la cola
+// de sync local (evita inflarla con cientos de filas por import) ni por SQLite
+// local (el detalle se pagina al consultarse, nunca se trae completo).
 
 const cita_items_extras = new Table(
   {
@@ -1720,9 +1692,6 @@ export const AppSchema = new Schema({
   horarios_descansos,
   horarios_excepciones,
   horarios_plantillas,
-  // Auditoria de imports
-  import_log,
-  import_log_det,
 })
 
 export type Database = (typeof AppSchema)['types']
