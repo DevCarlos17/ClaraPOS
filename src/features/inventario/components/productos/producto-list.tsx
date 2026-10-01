@@ -13,6 +13,7 @@ import {
   FileXls,
   ToggleLeft,
   ToggleRight,
+  ClockCounterClockwise,
 } from '@phosphor-icons/react'
 import {
   useProductos,
@@ -33,6 +34,7 @@ import { ProductoForm } from './producto-form'
 import { StockCriticoModal } from './stock-critico-modal'
 import { ValorInventarioModal } from './valor-inventario-modal'
 import { ImportProductosModal } from './import-productos-modal'
+import { ImportLogList } from './import-log-list'
 import { ComboDetalleModal } from '@/features/inventario/components/recetas/combo-detalle-modal'
 import {
   exportarProductosCsv,
@@ -79,6 +81,7 @@ export function ProductoList() {
   const [stockCriticoOpen, setStockCriticoOpen] = useState(false)
   const [valorInventarioOpen, setValorInventarioOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [importLogOpen, setImportLogOpen] = useState(false)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
 
   // Filtros
@@ -389,6 +392,14 @@ export function ProductoList() {
           </div>
 
           <button
+            onClick={() => setImportLogOpen(true)}
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+          >
+            <ClockCounterClockwise className="h-4 w-4" />
+            Historial
+          </button>
+
+          <button
             onClick={handleNuevo}
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors shrink-0 cursor-pointer"
           >
@@ -623,6 +634,11 @@ export function ProductoList() {
       <ComboDetalleModal
         combo={comboDetalle}
         onClose={() => setComboDetalle(null)}
+      />
+
+      <ImportLogList
+        isOpen={importLogOpen}
+        onClose={() => setImportLogOpen(false)}
       />
     </div>
   )

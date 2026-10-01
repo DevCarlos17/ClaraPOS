@@ -332,3 +332,119 @@ export function estimarPesoSync(filas: FilaPesoSync[], columnasPresentes: Column
 
   return total
 }
+
+/** Limite de tamano (en caracteres del JSON serializado) para cada campo de
+ * auditoria (`valores_anteriores`/`valores_nuevos`) del log de import. */
+const MAX_LOG_FIELD_BYTES = 2048
+
+/**
+ * Fase B (auditoria de imports): extrae del objeto `Producto` existente solo
+ * los campos cuya columna vino presente en el archivo (`columnasPresentes`),
+ * para usar como `valores_anteriores` en `import_log_det`. Retorna `null`
+ * cuando no hay campos relevantes (p.ej. la fila solo tenia `codigo` como
+ * clave de busqueda, sin ninguna otra columna tocada).
+ *
+ * Guard de tamano: si el JSON resultante supera `MAX_LOG_FIELD_BYTES`, se
+ * marca `truncado: true` y se omiten los campos que no caben — el log de
+ * auditoria nunca debe inflar el peso de sync de forma descontrolada.
+ */
+export function extraerCamposAnteriores(
+  productoExistente: Record<string, unknown>,
+  columnasPresentes: ColumnasPresentes
+): Record<string, unknown> | null {
+  // Mapa columna del archivo -> campo del objeto Producto (algunas columnas
+  // del archivo apuntan a FKs resueltas: el log guarda el id, no el nombre).
+  const CAMPO_MAP: Record<string, string> = {
+    nombre: 'nombre',
+    departamento: 'departamento_id',
+    costo_usd: 'costo_usd',
+    precio_venta_usd: 'precio_venta_usd',
+    precio_mayor_usd: 'precio_mayor_usd',
+    precio_especial_usd: 'precio_especial_usd',
+    stock_minimo: 'stock_minimo',
+    tipo_impuesto: 'tipo_impuesto',
+    unidad: 'unidad_base_id',
+    codigo_barras: 'codigo_barras',
+    presentacion: 'presentacion',
+    ubicacion: 'ubicacion',
+    maneja_lotes: 'maneja_lotes',
+    deposito: 'deposito_id',
+  }
+
+  const resultado: Record<string, unknown> = {}
+  for (const [col, campo] of Object.entries(CAMPO_MAP)) {
+    if (columnasPresentes.has(col) && campo in productoExistente) {
+      resultado[col] = productoExistente[campo]
+    }
+  }
+
+  if (Object.keys(resultado).length === 0) return null
+
+  if (JSON.stringify(resultado).length > MAX_LOG_FIELD_BYTES) {
+    const truncado: Record<string, unknown> = { truncado: true }
+    for (const [k, v] of Object.entries(resultado)) {
+      if (JSON.stringify({ [k]: v }).length < 200) truncado[k] = v
+    }
+    return truncado
+  }
+
+  return resultado
+}
+
+/** Fila minima necesaria para `extraerValoresNuevos` — subconjunto de
+ * `ParsedRow` (vive en el modal, con DOM/PowerSync) para mantener esta
+ * funcion pura. */
+export interface FilaValoresNuevos {
+  accion: AccionFila
+  codigo: string
+  nombre: string
+  tipo: string
+  departamento: string
+  costo_usd: string
+  precio_venta_usd: string
+  precio_mayor_usd: string
+  precio_especial_usd: string
+  stock_minimo: string
+  stock_inicial: string
+  unidad: string
+  tipo_impuesto: string
+  codigo_barras: string
+  presentacion: string
+  ubicacion: string
+  maneja_lotes: string
+  deposito: string
+}
+
+const CAMPOS_VALORES_NUEVOS = [
+  'nombre', 'departamento', 'costo_usd', 'precio_venta_usd',
+  'precio_mayor_usd', 'precio_especial_usd', 'stock_minimo',
+  'stock_inicial', 'unidad', 'tipo_impuesto', 'codigo_barras',
+  'presentacion', 'ubicacion', 'maneja_lotes', 'deposito',
+] as const
+
+/**
+ * Fase B (auditoria de imports): construye el objeto `valores_nuevos` de una
+ * fila para `import_log_det` — los valores que efectivamente se escribieron
+ * (CREAR/ACTUALIZAR) o se iban a escribir. Para filas `OMITIR` retorna
+ * `null` (nada se escribio, nada que auditar como "nuevo").
+ *
+ * - `CREAR`: incluye todo campo con celda no vacia (toda celda de una fila
+ *   CREAR es, por definicion, un valor nuevo del producto).
+ * - `ACTUALIZAR`: incluye solo los campos cuya columna vino presente en el
+ *   archivo (mismo criterio de "tocado" que el resto de R7) y celda no vacia.
+ */
+export function extraerValoresNuevos(
+  row: FilaValoresNuevos,
+  columnasPresentes: ColumnasPresentes
+): Record<string, unknown> | null {
+  if (row.accion === 'OMITIR') return null
+
+  const resultado: Record<string, unknown> = {}
+  for (const campo of CAMPOS_VALORES_NUEVOS) {
+    const valor = row[campo]
+    const tocado = row.accion === 'CREAR' || columnasPresentes.has(campo)
+    if (tocado && valor.trim() !== '') resultado[campo] = valor
+  }
+
+  return Object.keys(resultado).length > 0 ? resultado : null
+}

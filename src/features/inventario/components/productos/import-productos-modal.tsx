@@ -18,6 +18,8 @@ import {
   debeIgnorarStockInicial,
   detectarColumnasPresentes,
   estimarPesoSync,
+  extraerCamposAnteriores,
+  extraerValoresNuevos,
   mergearProductoParaUpdate,
   parseTipoImpuesto,
   resolverDepositoFila,
@@ -820,6 +822,77 @@ export function ImportProductosModal({
         }
       }
       if (compFallidos > 0) toast.error(`${compFallidos} componente(s) no pudieron importarse`)
+    }
+
+    // Paso 4: log de auditoria (PowerSync — offline-first, sincroniza a Supabase)
+    // Se escribe SIEMPRE al final, incluyendo filas OMITIR y ERROR, para dar
+    // visibilidad completa de lo que ocurrio en el import.
+    try {
+      const logId = uuidv4()
+      const productoPorCodigoLog = new Map(productos.map((p) => [p.codigo, p]))
+
+      await db.writeTransaction(async (tx) => {
+        // Cabecera
+        await tx.execute(
+          `INSERT INTO import_log (id, empresa_id, usuario_id, fecha, modo, archivo_nombre,
+            total_filas, filas_creadas, filas_actualizadas, filas_omitidas, filas_error, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            logId,
+            user.empresa_id,
+            user.id,
+            now,
+            modo,
+            fileName || null,
+            rows.length,
+            filasCrear.length,
+            filasActualizar.length,
+            rows.filter((r) => r.accion === 'OMITIR').length,
+            rows.filter((r) => r.errors.length > 0).length,
+            now,
+          ]
+        )
+
+        // Detalle por fila
+        for (const row of rows) {
+          const accionLog = row.errors.length > 0 ? 'ERROR' : row.accion
+          const productoExistente = productoPorCodigoLog.get(row.codigo)
+
+          const valoresAnteriores = accionLog === 'ACTUALIZAR' && productoExistente
+            ? extraerCamposAnteriores(productoExistente as unknown as Record<string, unknown>, columnasPresentes)
+            : null
+
+          const valoresNuevos = accionLog === 'CREAR' || accionLog === 'ACTUALIZAR'
+            ? extraerValoresNuevos(row, columnasPresentes)
+            : null
+
+          const erroresLog = row.errors.length > 0 ? row.errors : null
+
+          await tx.execute(
+            `INSERT INTO import_log_det (id, import_log_id, empresa_id, fila_num, codigo,
+              nombre, tipo, accion, valores_anteriores, valores_nuevos, errores, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(),
+              logId,
+              user.empresa_id,
+              row.rowNum,
+              row.codigo || null,
+              row.nombre || null,
+              row.tipo || null,
+              accionLog,
+              valoresAnteriores ? JSON.stringify(valoresAnteriores) : null,
+              valoresNuevos ? JSON.stringify(valoresNuevos) : null,
+              erroresLog ? JSON.stringify(erroresLog) : null,
+              now,
+            ]
+          )
+        }
+      })
+    } catch (err) {
+      // El log es auditoria — un fallo aqui NO debe impedir cerrar el modal ni
+      // mostrar error al usuario (el import ya se completo exitosamente).
+      console.warn('import_log: fallo al registrar auditoria', err)
     }
 
     onClose()
