@@ -726,26 +726,32 @@ export function ImportProductosModal({
     const codigoToId = new Map<string, string>()
     for (const p of productoInserts) codigoToId.set(p.codigo, p.id)
 
-    // Paso 1: escritura DIRECTA a Supabase (bypass PowerSync) — import masivo
-    // no pasa por la cola de sync local, evita inflar el CRUD queue de
-    // PowerSync con cientos de operaciones individuales. Todo-o-nada a nivel
-    // de llamada: si el INSERT o cualquier UPDATE falla, se lanza y cae al
-    // catch (spec-pr3 R14, mismo contrato que el writeTransaction anterior).
+    // Paso 1: UN solo writeTransaction con INSERT (CREAR) y UPDATE (ACTUALIZAR) mezclados —
+    // todo-o-nada (spec-pr3 R14): si cualquier sentencia lanza, ninguna de la fase persiste.
+    // Se mantiene en PowerSync (NO bypass a Supabase directo) porque Paso 2 (stock
+    // inicial via kardex) y Paso 3 (combos) leen `productos` desde SQLite local — si
+    // los productos se insertaran directo a Supabase, no existirian localmente hasta
+    // que PowerSync los sincronice de vuelta, y el kardex/combos fallarian al no
+    // encontrarlos. Solo el log de auditoria (Paso 4) hace bypass a Supabase.
     setProgreso({ fase: 'Guardando productos...', pct: 10 })
     try {
-      if (productoInserts.length > 0) {
-        const { error: insertError } = await connector.client.from('productos').insert(productoInserts)
-        if (insertError) throw insertError
-      }
-      if (productoUpdates.length > 0) {
-        const updateResults = await Promise.all(
-          productoUpdates.map(({ id, fields }) =>
-            connector.client.from('productos').update(fields).eq('id', id).eq('empresa_id', user.empresa_id)
+      await db.writeTransaction(async (tx) => {
+        for (const p of productoInserts) {
+          await tx.execute(
+            `INSERT INTO productos (id, codigo, tipo, nombre, departamento_id, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd, stock, stock_minimo, costo_promedio, costo_ultimo, tipo_impuesto, impuesto_iva_id, maneja_lotes, is_active, empresa_id, created_at, updated_at, ubicacion, unidad_base_id, presentacion, codigo_barras, deposito_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [p.id, p.codigo, p.tipo, p.nombre, p.departamento_id, p.costo_usd, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock, p.stock_minimo, p.costo_promedio, p.costo_ultimo, p.tipo_impuesto, p.impuesto_iva_id, p.maneja_lotes, p.is_active, p.empresa_id, p.created_at, p.updated_at, p.ubicacion, p.unidad_base_id, p.presentacion, p.codigo_barras, p.deposito_id]
           )
-        )
-        const updateError = updateResults.find((r) => r.error)?.error
-        if (updateError) throw updateError
-      }
+        }
+        for (const u of productoUpdates) {
+          const cols = Object.keys(u.fields)
+          const setClause = cols.map((c) => `${c} = ?`).join(', ')
+          await tx.execute(
+            `UPDATE productos SET ${setClause} WHERE id = ?`,
+            [...cols.map((c) => u.fields[c]), u.id]
+          )
+        }
+      })
       const totalEscritos = productoInserts.length + productoUpdates.length
       toast.success(
         `${totalEscritos} producto(s) importado(s) correctamente` +
