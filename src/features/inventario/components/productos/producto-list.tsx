@@ -13,6 +13,7 @@ import {
   FileXls,
   ToggleLeft,
   ToggleRight,
+  ClockCounterClockwise,
 } from '@phosphor-icons/react'
 import {
   useProductos,
@@ -21,7 +22,10 @@ import {
   type Producto,
 } from '@/features/inventario/hooks/use-productos'
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
-import { useDepositos } from '@/features/inventario/hooks/use-depositos'
+import { useDepositos, useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
+import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
+import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
+import { useExistenciasPorDeposito } from '@/features/inventario/hooks/use-inventario-stock'
 import { useTodasLasRecetas } from '@/features/inventario/hooks/use-recetas'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
@@ -30,6 +34,7 @@ import { ProductoForm } from './producto-form'
 import { StockCriticoModal } from './stock-critico-modal'
 import { ValorInventarioModal } from './valor-inventario-modal'
 import { ImportProductosModal } from './import-productos-modal'
+import { ImportLogList } from './import-log-list'
 import { ComboDetalleModal } from '@/features/inventario/components/recetas/combo-detalle-modal'
 import {
   exportarProductosCsv,
@@ -56,6 +61,10 @@ export function ProductoList() {
   // deposito_id apuntando a uno desactivado y aun asi debe mostrar su nombre
   // real en la columna, no '-'. Mismo criterio que useDepartamentos (no-activos).
   const { depositos } = useDepositos()
+  const { depositos: depositosActivos } = useDepositosActivos()
+  const { unidades } = useUnidadesActivas()
+  const { impuestos } = useImpuestosActivos()
+  const { rows: existenciasRows } = useExistenciasPorDeposito()
   const { tasaValor } = useTasaActual()
   const { valorTotal, stockCritico } = useResumenInventario()
   const { recetas } = useTodasLasRecetas()
@@ -72,6 +81,7 @@ export function ProductoList() {
   const [stockCriticoOpen, setStockCriticoOpen] = useState(false)
   const [valorInventarioOpen, setValorInventarioOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [importLogOpen, setImportLogOpen] = useState(false)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
 
   // Filtros
@@ -206,7 +216,10 @@ export function ProductoList() {
       toast.error('No hay productos para exportar')
       return
     }
-    exportarProductosCsv(productos, departamentos, recetas, productosMap)
+    exportarProductosCsv(productos, departamentos, depositos, recetas, productosMap, {
+      rows: existenciasRows,
+      depositosActivos,
+    }, unidades)
     toast.success('Inventario exportado a CSV')
     setExportMenuOpen(false)
   }
@@ -216,7 +229,10 @@ export function ProductoList() {
       toast.error('No hay productos para exportar')
       return
     }
-    exportarProductosExcel(productos, departamentos, recetas, productosMap)
+    exportarProductosExcel(productos, departamentos, depositos, recetas, productosMap, {
+      rows: existenciasRows,
+      depositosActivos,
+    }, unidades)
     toast.success('Inventario exportado a Excel')
     setExportMenuOpen(false)
   }
@@ -374,6 +390,14 @@ export function ProductoList() {
               </>
             )}
           </div>
+
+          <button
+            onClick={() => setImportLogOpen(true)}
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+          >
+            <ClockCounterClockwise className="h-4 w-4" />
+            Historial
+          </button>
 
           <button
             onClick={handleNuevo}
@@ -603,11 +627,18 @@ export function ProductoList() {
         onClose={() => setImportOpen(false)}
         productos={productos}
         departamentos={departamentos}
+        depositos={depositosActivos}
+        impuestos={impuestos}
       />
 
       <ComboDetalleModal
         combo={comboDetalle}
         onClose={() => setComboDetalle(null)}
+      />
+
+      <ImportLogList
+        isOpen={importLogOpen}
+        onClose={() => setImportLogOpen(false)}
       />
     </div>
   )
