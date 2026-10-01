@@ -137,6 +137,50 @@ describe('buildPlantillaWorkbook (PR1 — fix de plantilla: elimina la nota A6 q
   })
 })
 
+describe('buildPlantillaWorkbook — campos nuevos (Fase A commit 2)', () => {
+  it('header de "Inventario" incluye todas las columnas nuevas en el orden acordado', () => {
+    const wb = buildPlantillaWorkbook([departamento()], [unidad()])
+    const ws = wb.Sheets['Inventario']!
+    const filas = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 })
+    const header = filas[0] as string[]
+
+    expect(header).toEqual([
+      'codigo', 'tipo', 'nombre', 'departamento', 'costo_usd', 'precio_venta_usd',
+      'precio_mayor_usd', 'precio_especial_usd', 'stock_minimo', 'stock_inicial',
+      'unidad', 'tipo_impuesto', 'codigo_barras', 'presentacion', 'ubicacion',
+      'maneja_lotes', 'deposito',
+    ])
+  })
+
+  it('fila de ejemplo PROD-001 (tipo P) trae codigo_barras, presentacion, ubicacion y maneja_lotes="NO"', () => {
+    const wb = buildPlantillaWorkbook([departamento()], [unidad()])
+    const ws = wb.Sheets['Inventario']!
+    const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+    const prod = parsed.find((r) => r.codigo === 'PROD-001')!
+
+    expect(prod.codigo_barras).toBe('7591234567890')
+    expect(prod.presentacion).toBe('CAJA x 12')
+    expect(prod.ubicacion).toBe('A-01-1')
+    expect(prod.maneja_lotes).toBe('NO')
+    expect(prod.precio_especial_usd).toBe('')
+  })
+
+  it('filas de ejemplo SERV-001 (S) y COMBO-001 (C) dejan vacios codigo_barras/presentacion/ubicacion/maneja_lotes/deposito', () => {
+    const wb = buildPlantillaWorkbook([departamento()], [unidad()])
+    const ws = wb.Sheets['Inventario']!
+    const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+
+    for (const codigo of ['SERV-001', 'COMBO-001']) {
+      const row = parsed.find((r) => r.codigo === codigo)!
+      expect(row.codigo_barras).toBe('')
+      expect(row.presentacion).toBe('')
+      expect(row.ubicacion).toBe('')
+      expect(row.maneja_lotes).toBe('')
+      expect(row.deposito).toBe('')
+    }
+  })
+})
+
 describe('ImportProductosModal — clasificacion de accion en modo "crear" por defecto (spec-pr3 R1/R2/R4)', () => {
   // NOTA: este describe reemplaza el test original de PR1 (SC11, "codigo ya
   // existe" como ERROR de fila). PR3 (spec-pr3.md R2) cambia deliberadamente

@@ -105,18 +105,47 @@ type Step = 'instrucciones' | 'preview' | 'procesando'
  * `exploration.md`). El texto de unidades activas vive ahora en el bloque
  * de instrucciones del modal (`step === 'instrucciones'`).
  */
-export function buildPlantillaWorkbook(departamentos: Departamento[], unidades: Unidad[]): XLSX.WorkBook {
+export function buildPlantillaWorkbook(
+  departamentos: Departamento[],
+  unidades: Unidad[],
+  depositos: Deposito[] = []
+): XLSX.WorkBook {
   const wb = XLSX.utils.book_new()
+  const deptoNombre = departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO'
+  const depositoNombre = depositos[0]?.nombre ?? ''
 
-  // Hoja 1: Inventario (misma estructura que la exportacion)
-  const headers = [['codigo', 'tipo', 'nombre', 'departamento', 'costo_usd', 'precio_venta_usd', 'precio_mayor_usd', 'stock_minimo', 'stock_inicial', 'unidad', 'tipo_impuesto']]
+  // Hoja 1: Inventario (misma estructura que la exportacion + stock_inicial, solo-import)
+  const headers = [[
+    'codigo', 'tipo', 'nombre', 'departamento', 'costo_usd', 'precio_venta_usd',
+    'precio_mayor_usd', 'precio_especial_usd', 'stock_minimo', 'stock_inicial',
+    'unidad', 'tipo_impuesto', 'codigo_barras', 'presentacion', 'ubicacion',
+    'maneja_lotes', 'deposito',
+  ]]
   const ejemplos = [
-    ['PROD-001', 'P', 'PRODUCTO FISICO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '10.00', '15.00', '13.00', '5', '100', unidades[0]?.abreviatura ?? 'UND', 'Exento'],
-    ['SERV-001', 'S', 'SERVICIO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '5.00', '20.00', '', '0', '', '', 'Exento'],
-    ['COMBO-001', 'C', 'COMBO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '0.00', '35.00', '', '0', '', '', 'Exento'],
+    ['PROD-001', 'P', 'PRODUCTO FISICO EJEMPLO', deptoNombre, '10.00', '15.00', '13.00', '', '5', '100', unidades[0]?.abreviatura ?? 'UND', 'Exento', '7591234567890', 'CAJA x 12', 'A-01-1', 'NO', depositoNombre],
+    ['SERV-001', 'S', 'SERVICIO EJEMPLO', deptoNombre, '5.00', '20.00', '', '', '0', '', '', 'Exento', '', '', '', '', ''],
+    ['COMBO-001', 'C', 'COMBO EJEMPLO', deptoNombre, '0.00', '35.00', '', '', '0', '', '', 'Exento', '', '', '', '', ''],
   ]
   const ws1 = XLSX.utils.aoa_to_sheet([...headers, ...ejemplos])
-  ws1['!cols'] = [{ wch: 14 }, { wch: 6 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 10 }, { wch: 12 }]
+  ws1['!cols'] = [
+    { wch: 14 }, // codigo
+    { wch: 6 },  // tipo
+    { wch: 28 }, // nombre
+    { wch: 14 }, // departamento
+    { wch: 10 }, // costo_usd
+    { wch: 14 }, // precio_venta_usd
+    { wch: 14 }, // precio_mayor_usd
+    { wch: 14 }, // precio_especial_usd
+    { wch: 12 }, // stock_minimo
+    { wch: 13 }, // stock_inicial
+    { wch: 10 }, // unidad
+    { wch: 12 }, // tipo_impuesto
+    { wch: 16 }, // codigo_barras
+    { wch: 18 }, // presentacion
+    { wch: 14 }, // ubicacion
+    { wch: 12 }, // maneja_lotes
+    { wch: 16 }, // deposito
+  ]
   XLSX.utils.book_append_sheet(wb, ws1, 'Inventario')
 
   // Hoja 2: Componentes Combos (misma estructura que la exportacion)
@@ -657,7 +686,7 @@ export function ImportProductosModal({
   }
 
   function handleDescargarPlantilla() {
-    const wb = buildPlantillaWorkbook(departamentos, unidades)
+    const wb = buildPlantillaWorkbook(departamentos, unidades, depositos)
     const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
     const blob = new Blob([buffer], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
