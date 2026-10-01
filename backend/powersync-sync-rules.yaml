@@ -154,3 +154,7 @@ bucket_definitions:
       - SELECT * FROM horarios_descansos WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM horarios_excepciones WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM horarios_plantillas WHERE empresa_id = bucket.empresa_id
+
+      # --- AUDITORIA DE IMPORTS ---
+      - SELECT * FROM import_log WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM import_log_det WHERE empresa_id = bucket.empresa_id
