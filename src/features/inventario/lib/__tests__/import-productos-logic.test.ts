@@ -106,20 +106,18 @@ describe('validarPreciosMergeados (spec-pr3 R8, LOCKED — merge-then-validate r
     expect(errors[0]).toContain('costo_usd')
   })
 
-  it('SC8: solo precio_mayor_usd tocado, ahora supera la venta existente => sugiere incluir precio_venta_usd o corregir precio_mayor_usd', () => {
+  it('B1.1: precio_mayor_usd > precio_venta_usd ya NO es un error (se quita la restriccion, nunca sabemos que tiene en mente el usuario)', () => {
     const columnas = detectarColumnasPresentes(['precio_mayor_usd'])
-    const errors = validarPreciosMergeados({ costo: 10, venta: 15, mayor: 20 }, columnas)
+    const errors = validarPreciosMergeados({ costo: 5, venta: 15, mayor: 20 }, columnas)
 
-    expect(errors).toHaveLength(1)
-    expect(errors[0]).toContain('precio_venta_usd')
-    expect(errors[0]).toContain('precio_mayor_usd')
+    expect(errors).toEqual([])
   })
 
-  it('simetrico: solo precio_venta_usd tocado (bajado), precio_mayor_usd existente queda por encima => sugiere incluir precio_mayor_usd', () => {
-    const columnas = detectarColumnasPresentes(['precio_venta_usd'])
-    const errors = validarPreciosMergeados({ costo: 5, venta: 10, mayor: 20 }, columnas)
+  it('B1.1: precio_mayor_usd < precio_venta_usd sigue siendo valido (nunca estuvo restringido en ese sentido)', () => {
+    const columnas = detectarColumnasPresentes(['precio_mayor_usd'])
+    const errors = validarPreciosMergeados({ costo: 5, venta: 10, mayor: 3 }, columnas)
 
-    expect(errors.some((e) => e.includes('precio_mayor_usd'))).toBe(true)
+    expect(errors).toEqual([])
   })
 
   it('SC10: costo/venta/mayor fusionados consistentes (todos tocados) => sin errores', () => {

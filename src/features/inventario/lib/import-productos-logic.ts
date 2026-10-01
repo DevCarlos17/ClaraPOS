@@ -128,37 +128,22 @@ function mensajeVentaMenorQueCosto(merged: MergedPrecios, columnasPresentes: Col
   return `${base} — ajustá costo_usd y/o precio_venta_usd para que el precio de venta sea mayor o igual al costo`
 }
 
-function mensajeMayorMayorQueVenta(merged: MergedPrecios, columnasPresentes: ColumnasPresentes): string {
-  const mayorTocado = columnasPresentes.has('precio_mayor_usd')
-  const ventaTocada = columnasPresentes.has('precio_venta_usd')
-  const base = `el precio mayor ${merged.mayor} supera el precio de venta ${merged.venta}`
-
-  if (mayorTocado && !ventaTocada) {
-    return `${base} — incluí también precio_venta_usd o corregí precio_mayor_usd`
-  }
-  if (!mayorTocado && ventaTocada) {
-    return `${base} — incluí también precio_mayor_usd para bajarlo, o corregí precio_venta_usd`
-  }
-  return `${base} — ajustá precio_venta_usd y/o precio_mayor_usd para que el precio mayor sea menor o igual al de venta`
-}
-
 /**
- * spec-pr3 R8 (LOCKED, decision financiera): aplica la regla de negocio #7
- * (`venta >= costo`, y si `mayor != null`, `mayor <= venta`) sobre los
- * valores YA FUSIONADOS (`mergearProductoParaUpdate`). Cuando el estado
- * fusionado queda invalido, el mensaje nombra el campo tocado por el
- * archivo y sugiere incluir el campo no tocado que resolveria la violacion
- * — nunca ajusta valores automaticamente.
+ * spec-pr3 R8 (aplica solo la parte de la regla de negocio #7 que sigue
+ * vigente tras B1.1): `venta >= costo` sobre los valores YA FUSIONADOS
+ * (`mergearProductoParaUpdate`). La restriccion `mayor <= venta` se
+ * eliminó deliberadamente (B1.1, sesion 2026-09-30): nunca sabemos que
+ * tiene en mente el usuario para su precio mayorista — puede ser
+ * legitimamente mayor al de venta detal. Cuando el estado fusionado queda
+ * invalido, el mensaje nombra el campo tocado por el archivo y sugiere
+ * incluir el campo no tocado que resolveria la violacion — nunca ajusta
+ * valores automaticamente.
  */
 export function validarPreciosMergeados(merged: MergedPrecios, columnasPresentes: ColumnasPresentes): string[] {
   const errores: string[] = []
 
   if (merged.venta < merged.costo) {
     errores.push(mensajeVentaMenorQueCosto(merged, columnasPresentes))
-  }
-
-  if (merged.mayor !== null && merged.mayor > merged.venta) {
-    errores.push(mensajeMayorMayorQueVenta(merged, columnasPresentes))
   }
 
   return errores

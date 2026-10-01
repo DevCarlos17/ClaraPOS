@@ -208,9 +208,9 @@ export function ImportProductosModal({
       const mayor = parseFloat(row.precio_mayor_usd)
       if (isNaN(mayor) || mayor < 0) {
         errors.push('precio_mayor_usd invalido')
-      } else if (!isNaN(venta) && mayor > venta) {
-        errors.push('precio_mayor_usd > precio_venta_usd')
       }
+      // B1.1: ya no se valida mayor > venta — nunca sabemos que tiene en
+      // mente el usuario para su precio mayorista.
     }
 
     if (row.tipo === 'P') {
@@ -224,9 +224,10 @@ export function ImportProductosModal({
           errors.push('stock_inicial invalido (debe ser numero >= 0)')
         }
       }
-    } else if (row.stock_inicial.trim() !== '' && parseFloat(row.stock_inicial) > 0) {
-      errors.push('stock_inicial solo aplica a productos tipo P')
     }
+    // B1.2: tipo S/C ignora stock_inicial silenciosamente (no se usa en el
+    // INSERT, ver `productosConStockInicial` en handleImportar) — no es un
+    // error del usuario, es un campo que no aplica a ese tipo.
 
     if (row.unidad.trim() !== '') {
       if (row.tipo !== 'P') {
@@ -293,10 +294,10 @@ export function ImportProductosModal({
       if (isNaN(stockMin) || stockMin < 0) errors.push('stock_minimo invalido')
     }
 
-    if (columnasPresentes.has('unidad') && row.unidad.trim() !== '') {
-      if (existente.tipo !== 'P') {
-        errors.push('unidad solo aplica a productos tipo P')
-      } else if (!unidades.some((u) => u.abreviatura === row.unidad)) {
+    // B1.2: producto existente tipo S/C ignora la columna unidad
+    // silenciosamente (no aplica, no es error del usuario).
+    if (columnasPresentes.has('unidad') && row.unidad.trim() !== '' && existente.tipo === 'P') {
+      if (!unidades.some((u) => u.abreviatura === row.unidad)) {
         errors.push(`unidad "${row.unidad}" no existe o no esta activa`)
       }
     }

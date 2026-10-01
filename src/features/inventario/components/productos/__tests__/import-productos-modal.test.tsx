@@ -218,3 +218,141 @@ describe('ImportProductosModal — clasificacion de accion en modo "crear" por d
     expect(celdasFilaNueva[celdasFilaNueva.length - 1]).toHaveTextContent('')
   })
 })
+
+describe('ImportProductosModal — B1.1/B1.2: servicios ignoran inventario + sin limitante mayor>venta', () => {
+  beforeEach(() => {
+    mockedUseCurrentUser.mockReturnValue({
+      user: {
+        id: 'user-1',
+        email: 'a@a.com',
+        nombre: 'Test',
+        level: 1,
+        rol_id: null,
+        rol_nombre: null,
+        empresa_id: 'emp-1',
+      },
+      loading: false,
+    })
+  })
+
+  it('B1.1: fila CREAR con precio_mayor_usd > precio_venta_usd ya no genera error', async () => {
+    const user = userEvent.setup()
+    const file = buildInventarioFile([
+      {
+        codigo: 'NEW-MAYOR',
+        tipo: 'P',
+        nombre: 'PRODUCTO MAYOR ALTO',
+        departamento: 'DEPARTAMENTO EJEMPLO',
+        costo_usd: '5',
+        precio_venta_usd: '15',
+        precio_mayor_usd: '20',
+        stock_minimo: '1',
+        stock_inicial: '',
+        unidad: '',
+        tipo_impuesto: 'Exento',
+      },
+    ])
+
+    render(
+      <ImportProductosModal
+        isOpen
+        onClose={() => {}}
+        productos={[]}
+        departamentos={[departamento()]}
+      />
+    )
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(fileInput, file)
+
+    await waitFor(() => {
+      expect(screen.getByText('NEW-MAYOR')).toBeInTheDocument()
+    })
+
+    const fila = screen.getByText('NEW-MAYOR').closest('tr')!
+    expect(within(fila).queryByText(/precio_mayor_usd/)).not.toBeInTheDocument()
+    const celdas = within(fila).getAllByRole('cell')
+    expect(celdas[celdas.length - 1]).toHaveTextContent('')
+  })
+
+  it('B1.2: fila CREAR tipo=S con stock_inicial > 0 no genera error (se ignora silenciosamente)', async () => {
+    const user = userEvent.setup()
+    const file = buildInventarioFile([
+      {
+        codigo: 'SERV-STOCK',
+        tipo: 'S',
+        nombre: 'SERVICIO CON STOCK',
+        departamento: 'DEPARTAMENTO EJEMPLO',
+        costo_usd: '5',
+        precio_venta_usd: '20',
+        precio_mayor_usd: '',
+        stock_minimo: '',
+        stock_inicial: '50',
+        unidad: '',
+        tipo_impuesto: 'Exento',
+      },
+    ])
+
+    render(
+      <ImportProductosModal
+        isOpen
+        onClose={() => {}}
+        productos={[]}
+        departamentos={[departamento()]}
+      />
+    )
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(fileInput, file)
+
+    await waitFor(() => {
+      expect(screen.getByText('SERV-STOCK')).toBeInTheDocument()
+    })
+
+    const fila = screen.getByText('SERV-STOCK').closest('tr')!
+    expect(within(fila).queryByText(/stock_inicial/)).not.toBeInTheDocument()
+    const celdas = within(fila).getAllByRole('cell')
+    expect(celdas[celdas.length - 1]).toHaveTextContent('')
+  })
+
+  it('B1.2: fila ACTUALIZAR contra producto existente tipo=S no exige unidad ni stock_minimo', async () => {
+    const user = userEvent.setup()
+    const file = buildInventarioFile([
+      {
+        codigo: 'SERV-EXIST',
+        tipo: 'S',
+        nombre: 'SERVICIO EXISTENTE ACTUALIZADO',
+        departamento: 'DEPARTAMENTO EJEMPLO',
+        costo_usd: '',
+        precio_venta_usd: '',
+        precio_mayor_usd: '',
+        stock_minimo: '5',
+        stock_inicial: '',
+        unidad: 'UND',
+        tipo_impuesto: '',
+      },
+    ])
+
+    render(
+      <ImportProductosModal
+        isOpen
+        onClose={() => {}}
+        productos={[producto({ codigo: 'SERV-EXIST', tipo: 'S' })]}
+        departamentos={[departamento()]}
+      />
+    )
+
+    await user.click(screen.getByLabelText('Solo actualizar'))
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(fileInput, file)
+
+    await waitFor(() => {
+      expect(screen.getByText('SERV-EXIST')).toBeInTheDocument()
+    })
+
+    const fila = screen.getByText('SERV-EXIST').closest('tr')!
+    const celdas = within(fila).getAllByRole('cell')
+    expect(celdas[celdas.length - 1]).toHaveTextContent('')
+  })
+})
