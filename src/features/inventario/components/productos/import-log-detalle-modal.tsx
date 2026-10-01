@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   fetchImportLogDet,
+  IMPORT_LOG_DET_PAGE_SIZE,
   type ImportLogDetEntry,
   type ImportLogEntry,
 } from '@/features/inventario/hooks/use-import-log'
@@ -48,24 +49,17 @@ function AccionBadge({ accion }: { accion: string }) {
   }
 }
 
-function parseJson(raw: string | null): Record<string, unknown> | null {
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as Record<string, unknown>
-  } catch {
-    return null
-  }
-}
-
 function CambiosCell({ det }: { det: ImportLogDetEntry }) {
   if (det.accion === 'OMITIR' || det.accion === 'ERROR') {
     return <span className="text-gray-400">-</span>
   }
 
-  const nuevos = parseJson(det.valores_nuevos)
+  // valores_nuevos/valores_anteriores vienen de Supabase como JSONB ya
+  // parseado (objeto), no como string — no se debe JSON.parse.
+  const nuevos = det.valores_nuevos
   if (!nuevos) return <span className="text-gray-400">-</span>
 
-  const anteriores = det.accion === 'ACTUALIZAR' ? parseJson(det.valores_anteriores) : null
+  const anteriores = det.accion === 'ACTUALIZAR' ? det.valores_anteriores : null
 
   return (
     <div className="space-y-0.5">
@@ -90,26 +84,24 @@ function CambiosCell({ det }: { det: ImportLogDetEntry }) {
   )
 }
 
-function ErroresCell({ raw }: { raw: string | null }) {
-  if (!raw) return <span className="text-gray-400">-</span>
-  try {
-    const errores = JSON.parse(raw) as string[]
-    return (
-      <div className="space-y-0.5">
-        {errores.map((e, i) => (
-          <div key={i} className="text-xs text-red-600">{e}</div>
-        ))}
-      </div>
-    )
-  } catch {
-    return <span className="text-gray-400">-</span>
-  }
+function ErroresCell({ errores }: { errores: string[] | null }) {
+  if (!errores || errores.length === 0) return <span className="text-gray-400">-</span>
+  return (
+    <div className="space-y-0.5">
+      {errores.map((e, i) => (
+        <div key={i} className="text-xs text-red-600">{e}</div>
+      ))}
+    </div>
+  )
 }
 
 export function ImportLogDetalleModal({ isOpen, onClose, entry }: ImportLogDetalleModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [detalles, setDetalles] = useState<ImportLogDetEntry[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [page, setPage] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -119,13 +111,20 @@ export function ImportLogDetalleModal({ isOpen, onClose, entry }: ImportLogDetal
     }
   }, [isOpen])
 
+  // Carga de la primera pagina al abrir. Las paginas siguientes se piden con
+  // "Ver mas" (handleVerMas) para no traer cientos de filas de golpe.
   useEffect(() => {
     if (!isOpen || !entry) return
     let cancelled = false
     setIsLoading(true)
-    fetchImportLogDet(entry.id)
+    setDetalles([])
+    setPage(0)
+    setHasMore(false)
+    fetchImportLogDet(entry.id, 0)
       .then((rows) => {
-        if (!cancelled) setDetalles(rows)
+        if (cancelled) return
+        setDetalles(rows)
+        setHasMore(rows.length === IMPORT_LOG_DET_PAGE_SIZE)
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false)
@@ -134,6 +133,20 @@ export function ImportLogDetalleModal({ isOpen, onClose, entry }: ImportLogDetal
       cancelled = true
     }
   }, [isOpen, entry])
+
+  async function handleVerMas() {
+    if (!entry || isLoadingMore) return
+    const nextPage = page + 1
+    setIsLoadingMore(true)
+    try {
+      const rows = await fetchImportLogDet(entry.id, nextPage)
+      setDetalles((prev) => [...prev, ...rows])
+      setPage(nextPage)
+      setHasMore(rows.length === IMPORT_LOG_DET_PAGE_SIZE)
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }
 
   function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
     if (e.target === dialogRef.current) onClose()
@@ -211,11 +224,24 @@ export function ImportLogDetalleModal({ isOpen, onClose, entry }: ImportLogDetal
                     <td className="px-3 py-2 text-gray-900">{det.nombre ?? '-'}</td>
                     <td className="px-3 py-2 text-gray-500">{det.tipo ?? '-'}</td>
                     <td className="px-3 py-2"><CambiosCell det={det} /></td>
-                    <td className="px-3 py-2"><ErroresCell raw={det.errores} /></td>
+                    <td className="px-3 py-2"><ErroresCell errores={det.errores} /></td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {hasMore && (
+              <div className="flex justify-center p-3 border-t border-gray-100">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleVerMas}
+                  disabled={isLoadingMore}
+                >
+                  {isLoadingMore ? 'Cargando...' : 'Ver mas filas'}
+                </Button>
+              </div>
+            )}
           </div>
         )}
 

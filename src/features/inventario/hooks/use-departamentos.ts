@@ -75,7 +75,7 @@ export async function crearDepartamento(nombre: string, empresaId: string) {
     .values({
       id,
       codigo,
-      nombre: nombre.toUpperCase(),
+      nombre: nombre.trim().toUpperCase(),
       prioridad_visual: 0,
       is_active: 1,
       empresa_id: empresaId,
@@ -94,7 +94,7 @@ export async function actualizarDepartamento(
   const now = localNow()
   const updates: Record<string, unknown> = { updated_at: now }
 
-  if (data.nombre !== undefined) updates.nombre = data.nombre.toUpperCase()
+  if (data.nombre !== undefined) updates.nombre = data.nombre.trim().toUpperCase()
   if (data.descripcion !== undefined) updates.descripcion = data.descripcion
   if (data.prioridad_visual !== undefined) updates.prioridad_visual = data.prioridad_visual
   if (data.is_active !== undefined) updates.is_active = data.is_active ? 1 : 0
