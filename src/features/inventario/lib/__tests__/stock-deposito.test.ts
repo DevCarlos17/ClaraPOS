@@ -22,7 +22,11 @@ import {
   calcularStockDepositoDesdeKardex,
   recalcularStockDesdeKardex,
   resolveDepositoIngreso,
+  resolverDepositoPrincipalActivo,
+  registrarEntradasInicialesBatch,
+  ejecutarStockInicialImport,
   type MovimientoParaRecalculo,
+  type EntradaInicialImport,
 } from '../stock-deposito'
 
 const mockedDb = vi.mocked(db, true)
@@ -559,5 +563,336 @@ describe('recalcularStockDesdeKardex', () => {
     await recalcularStockDesdeKardex({ empresa_id: 'emp-1', producto_id: 'prod-sin-movimientos' })
 
     expect(writes).toHaveLength(0)
+  })
+})
+
+describe('resolverDepositoPrincipalActivo (PR1 — batch de stock inicial de import)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('hay deposito es_principal=1 activo: retorna su id sin consultar el fallback', async () => {
+    mockedDb.execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('es_principal = 1')) {
+        return { rows: { length: 1, item: () => ({ id: 'dep-principal' }) } } as never
+      }
+      throw new Error('no deberia consultar el fallback cuando hay principal activo')
+    })
+
+    const result = await resolverDepositoPrincipalActivo('emp-1')
+
+    expect(result).toBe('dep-principal')
+  })
+
+  it('sin principal activo pero con otro deposito activo: retorna el fallback (primer activo)', async () => {
+    mockedDb.execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('es_principal = 1')) {
+        return { rows: { length: 0, item: () => undefined } } as never
+      }
+      return { rows: { length: 1, item: () => ({ id: 'dep-fallback' }) } } as never
+    })
+
+    const result = await resolverDepositoPrincipalActivo('emp-1')
+
+    expect(result).toBe('dep-fallback')
+  })
+
+  it('sin depositos activos (ni principal ni fallback): retorna null', async () => {
+    mockedDb.execute.mockResolvedValue({ rows: { length: 0, item: () => undefined } } as never)
+
+    const result = await resolverDepositoPrincipalActivo('emp-1')
+
+    expect(result).toBeNull()
+  })
+})
+
+describe('registrarEntradasInicialesBatch (PR1 — reemplaza el loop de N `registrarMovimiento` por 1 sola writeTransaction)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function entrada(overrides: Partial<EntradaInicialImport> = {}): EntradaInicialImport {
+    return { producto_id: 'prod-default', cantidad: 1, deposito_id: 'dep-A', ...overrides }
+  }
+
+  /**
+   * Fake tx para el batch: responde a las queries internas de `upsertStockDeposito`
+   * (SELECT/INSERT/UPDATE inventario_stock, SELECT/UPDATE productos, SELECT kardex
+   * para baseline) ademas del INSERT de `movimientos_inventario` del batch mismo.
+   * Mismo patron que `mockAjustesTx` en use-ajustes.test.ts.
+   */
+  function mockBatchTx(
+    opts: { stockPorProducto?: Record<string, string>; failOnProductoId?: string } = {}
+  ) {
+    const calls: { sql: string; params: unknown[] }[] = []
+    mockedDb.writeTransaction.mockImplementation(async (callback) => {
+      const tx = {
+        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params })
+
+          if (
+            opts.failOnProductoId &&
+            sql.startsWith('INSERT INTO movimientos_inventario') &&
+            params.includes(opts.failOnProductoId)
+          ) {
+            throw new Error(`fallo simulado al insertar movimiento de ${opts.failOnProductoId}`)
+          }
+          if (sql.startsWith('SELECT stock FROM productos')) {
+            const productoId = params[0] as string
+            return { rows: { length: 1, item: () => ({ stock: opts.stockPorProducto?.[productoId] ?? '0.000' }) } }
+          }
+          if (sql.startsWith('SELECT id, cantidad_actual FROM inventario_stock')) {
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('INSERT INTO inventario_stock')) {
+            return { rows: { length: 1, item: () => ({ id: 'stock-insert-fake-id' }) } }
+          }
+          if (sql.includes('FROM movimientos_inventario') && sql.trimStart().startsWith('SELECT')) {
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          return { rows: { length: 0, item: () => undefined }, rowsAffected: 1 }
+        }),
+      } as unknown as Transaction
+      return callback(tx)
+    })
+    return calls
+  }
+
+  it('SC1: 5 entradas con stock_inicial>0 -> UN solo db.writeTransaction, 5 filas insertadas en movimientos_inventario', async () => {
+    const calls = mockBatchTx()
+    const entradas = Array.from({ length: 5 }, (_, i) => entrada({ producto_id: `prod-${i}` }))
+
+    const result = await registrarEntradasInicialesBatch({
+      entradas,
+      usuario_id: 'user-1',
+      empresa_id: 'emp-1',
+    })
+
+    expect(mockedDb.writeTransaction).toHaveBeenCalledTimes(1)
+    const inserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(inserts).toHaveLength(5)
+    expect(result.exitosos).toBe(5)
+  })
+
+  it('SC2: forma de fila (tipo=E, origen=MAN, stock_anterior=0.000) y precision de 3 decimales (cantidad=12.5 -> 12.500), sin lote_id/tipo_salida', async () => {
+    const calls = mockBatchTx()
+
+    await registrarEntradasInicialesBatch({
+      entradas: [entrada({ producto_id: 'prod-1', cantidad: 12.5 })],
+      usuario_id: 'user-1',
+      empresa_id: 'emp-1',
+    })
+
+    const insert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(insert).toBeDefined()
+    expect(insert!.sql).toContain("'E'")
+    expect(insert!.sql).toContain("'MAN'")
+    expect(insert!.sql).toContain("'0.000'")
+    expect(insert!.params).toEqual([
+      expect.any(String), // id
+      'prod-1',
+      'dep-A',
+      '12.500', // cantidad
+      '12.500', // stock_nuevo (stock_anterior siempre 0.000 -> stock_nuevo = cantidad)
+      'INVENTARIO INICIAL',
+      'user-1',
+      expect.any(String), // fecha
+      'emp-1',
+      expect.any(String), // created_at
+    ])
+  })
+
+  it('SC3: upsertStockDeposito actualiza inventario_stock y productos.stock para un producto nuevo sin fila previa', async () => {
+    const calls = mockBatchTx({ stockPorProducto: { 'prod-1': '0.000' } })
+
+    await registrarEntradasInicialesBatch({
+      entradas: [entrada({ producto_id: 'prod-1', cantidad: 12.5 })],
+      usuario_id: 'user-1',
+      empresa_id: 'emp-1',
+    })
+
+    const stockInsert = calls.find((c) => c.sql.startsWith('INSERT INTO inventario_stock'))
+    expect(stockInsert).toBeDefined()
+    expect(stockInsert!.params).toContain('12.500')
+    expect(stockInsert!.params).toContain('prod-1')
+    expect(stockInsert!.params).toContain('dep-A')
+
+    const productoUpdate = calls.find((c) => c.sql.startsWith('UPDATE productos SET stock'))
+    expect(productoUpdate).toBeDefined()
+    expect(productoUpdate!.params).toContain('12.500')
+  })
+
+  it('SC4: cada fila insertada lleva el empresa_id del usuario actual (multi-tenant)', async () => {
+    const calls = mockBatchTx()
+
+    await registrarEntradasInicialesBatch({
+      entradas: [entrada({ producto_id: 'prod-1' }), entrada({ producto_id: 'prod-2' })],
+      usuario_id: 'user-1',
+      empresa_id: 'emp-xyz',
+    })
+
+    const inserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(inserts).toHaveLength(2)
+    for (const insert of inserts) {
+      expect(insert.params).toContain('emp-xyz')
+    }
+  })
+
+  it('SC7: si la entrada #3 de 5 lanza, la promesa del batch rechaza y las entradas #4-5 no se procesan (todo-o-nada)', async () => {
+    const calls = mockBatchTx({ failOnProductoId: 'prod-3' })
+    const entradas = Array.from({ length: 5 }, (_, i) => entrada({ producto_id: `prod-${i + 1}` }))
+
+    await expect(
+      registrarEntradasInicialesBatch({ entradas, usuario_id: 'user-1', empresa_id: 'emp-1' })
+    ).rejects.toThrow(/fallo simulado/)
+
+    const inserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    // entradas 1 y 2 se insertan; la #3 se intenta y lanza; #4 y #5 nunca se procesan
+    expect(inserts).toHaveLength(3)
+  })
+
+  it('SC20a (PR3b): cada entrada usa SU PROPIO deposito_id (no uno global) dentro de la MISMA writeTransaction', async () => {
+    const calls = mockBatchTx()
+
+    await registrarEntradasInicialesBatch({
+      entradas: [
+        entrada({ producto_id: 'prod-1', deposito_id: 'dep-X' }),
+        entrada({ producto_id: 'prod-2', deposito_id: 'dep-Y' }),
+      ],
+      usuario_id: 'user-1',
+      empresa_id: 'emp-1',
+    })
+
+    expect(mockedDb.writeTransaction).toHaveBeenCalledTimes(1)
+    const inserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(inserts.find((c) => c.params[1] === 'prod-1')!.params[2]).toBe('dep-X')
+    expect(inserts.find((c) => c.params[1] === 'prod-2')!.params[2]).toBe('dep-Y')
+  })
+
+  it('lanza si una entrada llega SIN deposito_id resuelto (invariante: el caller — ejecutarStockInicialImport o el modal — debe resolverlo antes de llamar a este helper)', async () => {
+    mockBatchTx()
+    const entradas: EntradaInicialImport[] = [{ producto_id: 'prod-1', cantidad: 1 }]
+
+    await expect(
+      registrarEntradasInicialesBatch({ entradas, usuario_id: 'user-1', empresa_id: 'emp-1' })
+    ).rejects.toThrow(/deposito_id/)
+  })
+})
+
+describe('ejecutarStockInicialImport (PR1 — orquesta resolucion de deposito + batch)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function mockBatchTxSimple() {
+    const calls: { sql: string; params: unknown[] }[] = []
+    mockedDb.writeTransaction.mockImplementation(async (callback) => {
+      const tx = {
+        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params })
+          if (sql.startsWith('SELECT stock FROM productos')) {
+            return { rows: { length: 1, item: () => ({ stock: '0.000' }) } }
+          }
+          if (sql.startsWith('SELECT id, cantidad_actual FROM inventario_stock')) {
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('INSERT INTO inventario_stock')) {
+            return { rows: { length: 1, item: () => ({ id: 'stock-insert-fake-id' }) } }
+          }
+          if (sql.includes('FROM movimientos_inventario') && sql.trimStart().startsWith('SELECT')) {
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          return { rows: { length: 0, item: () => undefined }, rowsAffected: 1 }
+        }),
+      } as unknown as Transaction
+      return callback(tx)
+    })
+    return calls
+  }
+
+  it('SC5: resuelve el deposito UNA sola vez para 100 entradas, y todas las filas usan el mismo deposito_id', async () => {
+    mockedDb.execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('es_principal = 1')) {
+        return { rows: { length: 1, item: () => ({ id: 'dep-unico' }) } } as never
+      }
+      throw new Error('no deberia consultar el fallback cuando hay principal activo')
+    })
+    const calls = mockBatchTxSimple()
+    const entradas: EntradaInicialImport[] = Array.from({ length: 100 }, (_, i) => ({
+      producto_id: `prod-${i}`,
+      cantidad: 1,
+    }))
+
+    const result = await ejecutarStockInicialImport({ entradas, empresa_id: 'emp-1', usuario_id: 'user-1' })
+
+    expect(mockedDb.execute).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({ exitosos: 100, sinDeposito: false })
+    const depositoIdsUsados = new Set(
+      calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_inventario')).map((c) => c.params[2])
+    )
+    expect(depositoIdsUsados).toEqual(new Set(['dep-unico']))
+  })
+
+  it('SC6: empresa sin depositos activos -> retorna {exitosos:0, sinDeposito:true} y db.writeTransaction nunca se invoca', async () => {
+    mockedDb.execute.mockResolvedValue({ rows: { length: 0, item: () => undefined } } as never)
+
+    const result = await ejecutarStockInicialImport({
+      entradas: [{ producto_id: 'prod-1', cantidad: 5 }],
+      empresa_id: 'emp-1',
+      usuario_id: 'user-1',
+    })
+
+    expect(result).toEqual({ exitosos: 0, sinDeposito: true })
+    expect(mockedDb.writeTransaction).not.toHaveBeenCalled()
+  })
+
+  it('SC20 (PR3b): 3 entradas con deposito_id explicito distinto + 2 sin deposito_id -> las 3 usan su deposito explicito y las 2 usan el principal resuelto UNA sola vez', async () => {
+    mockedDb.execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('es_principal = 1')) {
+        return { rows: { length: 1, item: () => ({ id: 'dep-principal' }) } } as never
+      }
+      throw new Error('no deberia consultar el fallback cuando hay principal activo')
+    })
+    const calls = mockBatchTxSimple()
+    const entradas: EntradaInicialImport[] = [
+      { producto_id: 'prod-1', cantidad: 1, deposito_id: 'dep-X' },
+      { producto_id: 'prod-2', cantidad: 1, deposito_id: 'dep-Y' },
+      { producto_id: 'prod-3', cantidad: 1, deposito_id: 'dep-Z' },
+      { producto_id: 'prod-4', cantidad: 1 },
+      { producto_id: 'prod-5', cantidad: 1 },
+    ]
+
+    const result = await ejecutarStockInicialImport({ entradas, empresa_id: 'emp-1', usuario_id: 'user-1' })
+
+    // resolverDepositoPrincipalActivo se llama 1 sola vez (no 1 por cada entrada sin deposito_id)
+    expect(mockedDb.execute).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({ exitosos: 5, sinDeposito: false })
+
+    const inserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    const depositoPorProducto = new Map(inserts.map((c) => [c.params[1] as string, c.params[2] as string]))
+    expect(depositoPorProducto.get('prod-1')).toBe('dep-X')
+    expect(depositoPorProducto.get('prod-2')).toBe('dep-Y')
+    expect(depositoPorProducto.get('prod-3')).toBe('dep-Z')
+    expect(depositoPorProducto.get('prod-4')).toBe('dep-principal')
+    expect(depositoPorProducto.get('prod-5')).toBe('dep-principal')
+  })
+
+  it('SC21 (contrato): entradas sin campo deposito_id en NINGUNA -> el fallback de principal se aplica a TODAS (documenta que este helper no filtra ACTUALIZAR — responsabilidad exclusiva del caller no incluirlas)', async () => {
+    mockedDb.execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('es_principal = 1')) {
+        return { rows: { length: 1, item: () => ({ id: 'dep-unico' }) } } as never
+      }
+      throw new Error('no deberia consultar el fallback cuando hay principal activo')
+    })
+    const calls = mockBatchTxSimple()
+
+    await ejecutarStockInicialImport({
+      entradas: [{ producto_id: 'prod-1', cantidad: 1 }],
+      empresa_id: 'emp-1',
+      usuario_id: 'user-1',
+    })
+
+    const insert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(insert!.params[2]).toBe('dep-unico')
   })
 })

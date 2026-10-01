@@ -329,6 +329,204 @@ export function calcularStockDepositoDesdeKardex(
   return agregado[0]?.cantidad ?? new Decimal(0)
 }
 
+/**
+ * Resuelve el deposito ACTIVO destino para el batch de stock inicial de un
+ * import: prioriza el deposito `es_principal=1` activo de la empresa; si no
+ * hay ninguno marcado principal, cae al primer deposito activo encontrado.
+ * Retorna `null` si la empresa no tiene ningun deposito activo — el
+ * llamador (`ejecutarStockInicialImport`) decide como manejarlo (spec-pr1
+ * R5, "sin deposito configurado").
+ *
+ * Misma logica de resolucion que `registrarMovimiento` (use-kardex.ts) para
+ * el caso sin `deposito_id` explicito, pero corre FUERA de cualquier
+ * `writeTransaction` — se invoca UNA sola vez antes del batch completo, no
+ * una vez por entrada (spec-pr1 R4, SC5).
+ */
+export async function resolverDepositoPrincipalActivo(empresa_id: string): Promise<string | null> {
+  const principalRes = await db.execute(
+    'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
+    [empresa_id]
+  )
+  if (principalRes?.rows?.length) {
+    return (principalRes.rows.item(0) as { id: string }).id
+  }
+
+  const fallbackRes = await db.execute(
+    'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
+    [empresa_id]
+  )
+  if (fallbackRes?.rows?.length) {
+    return (fallbackRes.rows.item(0) as { id: string }).id
+  }
+
+  return null
+}
+
+export interface EntradaInicialImport {
+  producto_id: string
+  cantidad: number
+  /**
+   * Deposito RESUELTO por el caller para esta fila especifica (spec-pr3 R10,
+   * PR3b) — antes de PR3b el batch completo usaba un unico `deposito_id`
+   * global (`RegistrarEntradasInicialesBatchParams.deposito_id`, ya removido).
+   * Opcional a este nivel: si una entrada llega sin resolver,
+   * `ejecutarStockInicialImport` la completa con el deposito principal de la
+   * empresa (resuelto UNA sola vez, cacheado, no una vez por fila — R15).
+   * `registrarEntradasInicialesBatch` en cambio EXIGE que ya venga resuelto
+   * (invariante de esta capa — ver su docstring).
+   */
+  deposito_id?: string
+}
+
+export interface RegistrarEntradasInicialesBatchParams {
+  entradas: EntradaInicialImport[]
+  usuario_id: string
+  empresa_id: string
+}
+
+export interface RegistrarEntradasInicialesBatchResult {
+  exitosos: number
+}
+
+const MOTIVO_INVENTARIO_INICIAL = 'INVENTARIO INICIAL'
+
+/**
+ * Inserta TODAS las entradas de stock inicial de un import en UNA sola
+ * `db.writeTransaction` — reemplaza el loop de N llamadas a
+ * `registrarMovimiento` (cada una con su propia transaccion) que hacia el
+ * import antes de este cambio (spec-pr1 R1). Cada fila sigue el contrato de
+ * "entrada limpia" (regla de negocio #3, Kardex-only): `tipo='E'`,
+ * `origen='MAN'`, `stock_anterior='0.000'` (siempre 0: son productos recien
+ * creados en el mismo import, sin stock previo posible), sin `lote_id`,
+ * `tipo_salida`, `costo_unitario` ni `tasa_cambio` (spec-pr1 R2). El
+ * deposito ya viene resuelto por el llamador (`ejecutarStockInicialImport`)
+ * — esta funcion NUNCA resuelve deposito por si misma, y NUNCA escribe
+ * `productos.stock`/`inventario_stock` directamente: delega esa escritura a
+ * `upsertStockDeposito`, inmediatamente despues del INSERT de kardex de esa
+ * misma entrada.
+ *
+ * Todo-o-nada (spec-pr1 R6): si cualquier entrada lanza, la promesa de
+ * `db.writeTransaction` rechaza y ninguna fila queda persistida — no hay
+ * try/catch por entrada, deliberadamente.
+ *
+ * Deposito POR FILA (spec-pr3 R15, PR3b): cada `entrada.deposito_id` MUST
+ * venir YA resuelto por el caller ANTES de abrir esta transaccion (el
+ * caller tipico es `ejecutarStockInicialImport`, que resuelve el fallback de
+ * deposito principal UNA sola vez para las entradas que no traen el suyo
+ * propio — nunca aqui, y nunca por fila). Este helper NO resuelve ningun
+ * deposito por si mismo — lanza si una entrada llega sin `deposito_id`, para
+ * que un caller directo (bypaseando `ejecutarStockInicialImport`) no inserte
+ * silenciosamente un movimiento con deposito indefinido.
+ *
+ * Contrato (SC21): este helper tampoco filtra por tipo de fila — asume que
+ * TODAS las `entradas` recibidas deben alimentar el batch. Es responsabilidad
+ * exclusiva del caller (el modal de import) NUNCA incluir aqui filas
+ * `ACTUALIZAR` (R11/R12: el stock de un producto existente jamas se mueve
+ * via esta columna).
+ */
+export async function registrarEntradasInicialesBatch(
+  params: RegistrarEntradasInicialesBatchParams
+): Promise<RegistrarEntradasInicialesBatchResult> {
+  const { entradas, usuario_id, empresa_id } = params
+  const now = localNow()
+
+  await db.writeTransaction(async (tx) => {
+    for (const entrada of entradas) {
+      if (!entrada.deposito_id) {
+        throw new Error(
+          `registrarEntradasInicialesBatch: entrada sin deposito_id resuelto (producto_id="${entrada.producto_id}") — el caller debe resolverlo antes de invocar este helper`
+        )
+      }
+      const id = uuidv4()
+      const cantidadStr = new Decimal(entrada.cantidad).toFixed(3)
+
+      await tx.execute(
+        `INSERT INTO movimientos_inventario
+           (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
+            lote_id, motivo, usuario_id, fecha, empresa_id, created_at,
+            tipo_salida, costo_unitario, tasa_cambio)
+         VALUES (?, ?, ?, 'E', 'MAN', ?, '0.000', ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
+        [
+          id,
+          entrada.producto_id,
+          entrada.deposito_id,
+          cantidadStr,
+          cantidadStr,
+          MOTIVO_INVENTARIO_INICIAL,
+          usuario_id,
+          now,
+          empresa_id,
+          now,
+        ]
+      )
+
+      await upsertStockDeposito(tx, {
+        empresa_id,
+        producto_id: entrada.producto_id,
+        deposito_id: entrada.deposito_id,
+        delta: new Decimal(cantidadStr),
+        usuario_id,
+        now,
+        movimientoInventarioId: id,
+      })
+    }
+  })
+
+  return { exitosos: entradas.length }
+}
+
+export interface EjecutarStockInicialImportParams {
+  entradas: EntradaInicialImport[]
+  empresa_id: string
+  usuario_id: string
+}
+
+export interface EjecutarStockInicialImportResult {
+  exitosos: number
+  sinDeposito: boolean
+}
+
+/**
+ * Orquesta el batch de stock inicial de un import: resuelve el deposito
+ * PRINCIPAL UNA sola vez (spec-pr1 R4/SC5) — pero solo si al menos una
+ * entrada llega SIN `deposito_id` propio (spec-pr3 R15, PR3b) — y lo aplica
+ * como fallback UNICAMENTE a esas entradas; las que ya traen su
+ * `deposito_id` resuelto (el modal las resuelve por fila via
+ * `resolverDepositoFila`, spec-pr3 R10) lo conservan intacto. Si NINGUNA
+ * entrada necesita el fallback, `resolverDepositoPrincipalActivo` ni
+ * siquiera se invoca.
+ *
+ * Si se necesita el fallback y la empresa no tiene ningun deposito activo,
+ * retorna sin abrir transaccion (spec-pr1 R5/SC6) — el modal muestra el
+ * mismo mensaje de error visible antes de este cambio.
+ */
+export async function ejecutarStockInicialImport(
+  params: EjecutarStockInicialImportParams
+): Promise<EjecutarStockInicialImportResult> {
+  const { entradas, empresa_id, usuario_id } = params
+
+  const necesitaPrincipal = entradas.some((e) => !e.deposito_id)
+  let principalId: string | null = null
+  if (necesitaPrincipal) {
+    principalId = await resolverDepositoPrincipalActivo(empresa_id)
+    if (!principalId) {
+      return { exitosos: 0, sinDeposito: true }
+    }
+  }
+
+  const entradasResueltas: EntradaInicialImport[] = entradas.map((e) =>
+    e.deposito_id ? e : { ...e, deposito_id: principalId! }
+  )
+
+  const { exitosos } = await registrarEntradasInicialesBatch({
+    entradas: entradasResueltas,
+    usuario_id,
+    empresa_id,
+  })
+
+  return { exitosos, sinDeposito: false }
+}
+
 export interface RecalcularStockParams {
   empresa_id: string
   /** Si se provee, limita el recalculo a este producto (todos sus depositos). */

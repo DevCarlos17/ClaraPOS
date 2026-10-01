@@ -1312,6 +1312,40 @@ export interface HorariosExcepciones {
 }
 
 // =============================================
+// AUDITORIA DE IMPORTS
+// =============================================
+
+export interface ImportLog {
+  id: string
+  empresa_id: string
+  usuario_id: string
+  fecha: string
+  modo: string
+  archivo_nombre: string | null
+  total_filas: number
+  filas_creadas: number
+  filas_actualizadas: number
+  filas_omitidas: number
+  filas_error: number
+  created_at: string
+}
+
+export interface ImportLogDet {
+  id: string
+  empresa_id: string
+  import_log_id: string
+  fila_num: number
+  codigo: string | null
+  nombre: string | null
+  tipo: string | null
+  accion: string
+  valores_anteriores: string | null
+  valores_nuevos: string | null
+  errores: string | null
+  created_at: string
+}
+
+// =============================================
 // DB INTERFACE (mapeo nombre_tabla -> Interface)
 // =============================================
 
@@ -1405,4 +1439,7 @@ export interface DB {
   cita_items_extras: CitaItemsExtras
   horarios_descansos: HorariosDescansos
   horarios_excepciones: HorariosExcepciones
+  // Auditoria de imports
+  import_log: ImportLog
+  import_log_det: ImportLogDet
 }

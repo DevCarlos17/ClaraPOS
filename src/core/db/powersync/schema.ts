@@ -1520,6 +1520,40 @@ const cita_log = new Table(
   { indexes: {} }
 )
 
+const import_log = new Table(
+  {
+    empresa_id: column.text,
+    usuario_id: column.text,
+    fecha: column.text,
+    modo: column.text,
+    archivo_nombre: column.text,
+    total_filas: column.integer,
+    filas_creadas: column.integer,
+    filas_actualizadas: column.integer,
+    filas_omitidas: column.integer,
+    filas_error: column.integer,
+    created_at: column.text,
+  },
+  { indexes: {} }
+)
+
+const import_log_det = new Table(
+  {
+    empresa_id: column.text,
+    import_log_id: column.text,
+    fila_num: column.integer,
+    codigo: column.text,
+    nombre: column.text,
+    tipo: column.text,
+    accion: column.text,
+    valores_anteriores: column.text,
+    valores_nuevos: column.text,
+    errores: column.text,
+    created_at: column.text,
+  },
+  { indexes: {} }
+)
+
 const cita_items_extras = new Table(
   {
     empresa_id: column.text,
@@ -1686,6 +1720,9 @@ export const AppSchema = new Schema({
   horarios_descansos,
   horarios_excepciones,
   horarios_plantillas,
+  // Auditoria de imports
+  import_log,
+  import_log_det,
 })
 
 export type Database = (typeof AppSchema)['types']
