@@ -2,7 +2,9 @@ import {
   clasificarAccionFila,
   debeIgnorarStockInicial,
   detectarColumnasPresentes,
+  estimarPesoSync,
   mergearProductoParaUpdate,
+  parseTipoImpuesto,
   resolverDepositoFila,
   validarFormatoPreciosTocados,
   validarPreciosMergeados,
@@ -65,7 +67,7 @@ describe('mergearProductoParaUpdate (spec-pr3 R7)', () => {
 
     const merged = mergearProductoParaUpdate(row, columnas, existente)
 
-    expect(merged).toEqual({ costo: 8, venta: 15, mayor: null })
+    expect(merged).toEqual({ costo: 8, venta: 15, mayor: null, especial: null })
   })
 
   it('SC6: columna presente pero celda vacia => mismo resultado que columna ausente (usa valor existente)', () => {
@@ -267,5 +269,180 @@ describe('debeIgnorarStockInicial (spec-pr3 R12, PR3b)', () => {
 
   it('triangulacion: fila CREAR con stock_inicial > 0 => false (la regla solo aplica a ACTUALIZAR, en CREAR se usa normalmente)', () => {
     expect(debeIgnorarStockInicial('CREAR', '50')).toBe(false)
+  })
+})
+
+describe('parseTipoImpuesto (Fase A commit 3 — IVA por porcentaje)', () => {
+  it('"Exento" => tipo Exento, porcentaje null', () => {
+    expect(parseTipoImpuesto('Exento')).toEqual({ tipo: 'Exento', porcentaje: null })
+  })
+
+  it('"exento" (minusculas) => tipo Exento', () => {
+    expect(parseTipoImpuesto('exento')).toEqual({ tipo: 'Exento', porcentaje: null })
+  })
+
+  it('"Exonerado" => tipo Exonerado, porcentaje null', () => {
+    expect(parseTipoImpuesto('Exonerado')).toEqual({ tipo: 'Exonerado', porcentaje: null })
+  })
+
+  it('"exonerado" (minusculas) => tipo Exonerado', () => {
+    expect(parseTipoImpuesto('exonerado')).toEqual({ tipo: 'Exonerado', porcentaje: null })
+  })
+
+  it('"Gravable" sin numero => tipo Gravable, porcentaje null', () => {
+    expect(parseTipoImpuesto('Gravable')).toEqual({ tipo: 'Gravable', porcentaje: null })
+  })
+
+  it('"Gravable 16" => tipo Gravable, porcentaje 16', () => {
+    expect(parseTipoImpuesto('Gravable 16')).toEqual({ tipo: 'Gravable', porcentaje: 16 })
+  })
+
+  it('"Gravable 8" => tipo Gravable, porcentaje 8', () => {
+    expect(parseTipoImpuesto('Gravable 8')).toEqual({ tipo: 'Gravable', porcentaje: 8 })
+  })
+
+  it('"GRAVABLE 16.00" (mayusculas + decimales) => tipo Gravable, porcentaje 16', () => {
+    expect(parseTipoImpuesto('GRAVABLE 16.00')).toEqual({ tipo: 'Gravable', porcentaje: 16 })
+  })
+
+  it('"invalid" => Exento con invalid:true (celda no reconocida)', () => {
+    expect(parseTipoImpuesto('invalid')).toEqual({ tipo: 'Exento', porcentaje: null, invalid: true })
+  })
+
+  it('cadena vacia => Exento con invalid:true', () => {
+    expect(parseTipoImpuesto('')).toEqual({ tipo: 'Exento', porcentaje: null, invalid: true })
+  })
+})
+
+describe('validarPreciosMergeados — precio_especial_usd (Fase A commit 3)', () => {
+  it('especial=3, costo=5 => error (especial < costo), sugiere incluir costo_usd', () => {
+    const columnas = detectarColumnasPresentes(['precio_especial_usd'])
+    const errors = validarPreciosMergeados({ costo: 5, venta: 10, mayor: null, especial: 3 }, columnas)
+
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('costo_usd')
+    expect(errors[0]).toContain('3')
+    expect(errors[0]).toContain('5')
+  })
+
+  it('especial=20, venta=15, costo=5 => sin error (especial > venta esta permitido, B1.1)', () => {
+    const columnas = detectarColumnasPresentes(['precio_especial_usd'])
+    const errors = validarPreciosMergeados({ costo: 5, venta: 15, mayor: null, especial: 20 }, columnas)
+
+    expect(errors).toEqual([])
+  })
+
+  it('especial null (no tocado) => sin error de especial', () => {
+    const columnas = detectarColumnasPresentes(['costo_usd'])
+    const errors = validarPreciosMergeados({ costo: 5, venta: 10, mayor: null, especial: null }, columnas)
+
+    expect(errors).toEqual([])
+  })
+
+  it('especial ausente del objeto (compatibilidad retro) => sin error de especial', () => {
+    const columnas = detectarColumnasPresentes(['costo_usd'])
+    const errors = validarPreciosMergeados({ costo: 5, venta: 10, mayor: null }, columnas)
+
+    expect(errors).toEqual([])
+  })
+})
+
+describe('mergearProductoParaUpdate — precio_especial_usd (Fase A commit 3)', () => {
+  const existente = {
+    costo_usd: '10.00000000',
+    precio_venta_usd: '15.00000000',
+    precio_mayor_usd: null as string | null,
+    precio_especial_usd: '9.00000000' as string | null,
+  }
+
+  it('columna presente y celda con valor => usa el valor de la fila', () => {
+    const columnas = detectarColumnasPresentes(['precio_especial_usd'])
+    const row = { costo_usd: '', precio_venta_usd: '', precio_mayor_usd: '', precio_especial_usd: '11' }
+
+    const merged = mergearProductoParaUpdate(row, columnas, existente)
+
+    expect(merged.especial).toBe(11)
+  })
+
+  it('columna ausente => usa el valor existente en BD', () => {
+    const columnas = detectarColumnasPresentes(['codigo'])
+    const row = { costo_usd: '', precio_venta_usd: '', precio_mayor_usd: '', precio_especial_usd: '' }
+
+    const merged = mergearProductoParaUpdate(row, columnas, existente)
+
+    expect(merged.especial).toBe(9)
+  })
+
+  it('sin precio_especial_usd existente (null en BD) y columna ausente => especial null', () => {
+    const columnas = detectarColumnasPresentes(['codigo'])
+    const row = { costo_usd: '', precio_venta_usd: '', precio_mayor_usd: '', precio_especial_usd: '' }
+
+    const merged = mergearProductoParaUpdate(row, columnas, { ...existente, precio_especial_usd: null })
+
+    expect(merged.especial).toBeNull()
+  })
+})
+
+describe('validarFormatoPreciosTocados — precio_especial_usd (Fase A commit 3)', () => {
+  it('precio_especial_usd no numerico en columna presente+no-vacia => error', () => {
+    const columnas = detectarColumnasPresentes(['precio_especial_usd'])
+    const row = { costo_usd: '', precio_venta_usd: '', precio_mayor_usd: '', precio_especial_usd: 'abc' }
+
+    expect(validarFormatoPreciosTocados(row, columnas)).toEqual(['precio_especial_usd invalido'])
+  })
+
+  it('precio_especial_usd negativo => error', () => {
+    const columnas = detectarColumnasPresentes(['precio_especial_usd'])
+    const row = { costo_usd: '', precio_venta_usd: '', precio_mayor_usd: '', precio_especial_usd: '-5' }
+
+    expect(validarFormatoPreciosTocados(row, columnas)).toEqual(['precio_especial_usd invalido'])
+  })
+
+  it('precio_especial_usd valido => sin errores', () => {
+    const columnas = detectarColumnasPresentes(['precio_especial_usd'])
+    const row = { costo_usd: '', precio_venta_usd: '', precio_mayor_usd: '', precio_especial_usd: '12.5' }
+
+    expect(validarFormatoPreciosTocados(row, columnas)).toEqual([])
+  })
+})
+
+describe('estimarPesoSync (Fase A commit 3 — estimado de peso de la subida a PowerSync)', () => {
+  it('fila OMITIR no suma al total', () => {
+    const columnas = detectarColumnasPresentes(['codigo'])
+    const total = estimarPesoSync([{ accion: 'OMITIR', valores: { codigo: 'X' } }], columnas)
+
+    expect(total).toBe(0)
+  })
+
+  it('una fila CREAR suma 150 base + el largo del JSON de sus valores tocados', () => {
+    const columnas = detectarColumnasPresentes(['codigo', 'nombre'])
+    const valores = { codigo: 'PROD-1', nombre: 'PRODUCTO UNO' }
+    const total = estimarPesoSync([{ accion: 'CREAR', valores }], columnas)
+
+    expect(total).toBe(150 + JSON.stringify(valores).length)
+  })
+
+  it('solo cuenta las columnas presentes en el header, no todo el objeto valores', () => {
+    const columnas = detectarColumnasPresentes(['codigo'])
+    const valores = { codigo: 'PROD-1', nombre: 'IGNORADO' }
+    const total = estimarPesoSync([{ accion: 'CREAR', valores }], columnas)
+
+    expect(total).toBe(150 + JSON.stringify({ codigo: 'PROD-1' }).length)
+  })
+
+  it('suma el peso de multiples filas no-OMITIR', () => {
+    const columnas = detectarColumnasPresentes(['codigo'])
+    const filas = [
+      { accion: 'CREAR' as const, valores: { codigo: 'A' } },
+      { accion: 'ACTUALIZAR' as const, valores: { codigo: 'BB' } },
+      { accion: 'OMITIR' as const, valores: { codigo: 'C' } },
+    ]
+    const total = estimarPesoSync(filas, columnas)
+
+    const esperado =
+      150 + JSON.stringify({ codigo: 'A' }).length +
+      150 + JSON.stringify({ codigo: 'BB' }).length
+
+    expect(total).toBe(esperado)
   })
 })

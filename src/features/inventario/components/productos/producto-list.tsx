@@ -23,6 +23,7 @@ import {
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
 import { useDepositos, useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
+import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
 import { useExistenciasPorDeposito } from '@/features/inventario/hooks/use-inventario-stock'
 import { useTodasLasRecetas } from '@/features/inventario/hooks/use-recetas'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -60,6 +61,7 @@ export function ProductoList() {
   const { depositos } = useDepositos()
   const { depositos: depositosActivos } = useDepositosActivos()
   const { unidades } = useUnidadesActivas()
+  const { impuestos } = useImpuestosActivos()
   const { rows: existenciasRows } = useExistenciasPorDeposito()
   const { tasaValor } = useTasaActual()
   const { valorTotal, stockCritico } = useResumenInventario()
@@ -615,6 +617,7 @@ export function ProductoList() {
         productos={productos}
         departamentos={departamentos}
         depositos={depositosActivos}
+        impuestos={impuestos}
       />
 
       <ComboDetalleModal
