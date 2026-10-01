@@ -3,6 +3,8 @@ import {
   debeIgnorarStockInicial,
   detectarColumnasPresentes,
   estimarPesoSync,
+  extraerCamposAnteriores,
+  extraerValoresNuevos,
   mergearProductoParaUpdate,
   parseTipoImpuesto,
   resolverDepositoFila,
@@ -444,5 +446,83 @@ describe('estimarPesoSync (Fase A commit 3 — estimado de peso de la subida a P
       150 + JSON.stringify({ codigo: 'BB' }).length
 
     expect(total).toBe(esperado)
+  })
+})
+
+describe('extraerCamposAnteriores (auditoria import, Fase B)', () => {
+  const productoExistente = {
+    nombre: 'PRODUCTO VIEJO',
+    costo_usd: '10.00000000',
+    precio_venta_usd: '15.00000000',
+    departamento_id: 'dep-1',
+  }
+
+  it('solo incluye los campos cuya columna vino en el archivo', () => {
+    const columnas = detectarColumnasPresentes(['codigo', 'nombre', 'costo_usd'])
+
+    const resultado = extraerCamposAnteriores(productoExistente, columnas)
+
+    expect(resultado).toEqual({ nombre: 'PRODUCTO VIEJO', costo_usd: '10.00000000' })
+    expect(resultado).not.toHaveProperty('precio_venta_usd')
+  })
+
+  it('columnasPresentes vacia (solo codigo) => retorna null', () => {
+    const columnas = detectarColumnasPresentes(['codigo'])
+
+    const resultado = extraerCamposAnteriores(productoExistente, columnas)
+
+    expect(resultado).toBeNull()
+  })
+})
+
+describe('extraerValoresNuevos (auditoria import, Fase B)', () => {
+  function buildRow(overrides: Partial<Parameters<typeof extraerValoresNuevos>[0]>) {
+    return {
+      accion: 'CREAR' as const,
+      codigo: 'PROD-1',
+      nombre: '',
+      tipo: 'P',
+      departamento: '',
+      costo_usd: '',
+      precio_venta_usd: '',
+      precio_mayor_usd: '',
+      precio_especial_usd: '',
+      stock_minimo: '',
+      stock_inicial: '',
+      unidad: '',
+      tipo_impuesto: '',
+      codigo_barras: '',
+      presentacion: '',
+      ubicacion: '',
+      maneja_lotes: '',
+      deposito: '',
+      ...overrides,
+    }
+  }
+
+  it('fila CREAR con nombre + costo_usd => ambos campos presentes', () => {
+    const row = buildRow({ accion: 'CREAR', nombre: 'PRODUCTO NUEVO', costo_usd: '8.00' })
+    const columnas = detectarColumnasPresentes(['codigo', 'nombre', 'costo_usd'])
+
+    const resultado = extraerValoresNuevos(row, columnas)
+
+    expect(resultado).toEqual({ nombre: 'PRODUCTO NUEVO', costo_usd: '8.00' })
+  })
+
+  it('fila OMITIR => retorna null', () => {
+    const row = buildRow({ accion: 'OMITIR', nombre: 'IGNORADO' })
+    const columnas = detectarColumnasPresentes(['codigo', 'nombre'])
+
+    expect(extraerValoresNuevos(row, columnas)).toBeNull()
+  })
+
+  it('fila ACTUALIZAR con solo nombre tocado (columna presente) => solo nombre en el resultado', () => {
+    const row = buildRow({ accion: 'ACTUALIZAR', nombre: 'PRODUCTO ACTUALIZADO', costo_usd: '' })
+    const columnas = detectarColumnasPresentes(['codigo', 'nombre'])
+
+    const resultado = extraerValoresNuevos(row, columnas)
+
+    expect(resultado).toEqual({ nombre: 'PRODUCTO ACTUALIZADO' })
+    expect(resultado).not.toHaveProperty('costo_usd')
   })
 })
