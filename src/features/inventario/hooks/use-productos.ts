@@ -33,6 +33,8 @@ export interface Producto {
   deposito_id: string | null
   costo_factura_usd: string | null // costo segun factura ultima compra (tasa proveedor); NULL/legacy -> usar costo_usd
   tasa_paralela_ref: string | null // tasa paralela de la ultima compra; NULL = tasa interna/oficial
+  /** 'pendiente' (numeracion correlativa, codigo aun no asignado por el servidor) | 'asignado'. Unica fuente de verdad de usabilidad — nunca comparar codigo === ''. */
+  codigo_status: string
 }
 
 export function useProductos() {
@@ -51,7 +53,7 @@ export function useProductosActivos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM productos WHERE empresa_id = ? AND is_active = 1 ORDER BY nombre ASC',
+    "SELECT * FROM productos WHERE empresa_id = ? AND is_active = 1 AND codigo_status = 'asignado' ORDER BY nombre ASC",
     [empresaId]
   )
   return { productos: (data ?? []) as Producto[], isLoading }
@@ -62,7 +64,7 @@ export function useProductosTipo(tipo: 'P' | 'S' | 'C') {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM productos WHERE empresa_id = ? AND tipo = ? AND is_active = 1 ORDER BY nombre ASC',
+    "SELECT * FROM productos WHERE empresa_id = ? AND tipo = ? AND is_active = 1 AND codigo_status = 'asignado' ORDER BY nombre ASC",
     [empresaId, tipo]
   )
   return { productos: (data ?? []) as Producto[], isLoading }
@@ -115,6 +117,8 @@ export async function crearProducto(data: {
   costo_factura_usd?: number | null
   /** Tasa paralela usada para derivar costo_usd. undefined/null = tasa interna/oficial. */
   tasa_paralela_ref?: string | null
+  /** 'pendiente' (modo correlativo, codigo lo asigna el trigger server-side al sync) | 'asignado' (default, backward-compatible). */
+  codigo_status?: 'pendiente' | 'asignado'
 }) {
   const id = uuidv4()
   const now = localNow()
@@ -151,6 +155,7 @@ export async function crearProducto(data: {
       deposito_id: data.deposito_id ?? null,
       costo_factura_usd: data.costo_factura_usd != null ? data.costo_factura_usd.toFixed(8) : null,
       tasa_paralela_ref: data.tasa_paralela_ref ?? null,
+      codigo_status: data.codigo_status ?? 'asignado',
     })
     .execute()
 

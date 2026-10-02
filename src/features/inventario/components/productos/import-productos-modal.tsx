@@ -21,6 +21,7 @@ import {
   estimarPesoSync,
   extraerCamposAnteriores,
   extraerValoresNuevos,
+  mapConTimestampPropio,
   mergearProductoParaUpdate,
   parseTipoImpuesto,
   resolverDepositoFila,
@@ -633,8 +634,12 @@ export function ImportProductosModal({
     const now = localNow()
     const productoPorCodigo = new Map(productos.map((p) => [p.codigo, p]))
 
-    // Pre-calcular todos los datos antes de abrir transacciones
-    const productoInserts = filasCrear.map((row) => {
+    // Pre-calcular todos los datos antes de abrir transacciones.
+    // `mapConTimestampPropio` (producto-numeracion-correlativa, SC-B1/D4):
+    // cada fila obtiene su PROPIO `localNow()` en vez de compartir el `now`
+    // calculado una sola vez arriba — fix de causa raiz de "Ultimo codigo
+    // creado" indeterminado con N>1 filas importadas.
+    const productoInserts = mapConTimestampPropio(filasCrear, (row, ts) => {
       const isServicioOCombo = row.tipo === 'S' || row.tipo === 'C'
       const dep = departamentos.find((d) => d.nombre === row.departamento)!
       const costo = parseFloat(row.costo_usd)
@@ -665,8 +670,8 @@ export function ImportProductosModal({
         maneja_lotes: row.tipo === 'P' ? row.maneja_lotes_parsed : 0,
         is_active: 1,
         empresa_id: user.empresa_id,
-        created_at: now,
-        updated_at: now,
+        created_at: ts,
+        updated_at: ts,
         ubicacion: row.tipo === 'P' && row.ubicacion.trim() !== '' ? row.ubicacion : null,
         unidad_base_id: (row.tipo === 'P' && row.unidad.trim() !== '')
           ? (unidades.find((u) => u.abreviatura === row.unidad)?.id ?? null)
@@ -674,15 +679,19 @@ export function ImportProductosModal({
         presentacion: !isServicioOCombo && row.presentacion.trim() !== '' ? row.presentacion : null,
         codigo_barras: row.codigo_barras.trim() !== '' ? row.codigo_barras : null,
         deposito_id: row.depositoId ?? null,
+        // Import masivo siempre trae codigos definidos por archivo (modo
+        // libre explicito) — nunca dispara el flujo PENDIENTE de alta
+        // individual en modo correlativo.
+        codigo_status: 'asignado' as const,
       }
-    })
+    }, localNow)
 
     // Update parcial: solo los campos tocados por el archivo (columna presente + celda no vacia).
     // `codigo` NUNCA aparece aqui (regla #5, inmutable — solo se uso como lookup).
-    const productoUpdates = filasActualizar.map((row) => {
+    const productoUpdates = mapConTimestampPropio(filasActualizar, (row, ts) => {
       const existente = productoPorCodigo.get(row.codigo)!
       const merged = row.merged!
-      const fields: Record<string, string | number | null> = { updated_at: now }
+      const fields: Record<string, string | number | null> = { updated_at: ts }
 
       if (row.nombre.trim() !== '') fields.nombre = row.nombre
       if (row.departamento.trim() !== '') {
@@ -720,7 +729,7 @@ export function ImportProductosModal({
       if (row.depositoId) fields.deposito_id = row.depositoId
 
       return { id: existente.id, fields }
-    })
+    }, localNow)
 
     // Mapa codigo → id para componentes de combos
     const codigoToId = new Map<string, string>()
@@ -738,9 +747,9 @@ export function ImportProductosModal({
       await db.writeTransaction(async (tx) => {
         for (const p of productoInserts) {
           await tx.execute(
-            `INSERT INTO productos (id, codigo, tipo, nombre, departamento_id, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd, stock, stock_minimo, costo_promedio, costo_ultimo, tipo_impuesto, impuesto_iva_id, maneja_lotes, is_active, empresa_id, created_at, updated_at, ubicacion, unidad_base_id, presentacion, codigo_barras, deposito_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [p.id, p.codigo, p.tipo, p.nombre, p.departamento_id, p.costo_usd, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock, p.stock_minimo, p.costo_promedio, p.costo_ultimo, p.tipo_impuesto, p.impuesto_iva_id, p.maneja_lotes, p.is_active, p.empresa_id, p.created_at, p.updated_at, p.ubicacion, p.unidad_base_id, p.presentacion, p.codigo_barras, p.deposito_id]
+            `INSERT INTO productos (id, codigo, tipo, nombre, departamento_id, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd, stock, stock_minimo, costo_promedio, costo_ultimo, tipo_impuesto, impuesto_iva_id, maneja_lotes, is_active, empresa_id, created_at, updated_at, ubicacion, unidad_base_id, presentacion, codigo_barras, deposito_id, codigo_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [p.id, p.codigo, p.tipo, p.nombre, p.departamento_id, p.costo_usd, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock, p.stock_minimo, p.costo_promedio, p.costo_ultimo, p.tipo_impuesto, p.impuesto_iva_id, p.maneja_lotes, p.is_active, p.empresa_id, p.created_at, p.updated_at, p.ubicacion, p.unidad_base_id, p.presentacion, p.codigo_barras, p.deposito_id, p.codigo_status]
           )
         }
         for (const u of productoUpdates) {
