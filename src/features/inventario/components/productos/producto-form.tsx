@@ -3,12 +3,13 @@ import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import Decimal from 'decimal.js'
-import { productoSchema } from '@/features/inventario/schemas/producto-schema'
+import { productoSchema, codigoEsRequerido } from '@/features/inventario/schemas/producto-schema'
 import {
   crearProducto,
   actualizarProducto,
   type Producto,
 } from '@/features/inventario/hooks/use-productos'
+import { useCompany, readConfigNamespace } from '@/features/configuracion/hooks/use-company'
 import { useDepartamentosActivos } from '@/features/inventario/hooks/use-departamentos'
 import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
@@ -343,6 +344,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const { depositos } = useDepositosActivos()
   const { tasaValor } = useTasaActual()
   const { user } = useCurrentUser()
+  const { company } = useCompany()
+  // Numeracion de codigo de producto por empresa (producto-numeracion-correlativa):
+  // 'libre' (default, el usuario define el codigo) vs 'correlativo' (lo asigna
+  // el trigger server-side, el input queda solo-lectura y el codigo llega vacio).
+  const { numeracion_modo: numeracionModo } = readConfigNamespace(company?.config, 'inventario', {
+    numeracion_modo: 'libre' as 'libre' | 'correlativo',
+  })
   const { impuestos: todosImpuestos } = useImpuestosActivos()
   const { niveles: nivelesActivos } = useNivelesPrecioActivos()
 
@@ -544,7 +552,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const empresaId = user?.empresa_id ?? ''
   const { data: ultimoProductoData } = useQuery(
     !isEditing && empresaId
-      ? 'SELECT codigo, nombre FROM productos WHERE empresa_id = ? ORDER BY created_at DESC LIMIT 1'
+      ? 'SELECT codigo, nombre FROM productos WHERE empresa_id = ? ORDER BY created_at DESC, id DESC LIMIT 1'
       : '',
     !isEditing && empresaId ? [empresaId] : []
   )
@@ -1571,6 +1579,14 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const esCombo = tipo === 'C'
     const esServicioOCombo = tipo === 'S' || tipo === 'C'
 
+    // Codigo requerido solo en modo 'libre' (sticky header, fuera de tabs —
+    // no requiere setActiveTab). En 'correlativo' el input queda solo-lectura
+    // y vacio por diseno (lo asigna el trigger server-side al sync).
+    if (!isEditing && codigoEsRequerido(numeracionModo) && !codigo.trim()) {
+      setErrors({ codigo: 'El codigo es requerido' })
+      return
+    }
+
     const newErrors: Record<string, string> = {}
     if (tipo === 'P' && !depositoId) {
       newErrors.deposito_id = 'Selecciona un deposito'
@@ -1654,8 +1670,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         })
         toast.success('Producto actualizado correctamente')
       } else {
+        // Modo correlativo: el cliente NUNCA envia codigo — lo calcula el
+        // trigger server-side (migracion 0099) al confirmar el insert. El
+        // producto queda PENDIENTE hasta ese momento (D5/D1).
+        const esCorrelativo = numeracionModo === 'correlativo'
         const productoId = await crearProducto({
-          codigo: parsed.data.codigo,
+          codigo: esCorrelativo ? '' : parsed.data.codigo,
+          codigo_status: esCorrelativo ? 'pendiente' : 'asignado',
           tipo: parsed.data.tipo,
           nombre: parsed.data.nombre,
           departamento_id: parsed.data.departamento_id,
@@ -1709,7 +1730,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
             })
           })
         }
-        toast.success('Producto creado correctamente')
+        toast.success(
+          esCorrelativo
+            ? 'Producto guardado. El código se asignará al sincronizar.'
+            : 'Producto creado correctamente'
+        )
         // Producto creado con exito: descartar el borrador persistido.
         clearDraft(localStorage, empresaId)
       }
@@ -2019,20 +2044,25 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               <input
                 id="prod-codigo"
                 type="text"
-                value={codigo}
+                value={!isEditing && numeracionModo === 'correlativo' ? '' : codigo}
                 onChange={(e) => setCodigo(e.target.value.toUpperCase())}
-                disabled={isEditing}
-                placeholder="Ej: PROD-001"
+                disabled={isEditing || (!isEditing && numeracionModo === 'correlativo')}
+                placeholder={!isEditing && numeracionModo === 'correlativo' ? undefined : 'Ej: PROD-001'}
                 autoComplete="off"
                 className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  isEditing ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                  isEditing || numeracionModo === 'correlativo' ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
                 } ${errors.codigo ? 'border-red-500' : 'border-gray-300'}`}
               />
               {errors.codigo && <p className="text-red-500 text-xs mt-0.5">{errors.codigo}</p>}
               {isEditing && (
                 <p className="text-gray-400 text-xs mt-0.5">El codigo no puede modificarse</p>
               )}
-              {!isEditing && ultimoProducto && (
+              {!isEditing && numeracionModo === 'correlativo' && (
+                <p className="text-gray-400 text-xs mt-0.5">
+                  Siguiente código: PENDIENTE (asignado por el servidor)
+                </p>
+              )}
+              {!isEditing && numeracionModo === 'libre' && ultimoProducto && (
                 <p className="text-gray-400 text-xs mt-0.5">
                   Último código creado:{' '}
                   <strong className="text-gray-500 font-medium">{ultimoProducto.codigo}</strong>
