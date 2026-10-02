@@ -85,6 +85,31 @@ VALUES (gen_random_uuid(), '', 'pendiente', 'P', 'TEST CONCURRENCY', '<depto_id>
 4. Go back online, wait for PowerSync sync.
 5. Confirm the product row updates to an assigned integer `codigo`, badge disappears, and the product becomes searchable in POS.
 
+## Phase 10: Post-Verify Fix — Remaining PENDIENTE Exclusion Gaps (Requirement 5)
+
+The verify phase (`verify-report.md`) ran a full-codebase grep for `FROM productos` and found that
+task 3.2 only patched the POS LIKE search (`useBuscarProductosVenta`), missing 4 other live
+call-sites that let `codigo_status='pendiente'` products be selected in operational flows.
+
+- [x] 10.1 `src/features/ventas/hooks/use-ventas.ts::buscarProductoPorCodigoBarras` (barcode scan,
+  used by `producto-buscador.tsx` in `pos-terminal.tsx`): add `AND p.codigo_status = 'asignado'` to
+  the `WHERE` clause. Satisfies SC-E1 (barcode path).
+- [x] 10.2 `src/features/citas/components/panel/mini-pos-modal.tsx` (citas "mini POS" extra-item
+  search, live via `cita-card.tsx`): add `AND codigo_status = 'asignado'` to the inline product
+  search query. Satisfies SC-E1 (citas mini-POS path).
+- [x] 10.3 `src/features/inventario/components/ajustes/ajuste-form.tsx` (individual stock adjustment
+  picker): switch from unfiltered `useProductos()` + client-side `tipo`/`is_active` filter to
+  `useProductosTipo('P')` (already filters `is_active=1 AND codigo_status='asignado'`, same hook
+  used elsewhere since task 3.1). Satisfies SC-E3 (individual adjustment).
+- [x] 10.4 `src/features/inventario/components/ajustes/ajuste-masivo.tsx` (mass count picker, raw
+  SQL): add `AND p.codigo_status = 'asignado'` to the planilla query. Satisfies SC-E3 (mass
+  adjustment).
+
+All four preserve the existing `empresa_id` filter. None of these were reachable through a pure/
+testable function in isolation (raw SQL inline in components/hooks tied to PowerSync `useQuery`/
+`db.execute`); they are covered by the existing manual checklist (Phase 9) rather than new unit
+tests, consistent with how `buscarProductoPorCodigoBarras`'s sibling query (task 3.2) was verified.
+
 ## Spec Coverage
 
 All 15 scenarios (SC-C1..C4, SC-X1, SC-X2, SC-F1..F4, SC-E1..E4, SC-B1) are mapped to the tasks above.
@@ -92,6 +117,7 @@ All 15 scenarios (SC-C1..C4, SC-X1, SC-X2, SC-F1..F4, SC-E1..E4, SC-B1) are mapp
 ## Apply Summary
 
 - Tasks 1.1–8.1 (9 implementation tasks across 8 phases): **done**, implemented on branch `feat/producto-numeracion-correlativa`, 8 work-unit commits.
+- Tasks 10.1–10.4 (post-verify fix, Requirement 5 gaps): **done**, 1 work-unit commit, closes the FAIL verdict from `verify-report.md`.
 - Task 9.1–9.3: **pending manual staging verification** (SQL snippets above) — not automatable, consistent with design.md/spec.md.
-- `yarn test:run`: 2065/2068 tests passing (3 pre-existing failures in `cxc-list`/`cliente-detalle`/`cxc-cliente-detalle`, unrelated — confirmed via baseline diff before this change).
+- `yarn test:run`: 2062/2065 tests passing (3 pre-existing failures in `cxc-list`/`cliente-detalle`/`cxc-cliente-detalle`, unrelated — confirmed via baseline diff before this change).
 - `yarn type-check` / `yarn type-check:test`: clean except pre-existing noise (test-file `describe/it/expect` globals, 1 pre-existing unused-var in `use-pwa-update.ts`, 2 pre-existing `Producto` literal errors in `producto-form-aviso-borrador.test.tsx`/`producto-form-edit-open-mask.test.tsx` — all confirmed present on baseline before this change).
