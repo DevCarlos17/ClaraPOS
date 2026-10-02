@@ -1934,7 +1934,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   const isSubmitDisabled =
     submitting ||
-    !codigo.trim() ||
+    // En modo 'correlativo' el codigo llega vacio por diseno (lo asigna el
+    // trigger server-side al sync) — solo exigir codigo no-vacio en 'libre'.
+    // En edicion el codigo es inmutable y no se vuelve a pedir.
+    (!isEditing && codigoEsRequerido(numeracionModo) && !codigo.trim()) ||
     !nombre.trim() ||
     (!esComboLocal && costoUsdFullRef.current === 0) ||
     ventaBelowCost ||
