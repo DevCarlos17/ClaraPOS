@@ -282,6 +282,7 @@ export async function buscarProductoPorCodigoBarras(
      WHERE p.empresa_id = ?
        AND p.codigo_barras = ?
        AND p.is_active = 1
+       AND p.codigo_status = 'asignado'
        AND (p.tipo = 'S' OR CAST(${frag.stockExpr} AS REAL) > 0)
      LIMIT 1`,
     [...frag.paramsPrefix, empresaId, barcode]

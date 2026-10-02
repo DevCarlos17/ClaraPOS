@@ -70,7 +70,7 @@ export function MiniPosModal({ cita, userId, onClose }: MiniPosModalProps) {
 
   const { data: productosData } = useQuery(
     busqueda.length >= 2
-      ? 'SELECT id, nombre, precio_venta_usd FROM productos WHERE empresa_id = ? AND is_active = 1 AND nombre LIKE ? ORDER BY nombre LIMIT 10'
+      ? "SELECT id, nombre, precio_venta_usd FROM productos WHERE empresa_id = ? AND is_active = 1 AND codigo_status = 'asignado' AND nombre LIKE ? ORDER BY nombre LIMIT 10"
       : '',
     busqueda.length >= 2 ? [cita.empresa_id, `%${busqueda}%`] : []
   )

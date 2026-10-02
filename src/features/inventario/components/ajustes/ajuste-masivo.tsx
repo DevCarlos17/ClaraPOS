@@ -92,7 +92,7 @@ export function AjusteMasivo() {
             d.nombre AS nombre_departamento
      FROM productos p
      LEFT JOIN departamentos d ON d.id = p.departamento_id
-     WHERE p.empresa_id = ? AND p.tipo = 'P' AND p.is_active = 1
+     WHERE p.empresa_id = ? AND p.tipo = 'P' AND p.is_active = 1 AND p.codigo_status = 'asignado'
      ORDER BY d.nombre ASC, p.nombre ASC`,
     [empresaId]
   )
