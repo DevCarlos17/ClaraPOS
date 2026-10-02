@@ -83,6 +83,22 @@ describe('crearProducto — persistencia de productos.deposito_id (Slice 1c, PDD
   })
 })
 
+describe('crearProducto — codigo_status (producto-numeracion-correlativa)', () => {
+  it('codigo_status no provisto: persiste "asignado" por default (backward-compatible, modo libre)', async () => {
+    await crearProducto(baseCrearData())
+
+    const values = mockedKysely.values.mock.calls[0]![0] as Record<string, unknown>
+    expect(values.codigo_status).toBe('asignado')
+  })
+
+  it('codigo_status="pendiente" provisto: se persiste tal cual (modo correlativo, alta nueva)', async () => {
+    await crearProducto(baseCrearData({ codigo: '', codigo_status: 'pendiente' }))
+
+    const values = mockedKysely.values.mock.calls[0]![0] as Record<string, unknown>
+    expect(values.codigo_status).toBe('pendiente')
+  })
+})
+
 describe('actualizarProducto — edicion de productos.deposito_id (Slice 1c, PDD/Editar deposito default)', () => {
   it('deposito_id provisto en la edicion: se incluye en el UPDATE', async () => {
     await actualizarProducto('prod-1', { deposito_id: 'dep-B' })

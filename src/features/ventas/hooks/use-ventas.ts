@@ -229,7 +229,7 @@ export function useBuscarProductosVenta(query: string, depositoId?: string | nul
          LEFT JOIN unidades u ON p.unidad_base_id = u.id
          LEFT JOIN impuestos_ve iv ON p.impuesto_iva_id = iv.id
          ${frag.joinInventarioStock}
-         WHERE p.empresa_id = ? AND p.is_active = 1
+         WHERE p.empresa_id = ? AND p.is_active = 1 AND p.codigo_status = 'asignado'
          AND (
            LOWER(REPLACE(REPLACE(p.nombre, 'Ñ', 'n'), 'ñ', 'n')) LIKE REPLACE(LOWER(?), 'ñ', 'n')
            OR p.codigo LIKE ?
