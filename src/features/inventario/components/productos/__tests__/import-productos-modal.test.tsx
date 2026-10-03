@@ -103,6 +103,7 @@ function producto(overrides: Partial<Producto> = {}): Producto {
     deposito_id: null,
     costo_factura_usd: null,
     tasa_paralela_ref: null,
+    codigo_status: 'asignado',
     ...overrides,
   }
 }

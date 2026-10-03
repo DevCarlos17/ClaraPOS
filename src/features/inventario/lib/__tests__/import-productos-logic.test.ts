@@ -5,6 +5,7 @@ import {
   estimarPesoSync,
   extraerCamposAnteriores,
   extraerValoresNuevos,
+  mapConTimestampPropio,
   mergearProductoParaUpdate,
   parseTipoImpuesto,
   resolverDepositoFila,
@@ -524,5 +525,37 @@ describe('extraerValoresNuevos (auditoria import, Fase B)', () => {
 
     expect(resultado).toEqual({ nombre: 'PRODUCTO ACTUALIZADO' })
     expect(resultado).not.toHaveProperty('costo_usd')
+  })
+})
+
+// producto-numeracion-correlativa (SC-B1, D4): bug de causa raiz era
+// `const now = localNow()` calculado UNA vez fuera del loop de import masivo
+// -> N filas comparten el MISMO created_at, "Ultimo codigo creado" (ORDER BY
+// created_at DESC) queda indeterminado con N>1 filas. El fix mueve la
+// obtencion del timestamp DENTRO de cada iteracion. `mapConTimestampPropio`
+// extrae ese mecanismo a una funcion pura e inyectable (via `obtenerAhora`)
+// para poder probarlo sin depender del reloj real del sistema.
+describe('mapConTimestampPropio (SC-B1 — timestamp unico por fila en import masivo)', () => {
+  it('llama obtenerAhora() una vez POR CADA item, no una sola vez para todos (reproduce el fix de la causa raiz)', () => {
+    let contador = 0
+    const obtenerAhora = vi.fn(() => `2026-01-01T00:00:00.${String(contador++).padStart(3, '0')}-04:00`)
+
+    const resultado = mapConTimestampPropio(['fila-A', 'fila-B', 'fila-C'], (item, ts) => ({ item, ts }), obtenerAhora)
+
+    expect(obtenerAhora).toHaveBeenCalledTimes(3)
+    const timestamps = resultado.map((r) => r.ts)
+    expect(new Set(timestamps).size).toBe(3)
+  })
+
+  it('con reloj estatico (bug reproducido): mismo valor para N>1 filas evidencia la necesidad del fix', () => {
+    const relojCongelado = () => '2026-01-01T00:00:00.000-04:00'
+
+    const resultado = mapConTimestampPropio(['fila-A', 'fila-B'], (item, ts) => ({ item, ts }), relojCongelado)
+
+    // Documenta el comportamiento: con un reloj que no avanza, incluso
+    // llamando obtenerAhora() por fila, los valores pueden coincidir — la
+    // deduplicacion final para "Ultimo codigo creado" depende del tiebreaker
+    // `id DESC` agregado en la query (D4), no solo del timestamp.
+    expect(resultado.map((r) => r.ts)).toEqual([relojCongelado(), relojCongelado()])
   })
 })

@@ -1,8 +1,20 @@
 import { z } from 'zod'
 
+/**
+ * `codigo` requerido solo depende del modo de numeracion de la empresa
+ * (producto-numeracion-correlativa): en 'libre' el usuario lo define y debe
+ * ser no-vacio; en 'correlativo' llega vacio por diseno (lo asigna el
+ * trigger server-side al sync, ver `crearProducto` + migracion 0099). Esta
+ * validacion vive aqui (fuera del `z.object` de abajo) porque depende de un
+ * dato externo (config de empresa) que `productoSchema` no conoce.
+ */
+export function codigoEsRequerido(numeracionModo: 'libre' | 'correlativo'): boolean {
+  return numeracionModo === 'libre'
+}
+
 export const productoSchema = z
   .object({
-    codigo: z.string().min(1, 'El codigo es requerido').transform((v) => v.toUpperCase()),
+    codigo: z.string().transform((v) => v.toUpperCase()),
     tipo: z.enum(['P', 'S', 'C'], { message: 'Selecciona Producto, Servicio o Combo' }),
     nombre: z.string().min(3, 'Minimo 3 caracteres').transform((v) => v.toUpperCase()),
     departamento_id: z.string().min(1, 'Selecciona un departamento'),

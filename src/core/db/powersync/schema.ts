@@ -378,6 +378,7 @@ const productos = new Table(
     deposito_id: column.text,
     costo_factura_usd: column.text, // costo segun factura ultima compra (tasa proveedor); NULL/legacy -> usar costo_usd
     tasa_paralela_ref: column.text, // tasa paralela de la ultima compra; NULL = tasa interna/oficial
+    codigo_status: column.text, // 'pendiente' | 'asignado' (numeracion correlativa server-side, migracion 0099)
   },
   { indexes: {} }
 )
