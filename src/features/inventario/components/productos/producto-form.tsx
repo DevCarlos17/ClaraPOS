@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
@@ -372,6 +372,17 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [codigo, setCodigo] = useState('')
   const [tipo, setTipo] = useState<'P' | 'S' | 'C'>('P')
   const [nombre, setNombre] = useState('')
+  const nombreInputRef = useRef<HTMLInputElement>(null)
+  const nombreCursorRef = useRef<number | null>(null)
+
+  useLayoutEffect(() => {
+    const input = nombreInputRef.current
+    const cursor = nombreCursorRef.current
+    nombreCursorRef.current = null
+    if (input && cursor !== null && document.activeElement === input) {
+      input.setSelectionRange(cursor, cursor)
+    }
+  }, [nombre])
 
   // === TAB STATE ===
   const [activeTab, setActiveTab] = useState<TabId>('general')
@@ -2084,10 +2095,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               >
                 <PopoverAnchor asChild>
                   <input
+                    ref={nombreInputRef}
                     id="prod-nombre"
                     type="text"
                     value={nombre}
                     onChange={(e) => {
+                      nombreCursorRef.current = e.target.selectionStart
                       setNombre(e.target.value.toUpperCase())
                       setPopoverOpen(true)
                     }}
