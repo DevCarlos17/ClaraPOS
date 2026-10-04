@@ -4,7 +4,6 @@ import { departamentoSchema } from '@/features/inventario/schemas/departamento-s
 import {
   crearDepartamento,
   actualizarDepartamento,
-  getSiguienteCodigoDepartamento,
   type Departamento,
 } from '@/features/inventario/hooks/use-departamentos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -33,18 +32,13 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
       } else {
         setCodigo('')
         setNombre('')
-        if (user?.empresa_id) {
-          getSiguienteCodigoDepartamento(user.empresa_id)
-            .then((next) => setCodigo(next))
-            .catch(() => setCodigo(''))
-        }
       }
       setErrors({})
       dialogRef.current?.showModal()
     } else {
       dialogRef.current?.close()
     }
-  }, [isOpen, departamento, user?.empresa_id])
+  }, [isOpen, departamento])
 
   function handleNombreChange(value: string) {
     setNombre(value.toUpperCase())
@@ -54,7 +48,7 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
     e.preventDefault()
     setErrors({})
 
-    const parsed = departamentoSchema.safeParse({ codigo, nombre, is_active: true })
+    const parsed = departamentoSchema.safeParse({ nombre, is_active: true })
 
     if (!parsed.success) {
       const fieldErrors: Record<string, string> = {}
@@ -116,13 +110,13 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
               value={codigo}
               readOnly
               disabled
-              placeholder="Auto-generado"
+              placeholder="PENDIENTE"
               className="w-full rounded-md border border-gray-300 bg-gray-100 text-gray-500 cursor-not-allowed px-3 py-2 text-sm"
             />
             <p className="text-gray-400 text-xs mt-1">
               {isEditing
                 ? 'El codigo no puede modificarse'
-                : 'El codigo se asigna automaticamente'}
+                : 'PENDIENTE (asignado por el servidor)'}
             </p>
           </div>
 

@@ -1,10 +1,7 @@
 import { z } from 'zod'
 
 export const departamentoSchema = z.object({
-  codigo: z
-    .string()
-    .min(1, 'El codigo es requerido')
-    .regex(/^[1-9]\d*$/, 'Solo numeros enteros positivos, sin ceros iniciales'),
+  codigo: z.string().optional().default(''),
   nombre: z
     .string()
     .min(3, 'Minimo 3 caracteres')
