@@ -33,6 +33,34 @@ const FATAL_RESPONSE_CODES = [
   new RegExp('^P0001$'),  // RAISE EXCEPTION de trigger/función PL/pgSQL (rechazo de lógica de negocio)
 ]
 
+// Mensajes de fetch que indican que la petición nunca llegó a recibir respuesta
+// del servidor (sin conectividad). Cada motor de navegador usa su propio texto.
+const FETCH_FAILURE_MESSAGES = new Set([
+  'Failed to fetch',                                   // Chromium
+  'NetworkError when attempting to fetch resource.',   // Firefox
+  'Load failed',                                        // Safari
+])
+
+/**
+ * true si `error` nunca llegó a recibir una respuesta de Supabase/PostgREST —
+ * es decir, es un fallo de conectividad puro (sin servidor involucrado), no un
+ * error real devuelto por la base de datos. Usado para distinguir "sin internet"
+ * (PowerSync debe reintentar indefinidamente) de un error transitorio-con-conexión
+ * (cuenta hacia MAX_UPLOAD_RETRIES).
+ */
+export function isNoConnectivityError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  if (error instanceof TypeError) return true
+
+  const err = error as { code?: string; status?: number; details?: string; hint?: string }
+  if (FETCH_FAILURE_MESSAGES.has(error.message)) return true
+
+  const hasPostgrestShape =
+    (typeof err.code === 'string' && err.code.length > 0) ||
+    err.status !== undefined || !!err.details || !!err.hint
+  return !hasPostgrestShape
+}
+
 // Tablas con clave natural única distinta al PK (empresa_id+usuario_id+dia_semana, etc.)
 // Para estas tablas el PUT usa onConflict para hacer upsert real en lugar de insertar y fallar
 //
@@ -678,6 +706,14 @@ export class SupabaseConnector
         }))
         uploadRetryStore.clear(txKey)
         await transaction.complete()
+      } else if (isNoConnectivityError(ex)) {
+        // Sin conectividad: nunca llegó a recibir respuesta del servidor. No cuenta
+        // para MAX_UPLOAD_RETRIES, no se descarta, no se emite uploadFailed — queda
+        // en cola y PowerSync la reintenta con su propio loop al reconectar.
+        console.warn('[PowerSync upload] Sin conectividad - PowerSync reintentará:', {
+          op: lastOp, message: error.message,
+        })
+        throw ex
       } else {
         const attempts = retryCount + 1
 
