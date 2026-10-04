@@ -48,33 +48,15 @@ export function useDepartamentosActivos() {
   return { departamentos: (data ?? []) as Departamento[], isLoading }
 }
 
-export async function getSiguienteCodigoDepartamento(empresaId: string): Promise<string> {
-  const rows = await kysely
-    .selectFrom('departamentos')
-    .select('codigo')
-    .where('empresa_id', '=', empresaId)
-    .execute()
-
-  let maxNum = 0
-  for (const r of rows) {
-    if (/^\d+$/.test(r.codigo)) {
-      const n = parseInt(r.codigo, 10)
-      if (n > maxNum) maxNum = n
-    }
-  }
-  return String(maxNum + 1)
-}
-
 export async function crearDepartamento(nombre: string, empresaId: string) {
   const id = uuidv4()
   const now = localNow()
-  const codigo = await getSiguienteCodigoDepartamento(empresaId)
 
   await kysely
     .insertInto('departamentos')
     .values({
       id,
-      codigo,
+      codigo: '',
       nombre: nombre.trim().toUpperCase(),
       prioridad_visual: 0,
       is_active: 1,

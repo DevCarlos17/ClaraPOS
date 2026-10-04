@@ -76,6 +76,15 @@ describe('crearDepartamento — trim de nombre antes de mayusculizar', () => {
   })
 })
 
+describe('crearDepartamento — codigo asignado server-side', () => {
+  it('envia codigo vacio como sentinel; el servidor lo asigna via trigger BEFORE INSERT', async () => {
+    await crearDepartamento('viveres', 'empresa-1')
+
+    const values = mockedKysely.values.mock.calls[0]![0] as Record<string, unknown>
+    expect(values.codigo).toBe('')
+  })
+})
+
 describe('actualizarDepartamento — trim de nombre antes de mayusculizar', () => {
   it('recorta espacios al inicio/fin del nombre antes de guardarlo en mayusculas', async () => {
     await actualizarDepartamento('depto-1', { nombre: '  limpieza  ' })
