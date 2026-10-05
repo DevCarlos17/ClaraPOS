@@ -26,10 +26,10 @@ export type SupabaseConfig = {
   powersyncUrl: string
 }
 
-const FATAL_RESPONSE_CODES = [
+export const FATAL_RESPONSE_CODES = [
   new RegExp('^22...$'),  // Data exception (valor inválido, overflow, etc.)
   new RegExp('^23...$'),  // Integrity constraint violation (FK, unique, not null)
-  new RegExp('^42501$'),  // Insufficient privilege (RLS)
+  new RegExp('^42...$'),  // Syntax Error or Access Rule Violation (clase 42 completa, incluye 42501 RLS)
   new RegExp('^P0001$'),  // RAISE EXCEPTION de trigger/función PL/pgSQL (rechazo de lógica de negocio)
 ]
 
@@ -168,7 +168,8 @@ export type SupabaseConnectorListener = {
   /**
    * Se emite cuando una operación offline es descartada permanentemente por el servidor.
    * Códigos fatales: 22xxx (data exception), 23xxx (constraint violation),
-   * 42501 (RLS), P0001 (trigger raise exception).
+   * 42xxx (clase completa: syntax error / access rule violation, incluye RLS 42501),
+   * P0001 (trigger raise exception).
    * El registro existe en SQLite local pero NO en Supabase — el usuario debe re-ingresar el dato.
    */
   uploadFailed: (info: UploadFailedInfo) => void
