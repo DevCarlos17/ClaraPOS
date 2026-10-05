@@ -24,7 +24,9 @@ vi.mock('@supabase/supabase-js', async (importOriginal) => {
   }
 })
 
-const { SupabaseConnector, isNoConnectivityError } = await import('../powersync/connector')
+const { SupabaseConnector, isNoConnectivityError, FATAL_RESPONSE_CODES } = await import(
+  '../powersync/connector'
+)
 
 /** Fallo de conectividad real tal como llega del navegador — nunca hubo respuesta del servidor. */
 const NO_CONNECTIVITY_ERROR = Object.assign(new Error('Failed to fetch'), { code: '' })
@@ -33,6 +35,16 @@ const NO_CONNECTIVITY_ERROR = Object.assign(new Error('Failed to fetch'), { code
 const TRANSIENT_SERVER_ERROR = Object.assign(new Error('Service Unavailable'), {
   status: 503,
   details: 'upstream down',
+})
+
+/** Errores de esquema clase 42 (fatales) — PostgREST los mapea a 400/403/404, nunca a un 5xx reintentable. */
+const SCHEMA_ERROR_42883 = Object.assign(new Error('function does not exist'), { code: '42883' })
+const UNDEFINED_TABLE_42P01 = Object.assign(new Error('relation does not exist'), { code: '42P01' })
+const UNDEFINED_COLUMN_42703 = Object.assign(new Error('column does not exist'), { code: '42703' })
+
+/** Error transitorio CON conexión (serialization_failure) — debe seguir el camino de reintento, no el fatal. */
+const TRANSIENT_SERIALIZATION_ERROR = Object.assign(new Error('could not serialize access'), {
+  code: '40001',
 })
 
 function makeTransientUpdateChain(error: unknown = NO_CONNECTIVITY_ERROR) {
@@ -107,6 +119,22 @@ describe('isNoConnectivityError', () => {
   it('es false para un error con code fatal (respuesta real del servidor)', () => {
     expect(isNoConnectivityError(Object.assign(new Error('constraint'), { code: '23505' }))).toBe(false)
   })
+})
+
+describe('FATAL_RESPONSE_CODES — clase 42', () => {
+  it.each(['42883', '42P01', '42703', '42601', '42501'])(
+    'matchea el codigo SQLSTATE clase 42 "%s"',
+    (code) => {
+      expect(FATAL_RESPONSE_CODES.some((regex) => regex.test(code))).toBe(true)
+    }
+  )
+
+  it.each(['40001', '53300'])(
+    'NO matchea el codigo transitorio "%s" (debe seguir el camino de reintento)',
+    (code) => {
+      expect(FATAL_RESPONSE_CODES.some((regex) => regex.test(code))).toBe(false)
+    }
+  )
 })
 
 describe('SupabaseConnector.uploadData — persistencia durable del contador de reintentos', () => {
@@ -195,5 +223,47 @@ describe('SupabaseConnector.uploadData — persistencia durable del contador de 
     // queda en cola exactamente igual que cualquier otra tabla ante sin-conectividad.
     expect(complete).not.toHaveBeenCalled()
     expect(uploadRetryStore.get('kardex-1')).toBe(0)
+  })
+})
+
+describe('SupabaseConnector.uploadData — errores de esquema clase 42 (fatal)', () => {
+  it.each([
+    ['42883', SCHEMA_ERROR_42883],
+    ['42P01', UNDEFINED_TABLE_42P01],
+    ['42703', UNDEFINED_COLUMN_42703],
+  ])('descarta inmediatamente ante un error %s sin recorrer el camino de reintento', async (_code, fixture) => {
+    fakeFrom.mockImplementation(() => makeTransientUpdateChain(fixture))
+
+    const uploadFailedSpy = vi.fn()
+    const connector = new SupabaseConnector()
+    connector.registerListener({ uploadFailed: uploadFailedSpy })
+    const { db, complete } = makeFakeDb('op-1')
+
+    // No lanza: el error fatal se descarta dentro de uploadData, nunca se propaga.
+    await connector.uploadData(db as never)
+
+    expect(uploadFailedSpy).toHaveBeenCalledTimes(1)
+    expect(uploadFailedSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ table: 'departamentos', id: 'op-1', reason: 'db_error' })
+    )
+    // No cuenta como reintento transitorio: el contador nunca se incrementa.
+    expect(uploadRetryStore.get('op-1')).toBe(0)
+    expect(complete).toHaveBeenCalledTimes(1)
+  })
+
+  it('contraste: un error transitorio de clase 40 (serialization_failure) SI sigue el camino de reintento', async () => {
+    fakeFrom.mockImplementation(() => makeTransientUpdateChain(TRANSIENT_SERIALIZATION_ERROR))
+
+    const uploadFailedSpy = vi.fn()
+    const connector = new SupabaseConnector()
+    connector.registerListener({ uploadFailed: uploadFailedSpy })
+    const { db, complete } = makeFakeDb('op-1')
+
+    // A diferencia de clase 42: en el primer intento NO se descarta, se relanza para reintentar.
+    await expect(connector.uploadData(db as never)).rejects.toBe(TRANSIENT_SERIALIZATION_ERROR)
+
+    expect(uploadFailedSpy).not.toHaveBeenCalled()
+    expect(uploadRetryStore.get('op-1')).toBe(1)
+    expect(complete).not.toHaveBeenCalled()
   })
 })
