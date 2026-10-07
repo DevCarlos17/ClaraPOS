@@ -9,6 +9,7 @@ import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosNCR } from '@/features/contabilidad/lib/generar-asientos'
 import { reversarDiferencialEnTx, useDetalleFactura as useDetalleFacturaCanonica } from '@/features/cxc/hooks/use-cxc'
+import { calcularSafDisponibleNuevo } from '@/features/cxc/lib/saldo-cliente'
 import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
 import { resolveDepositoReingresoNcr } from '@/features/inventario/lib/deposito-inactivo'
 import {
@@ -1291,15 +1292,15 @@ export async function crearNotaCredito(
         // `nota_credito_id` (Spec notas-credito-liquidacion, scenario
         // "SAFC generado referencia el nota_credito_id de origen").
         const clienteSafcResult = await tx.execute(
-          'SELECT saldo_actual FROM clientes WHERE id = ?',
+          'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?',
           [venta.cliente_id]
         )
         if (!clienteSafcResult.rows || clienteSafcResult.rows.length === 0) {
           throw new Error('Cliente no encontrado')
         }
-        const saldoActualSafc = new Decimal(
-          (clienteSafcResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
-        )
+        const clienteSafcRow = clienteSafcResult.rows.item(0) as { saldo_actual: string; saf_disponible: string }
+        const saldoActualSafc = new Decimal(clienteSafcRow.saldo_actual || '0')
+        const safDisponibleSafcAntes = new Decimal(clienteSafcRow.saf_disponible || '0')
         const saldoNuevoSafc = saldoActualSafc.minus(remanenteALiquidar)
 
         await tx.execute(
@@ -1324,8 +1325,13 @@ export async function crearNotaCredito(
           ]
         )
 
-        await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+        // Escritura optimista pareada de saf_disponible (SAFC suma) — mismo
+        // writeTransaction, el trigger del servidor (migration 0102) es la
+        // autoridad final al reconectar.
+        const safDisponibleSafcDespues = calcularSafDisponibleNuevo('SAFC', safDisponibleSafcAntes, remanenteALiquidar)
+        await tx.execute('UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?', [
           toStorageString(saldoNuevoSafc),
+          toStorageString(safDisponibleSafcDespues),
           now,
           venta.cliente_id,
         ])
@@ -1433,15 +1439,18 @@ export async function crearNotaCredito(
         // arriba pero con `remanenteSafc` en vez de `remanenteALiquidar`.
         if (remanenteSafc.gt('0.01')) {
           const clienteRefundSafcResult = await tx.execute(
-            'SELECT saldo_actual FROM clientes WHERE id = ?',
+            'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?',
             [venta.cliente_id]
           )
           if (!clienteRefundSafcResult.rows || clienteRefundSafcResult.rows.length === 0) {
             throw new Error('Cliente no encontrado')
           }
-          const saldoActualRefundSafc = new Decimal(
-            (clienteRefundSafcResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
-          )
+          const clienteRefundSafcRow = clienteRefundSafcResult.rows.item(0) as {
+            saldo_actual: string
+            saf_disponible: string
+          }
+          const saldoActualRefundSafc = new Decimal(clienteRefundSafcRow.saldo_actual || '0')
+          const safDisponibleRefundAntes = new Decimal(clienteRefundSafcRow.saf_disponible || '0')
           const saldoNuevoRefundSafc = saldoActualRefundSafc.minus(remanenteSafc)
 
           await tx.execute(
@@ -1466,8 +1475,13 @@ export async function crearNotaCredito(
             ]
           )
 
-          await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+          // Escritura optimista pareada de saf_disponible (SAFC suma) — mismo
+          // writeTransaction, el trigger del servidor (migration 0102) es la
+          // autoridad final al reconectar.
+          const safDisponibleRefundDespues = calcularSafDisponibleNuevo('SAFC', safDisponibleRefundAntes, remanenteSafc)
+          await tx.execute('UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?', [
             toStorageString(saldoNuevoRefundSafc),
+            toStorageString(safDisponibleRefundDespues),
             now,
             venta.cliente_id,
           ])

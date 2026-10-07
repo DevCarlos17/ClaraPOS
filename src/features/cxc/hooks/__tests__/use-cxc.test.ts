@@ -39,13 +39,16 @@ import {
   registrarSafExcedente,
   aplicarSaldoFavor,
   registrarPagoFactura,
+  registrarAbonoGlobal,
   registrarReversoAbono,
   useDetalleFactura,
   useAfectacionCxc,
   useEvolucionFactura,
+  useClientesConDeuda,
   type RegistrarSafExcedenteParams,
   type AplicarSaldoFavorParams,
   type PagoFacturaParams,
+  type AbonoGlobalParams,
 } from '../use-cxc'
 
 const mockedDb = vi.mocked(db, true)
@@ -65,14 +68,19 @@ beforeEach(() => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no SAF/PAG)', () => {
-  function mockTx(opts: { saldoActual: string }) {
+  function mockTx(opts: { saldoActual: string; safDisponible?: string }) {
     const calls: Call[] = []
     mockedDb.writeTransaction.mockImplementation(async (callback) => {
       const tx = {
         execute: vi.fn(async (sql: string, params: unknown[] = []) => {
           calls.push({ sql, params })
-          if (sql.startsWith('SELECT saldo_actual FROM clientes WHERE id = ?')) {
-            return { rows: { length: 1, item: () => ({ saldo_actual: opts.saldoActual }) } }
+          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible ?? '0' }),
+              },
+            }
           }
           return { rows: { length: 0, item: () => undefined } }
         }),
@@ -123,6 +131,18 @@ describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no 
     const ventaUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas'))
     expect(ventaUpdates).toHaveLength(0)
   })
+
+  it('escritura optimista pareada: el UPDATE clientes final incluye saf_disponible = anterior + excedente (SAFC suma)', async () => {
+    const calls = mockTx({ saldoActual: '0.00000000', safDisponible: '20.00000000' })
+
+    await registrarSafExcedente(baseParams({ excedenteUsd: 15 }))
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saf_disponible')
+    // 20 (anterior) + 15 (excedente) = 35
+    expect(clienteUpdate!.params).toContain(toStorageString(35))
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -135,6 +155,7 @@ describe('aplicarSaldoFavor — gate de credito re-sourced (SUM(SAFC)-SUM(SAF)),
     saldoActual: string
     creado: number
     consumido: number
+    safDisponible?: string
     facturaSaldoPend: Record<string, string>
   }) {
     const calls: Call[] = []
@@ -142,8 +163,13 @@ describe('aplicarSaldoFavor — gate de credito re-sourced (SUM(SAFC)-SUM(SAF)),
       const tx = {
         execute: vi.fn(async (sql: string, params: unknown[] = []) => {
           calls.push({ sql, params })
-          if (sql.startsWith('SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?')) {
-            return { rows: { length: 1, item: () => ({ saldo_actual: opts.saldoActual }) } }
+          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? AND empresa_id = ?')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible ?? '0' }),
+              },
+            }
           }
           if (sql.includes('as creado') && sql.includes('as consumido')) {
             return { rows: { length: 1, item: () => ({ creado: opts.creado, consumido: opts.consumido }) } }
@@ -219,6 +245,24 @@ describe('aplicarSaldoFavor — gate de credito re-sourced (SUM(SAFC)-SUM(SAF)),
       aplicarSaldoFavor(baseParams({ totalAplicadoUsd: 10 }))
     ).rejects.toThrow(/no tiene saldo a favor disponible/i)
   })
+
+  it('escritura optimista pareada: el UPDATE clientes final incluye saf_disponible = anterior - totalAplicado (SAF resta)', async () => {
+    const calls = mockTx({
+      saldoActual: '0.00000000',
+      creado: 100,
+      consumido: 0,
+      safDisponible: '100.00000000',
+      facturaSaldoPend: { 'venta-1': '50.00000000' },
+    })
+
+    await aplicarSaldoFavor(baseParams({ totalAplicadoUsd: 50 }))
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saf_disponible')
+    // 100 (anterior) - 50 (aplicado) = 50
+    expect(clienteUpdate!.params).toContain(toStorageString(50))
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -227,11 +271,10 @@ describe('aplicarSaldoFavor — gate de credito re-sourced (SUM(SAFC)-SUM(SAF)),
 // especifica (WARNING 2)
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('registrarPagoFactura — rama SAF inline: gate re-sourced a SUM(SAFC)-SUM(SAF)', () => {
+describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.saf_disponible (snapshot, ya no escanea movimientos_cuenta)', () => {
   function mockTx(opts: {
     saldoActual: string
-    creado: number
-    consumido: number
+    safDisponible: string
     facturaSaldoPend: string
     nroFactura?: string
   }) {
@@ -240,11 +283,13 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a SUM(SAFC)-
       const tx = {
         execute: vi.fn(async (sql: string, params: unknown[] = []) => {
           calls.push({ sql, params })
-          if (sql.startsWith('SELECT saldo_actual FROM clientes WHERE id = ? LIMIT 1')) {
-            return { rows: { length: 1, item: () => ({ saldo_actual: opts.saldoActual }) } }
-          }
-          if (sql.includes('as creado') && sql.includes('as consumido')) {
-            return { rows: { length: 1, item: () => ({ creado: opts.creado, consumido: opts.consumido }) } }
+          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible }),
+              },
+            }
           }
           if (sql.startsWith('SELECT nro_factura, saldo_pend_usd FROM ventas WHERE id = ?')) {
             return {
@@ -278,11 +323,10 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a SUM(SAFC)-
     }
   }
 
-  it('procede con SAF aunque clientes.saldo_actual sea 0 (netted), porque SUM(SAFC)-SUM(SAF) es suficiente; escribe tipo=SAF y reduce SOLO la factura seleccionada', async () => {
+  it('procede con SAF aunque clientes.saldo_actual sea 0 (netted), porque saf_disponible es suficiente; escribe tipo=SAF y reduce SOLO la factura seleccionada', async () => {
     const calls = mockTx({
       saldoActual: '0.00000000',
-      creado: 80,
-      consumido: 0,
+      safDisponible: '80.00000000',
       facturaSaldoPend: '50.00000000',
     })
 
@@ -295,19 +339,100 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a SUM(SAFC)-
     const ventaUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?'))
     expect(ventaUpdates).toHaveLength(1)
     expect(ventaUpdates[0]!.params).toEqual([toStorageString(0), 'venta-1']) // 50 - 50 = 0
+
+    // El gate ya NO escanea movimientos_cuenta (SUM(SAFC)/SUM(SAF)) — lee el snapshot directo
+    const scanCalls = calls.filter((c) => c.sql.includes('as creado') && c.sql.includes('as consumido'))
+    expect(scanCalls).toHaveLength(0)
   })
 
-  it('regresion: rechaza el SAF cuando excede SUM(SAFC)-SUM(SAF) real, aunque clientes.saldo_actual (netted) sea muy negativo y sugiera credito de sobra', async () => {
+  it('regresion: rechaza el SAF cuando excede saf_disponible real, aunque clientes.saldo_actual (netted) sea muy negativo y sugiera credito de sobra', async () => {
     mockTx({
       saldoActual: '-500.00000000',
-      creado: 10,
-      consumido: 0,
+      safDisponible: '10.00000000',
       facturaSaldoPend: '50.00000000',
     })
 
     await expect(
       registrarPagoFactura(baseParams({ montoSaf: 50 }))
     ).rejects.toThrow(/excede el saldo disponible/i)
+  })
+
+  it('escritura optimista pareada: el UPDATE clientes final incluye saf_disponible = anterior - montoSaf (SAF resta)', async () => {
+    const calls = mockTx({
+      saldoActual: '0.00000000',
+      safDisponible: '80.00000000',
+      facturaSaldoPend: '50.00000000',
+    })
+
+    await registrarPagoFactura(baseParams({ montoSaf: 50 }))
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saf_disponible')
+    // 80 (anterior) - 50 (montoSaf) = 30
+    expect(clienteUpdate!.params).toContain(toStorageString(30))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
+// saf_disponible (Fase 4, saf-snapshot-y-trazabilidad). El gate de este
+// sitio usa clientes.saldo_actual directamente (no la derivada SUM(SAFC)-
+// SUM(SAF)) — eso es comportamiento PRE-EXISTENTE fuera de alcance de este
+// cambio; esta suite solo cubre el pareo optimista nuevo.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de saf_disponible', () => {
+  function mockTx(opts: { saldoActual: string; safDisponible: string }) {
+    const calls: Call[] = []
+    mockedDb.writeTransaction.mockImplementation(async (callback) => {
+      const tx = {
+        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params })
+          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT id, nro_factura, saldo_pend_usd FROM ventas')) {
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          return { rows: { length: 0, item: () => undefined } }
+        }),
+      } as unknown as Transaction
+      return callback(tx)
+    })
+    return calls
+  }
+
+  function baseParams(overrides: Partial<AbonoGlobalParams> = {}): AbonoGlobalParams {
+    return {
+      cliente_id: 'cliente-1',
+      metodo_cobro_id: 'metodo-1',
+      moneda: 'USD',
+      tasa: 40,
+      monto: 0,
+      empresa_id: 'emp-1',
+      procesado_por: 'user-1',
+      procesado_por_nombre: 'Cajero Test',
+      aplicarSaf: true,
+      ...overrides,
+    }
+  }
+
+  it('escritura optimista pareada: el UPDATE clientes final incluye saf_disponible = anterior - montoSaf (SAF resta)', async () => {
+    const calls = mockTx({ saldoActual: '-80.00000000', safDisponible: '80.00000000' })
+
+    await registrarAbonoGlobal(baseParams({ montoSaf: 50 }))
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saf_disponible')
+    // 80 (anterior) - 50 (montoSaf) = 30
+    expect(clienteUpdate!.params).toContain(toStorageString(30))
   })
 })
 
@@ -425,6 +550,50 @@ describe('registrarReversoAbono — saldo acotado a total_usd', () => {
     expect(ventaUpdates).toHaveLength(1)
     // 90 + 30 = 120, pero nunca puede exceder total_usd = 100
     expect(ventaUpdates[0]!.params).toEqual([toStorageString(100), 'venta-1'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// useClientesConDeuda — read-site swap (saf-snapshot-y-trazabilidad, Fase 5):
+// credito_disponible_usd lee clientes.saf_disponible (snapshot) en vez de
+// escanear SUM(SAFC)-SUM(SAF) sobre movimientos_cuenta en cada render.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('useClientesConDeuda — credito_disponible_usd lee el snapshot saf_disponible, ya NO escanea movimientos_cuenta', () => {
+  it('el SQL lee c.saf_disponible directo, sin SUM(CASE WHEN tipo = ...) sobre movimientos_cuenta', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    renderHook(() => useClientesConDeuda())
+
+    const clientesCall = mockedUseQuery.mock.calls.find(([sql]) => String(sql).includes('FROM clientes c'))
+    expect(clientesCall).toBeDefined()
+    const [sql] = clientesCall!
+    expect(sql).toContain('saf_disponible')
+    expect(sql).not.toContain('movimientos_cuenta')
+    expect(sql).not.toContain("tipo = 'SAFC'")
+  })
+
+  it('el valor mostrado en credito_disponible_usd es EXACTAMENTE saf_disponible (contrato de lectura UI congelado)', () => {
+    mockedUseQuery.mockReturnValue({
+      data: [
+        {
+          id: 'cliente-1',
+          identificacion: 'V-1',
+          nombre: 'Cliente Uno',
+          telefono: null,
+          saldo_actual: '-30.00000000',
+          limite_credito_usd: '500',
+          facturas_pendientes: 0,
+          deuda_usd: 0,
+          credito_disponible_usd: 30,
+        },
+      ],
+      isLoading: false,
+    } as never)
+
+    const { result } = renderHook(() => useClientesConDeuda())
+
+    expect(result.current.clientes[0]).toMatchObject({ credito_disponible_usd: 30 })
   })
 })
 

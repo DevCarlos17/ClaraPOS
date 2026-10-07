@@ -127,6 +127,8 @@ interface NcrTxFixtures {
   pagos?: Array<{ id: string; metodo_cobro_id: string; monto: string; moneda_id: string; monto_usd?: string }>
   /** Slice 3: saldo_actual del cliente ANTES de liquidar el remanente (Step B). */
   clienteSaldoActual?: string
+  /** saf-snapshot-y-trazabilidad: saf_disponible del cliente ANTES de liquidar el remanente (SAFC). Default '0'. */
+  clienteSafDisponible?: string
   /** Slice 4b: SUM(cantidad) ya acreditado por venta_det_id — alimenta el guard de doble-credito (`buildSumCantidadYaAcreditadaQuery`). */
   yaAcreditadoPorLinea?: Record<string, string>
   /** Slice 5a-2a: si `false`, la validacion del override de deposito falla (inactivo/otra empresa). Default `true` (valido) cuando no se especifica. */
@@ -283,6 +285,17 @@ function mockCrearNcrTx(opts: NcrTxFixtures) {
         }
         if (sql.startsWith('INSERT INTO movimientos_metodo_cobro')) {
           return { rows: { length: 0, item: () => undefined } }
+        }
+        if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?')) {
+          return {
+            rows: {
+              length: 1,
+              item: () => ({
+                saldo_actual: opts.clienteSaldoActual ?? '0.00',
+                saf_disponible: opts.clienteSafDisponible ?? '0',
+              }),
+            },
+          }
         }
         if (sql.startsWith('SELECT saldo_actual FROM clientes WHERE id = ?')) {
           return { rows: { length: 1, item: () => ({ saldo_actual: opts.clienteSaldoActual ?? '0.00' }) } }
@@ -845,6 +858,14 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
     // notas_credito.liquidacion_modalidad / no_desembolso persistidos (ultimos 2 params posicionales)
     expect(ncrInsert!.params[ncrInsert!.params.length - 2]).toBe('SALDO_FAVOR')
     expect(ncrInsert!.params[ncrInsert!.params.length - 1]).toBe(1) // no_desembolso = TRUE
+
+    // Escritura optimista pareada de saf_disponible (saf-snapshot-y-trazabilidad,
+    // SAFC suma): sin credito previo (fixture default saf_disponible='0') + 30 = 30.
+    const clienteUpdate = calls.find(
+      (c) => c.sql.startsWith('UPDATE clientes SET saldo_actual') && c.sql.includes('saf_disponible')
+    )
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.params).toContain('30.00000000')
   })
 
   it('COMPENSACION_VENTA: MISMO comportamiento SAFC que SALDO_FAVOR dentro de esta funcion, y NUNCA invoca crearVenta() internamente', async () => {
@@ -1140,6 +1161,14 @@ describe('crearNotaCredito — Slice 4 (REFUND_TESORERIA: motor de egreso real d
     // el monto SAFC (coincidencia numerica del fixture) — confirmar via SQL
     // que la columna tasa_pago esta presente en el INSERT.
     expect(safcInsert!.sql).toContain('tasa_pago')
+
+    // Escritura optimista pareada de saf_disponible (saf-snapshot-y-trazabilidad,
+    // SAFC suma): sin credito previo (fixture default) + 40 (remanenteSafc) = 40.
+    const clienteUpdate = calls.find(
+      (c) => c.sql.startsWith('UPDATE clientes SET saldo_actual') && c.sql.includes('saf_disponible')
+    )
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.params).toContain('40.00000000')
   })
 
   it('Scenario "Sin impacto en sesión POS activa": sesion POS activa + REFUND_TESORERIA -> CERO escritura en movimientos_metodo_cobro (Regla de Oro solo dispara con EFECTIVO_REAL)', async () => {

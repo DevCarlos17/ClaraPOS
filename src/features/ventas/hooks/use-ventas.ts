@@ -9,7 +9,7 @@ import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-con
 import { generarAsientosVenta, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import { connector } from '@/core/db/powersync/connector'
 import { aplicarPagoFacturaEnTx } from '@/features/cxc/hooks/use-cxc'
-import { calcularCreditoDisponible } from '@/features/cxc/lib/deuda-credito-cliente'
+import { calcularSafDisponibleNuevo } from '@/features/cxc/lib/saldo-cliente'
 import { buildStockPorDepositoFragments, resolveDepositoEgresoVenta } from '../lib/deposito-venta'
 import { calcularCierreVentaConSaf } from '../lib/calcular-cierre-venta-saf'
 import {
@@ -441,18 +441,19 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
     let creditoDisponibleUsd = new Decimal(0)
     if (safEntry && safEntry.montoUsd > 0.001) {
-      // Fuente del gate: modelo derivado SUM(SAFC)-SUM(SAF), NO clientes.saldo_actual
-      // neteado (que puede estar inflado por deuda de facturas pendientes no
-      // relacionadas) — spec req.2 scn.1.
+      // Fuente del gate: clientes.saf_disponible (snapshot mantenido por
+      // trigger, ver migrations/0102), NO clientes.saldo_actual neteado (que
+      // puede estar inflado por deuda de facturas pendientes no
+      // relacionadas) — spec req.2 scn.1. Ya NO escanea movimientos_cuenta
+      // en cada checkout (saf-snapshot-y-trazabilidad: reemplaza el
+      // SUM(SAFC)-SUM(SAF) de cxc-saldo-favor-modelo por la misma fuente
+      // confiable, ahora O(1)).
       const creditoRes = await tx.execute(
-        `SELECT
-           COALESCE(SUM(CASE WHEN tipo = 'SAFC' THEN CAST(monto AS REAL) ELSE 0 END), 0) as creado,
-           COALESCE(SUM(CASE WHEN tipo = 'SAF'  THEN CAST(monto AS REAL) ELSE 0 END), 0) as consumido
-         FROM movimientos_cuenta WHERE cliente_id = ? AND empresa_id = ?`,
+        'SELECT saf_disponible FROM clientes WHERE id = ? AND empresa_id = ?',
         [safEntry.clienteId, empresa_id]
       )
-      const creditoRow = creditoRes.rows?.item(0) as { creado: number; consumido: number } | undefined
-      creditoDisponibleUsd = calcularCreditoDisponible(creditoRow?.creado ?? 0, creditoRow?.consumido ?? 0)
+      const creditoRow = creditoRes.rows?.item(0) as { saf_disponible: string } | undefined
+      creditoDisponibleUsd = new Decimal(creditoRow?.saf_disponible || '0')
     }
 
     const cierre = calcularCierreVentaConSaf({
@@ -1000,13 +1001,13 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     if (safEntry && safAplicadoUsd.gt('0.001')) {
       const { clienteId: safClienteId, safOrigenRefs = [] } = safEntry
       const clienteSafRes = await tx.execute(
-        'SELECT saldo_actual FROM clientes WHERE id = ? LIMIT 1',
+        'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1',
         [safClienteId]
       )
       if (clienteSafRes.rows?.length) {
-        const saldoAntesSaf = new Decimal(
-          (clienteSafRes.rows.item(0) as { saldo_actual: string }).saldo_actual
-        )
+        const clienteSafRow = clienteSafRes.rows.item(0) as { saldo_actual: string; saf_disponible: string }
+        const saldoAntesSaf = new Decimal(clienteSafRow.saldo_actual)
+        const safDisponibleAntes = new Decimal(clienteSafRow.saf_disponible || '0')
         const saldoDespuesSaf = saldoAntesSaf.plus(safAplicadoUsd)
 
         // INSERT movimiento_cuenta tipo='SAF' — referencia de trazabilidad apunta a esta venta
@@ -1033,10 +1034,14 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           ]
         )
 
-        // Consumir credito SAF: actualizar clientes.saldo_actual
+        // Consumir credito SAF: actualizar clientes.saldo_actual. Escritura
+        // optimista pareada de saf_disponible (SAF resta) — mismo
+        // writeTransaction, el trigger del servidor (migration 0102) es la
+        // autoridad final al reconectar.
+        const safDisponibleDespues = calcularSafDisponibleNuevo('SAF', safDisponibleAntes, safAplicadoUsd)
         await tx.execute(
-          'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-          [toStorageString(saldoDespuesSaf), now, safClienteId]
+          'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(saldoDespuesSaf), toStorageString(safDisponibleDespues), now, safClienteId]
         )
       }
     }
@@ -1138,12 +1143,14 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               // SUM(SAFC)-SUM(SAF) en use-cxc.ts la cuente como creacion y no
               // como consumo. Ver design.md Decision 1/2.
               const clienteRemRes = await tx.execute(
-                'SELECT saldo_actual FROM clientes WHERE id = ?',
+                'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?',
                 [discrepancy.clienteId]
               )
-              const saldoActualRem = new Decimal(
-                (clienteRemRes.rows?.item(0) as { saldo_actual: string } | undefined)?.saldo_actual ?? '0'
-              )
+              const clienteRemRow = clienteRemRes.rows?.item(0) as
+                | { saldo_actual: string; saf_disponible: string }
+                | undefined
+              const saldoActualRem = new Decimal(clienteRemRow?.saldo_actual ?? '0')
+              const safDisponibleRemAntes = new Decimal(clienteRemRow?.saf_disponible ?? '0')
               const saldoNuevoRem = saldoActualRem.minus(remainingSaf)
 
               const movRemId = uuidv4()
@@ -1162,9 +1169,13 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 ]
               )
 
+              // Escritura optimista pareada de saf_disponible (SAFC suma) —
+              // mismo writeTransaction, el trigger del servidor (migration
+              // 0102) es la autoridad final al reconectar.
+              const safDisponibleRemDespues = calcularSafDisponibleNuevo('SAFC', safDisponibleRemAntes, remainingSaf)
               await tx.execute(
-                'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-                [toStorageString(saldoNuevoRem), now, discrepancy.clienteId]
+                'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?',
+                [toStorageString(saldoNuevoRem), toStorageString(safDisponibleRemDespues), now, discrepancy.clienteId]
               )
             }
           }

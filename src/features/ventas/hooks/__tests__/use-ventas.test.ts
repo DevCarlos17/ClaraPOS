@@ -237,9 +237,20 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
             const ingredientes = opts.recetas?.[servicioId] ?? []
             return { rows: { length: ingredientes.length, item: (i: number) => ingredientes[i] } }
           }
-          if (sql.includes("WHEN tipo = 'SAFC'")) {
-            const credito = opts.safCredito ?? { creado: 0, consumido: 0 }
-            return { rows: { length: 1, item: () => credito } }
+          if (sql.startsWith('SELECT saf_disponible FROM clientes')) {
+            const { creado, consumido } = opts.safCredito ?? { creado: 0, consumido: 0 }
+            const disponible = Math.max(0, creado - consumido)
+            return { rows: { length: 1, item: () => ({ saf_disponible: String(disponible) }) } }
+          }
+          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes')) {
+            const { creado, consumido } = opts.safCredito ?? { creado: 0, consumido: 0 }
+            const disponible = Math.max(0, creado - consumido)
+            return {
+              rows: {
+                length: 1,
+                item: () => ({ saldo_actual: opts.clienteSaldoActual ?? '0', saf_disponible: String(disponible) }),
+              },
+            }
           }
           if (sql.startsWith('SELECT saldo_actual FROM clientes')) {
             return { rows: { length: 1, item: () => ({ saldo_actual: opts.clienteSaldoActual ?? '0' }) } }
@@ -534,6 +545,13 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       const ventaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO ventas ('))
       expect(ventaInsert).toBeDefined()
       expect(ventaInsert!.params[14]).toBe('0.00000000')
+
+      // Escritura optimista pareada de saf_disponible (SAFC suma): sin credito
+      // previo (safCredito no provisto -> disponible=0), se crean 5 -> 5.
+      const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET saldo_actual'))
+      expect(clienteUpdate).toBeDefined()
+      expect(clienteUpdate!.sql).toContain('saf_disponible')
+      expect(clienteUpdate!.params).toContain(toStorageString(5))
     })
   })
 
@@ -796,6 +814,15 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       )
       expect(safConsumoIdx).toBeGreaterThan(-1)
       expect(safConsumoIdx).toBeGreaterThan(ventaInsertIdx)
+
+      // Escritura optimista pareada de saf_disponible (saf-snapshot-y-trazabilidad):
+      // disponible=15 (gate), se consumen 6 -> 9. Distinguir del UPDATE del
+      // bloque FAC (mismo prefijo de SQL, sin columna saf_disponible).
+      const clienteUpdate = calls.find(
+        (c) => c.sql.startsWith('UPDATE clientes SET saldo_actual') && c.sql.includes('saf_disponible')
+      )
+      expect(clienteUpdate).toBeDefined()
+      expect(clienteUpdate!.params).toContain(toStorageString(9))
     })
 
     it('idempotencia de replay: el saldo_pend_usd escrito en el INSERT coincide exactamente con el resultado de `calcularCierreVentaConSaf` (mismos inputs) — un reintento de PowerSync reenviaria el mismo valor, NEW == OLD, sin disparar P0001', async () => {
