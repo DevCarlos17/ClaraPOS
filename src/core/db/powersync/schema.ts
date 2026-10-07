@@ -622,6 +622,7 @@ const clientes = new Table(
     porcentaje_retencion_iva: column.text,
     limite_credito_usd: column.text,
     saldo_actual: column.text,
+    saf_disponible: column.text,
     is_active: column.integer,
     created_at: column.text,
     updated_at: column.text,

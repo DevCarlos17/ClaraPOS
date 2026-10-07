@@ -122,9 +122,10 @@ const IMMUTABLE_COLUMNS: Record<string, string[]> = {
 // levante P0001 al recibir un UPDATE directo.
 // (La escritura local en SQLite sigue ocurriendo para mantener la UI reactiva.)
 const TRIGGER_MANAGED_PATCH_COLUMNS: Record<string, string[]> = {
-  // saldo_actual se actualiza via trigger actualizar_saldo_cliente
-  // disparado por INSERT en movimientos_cuenta
-  clientes: ['saldo_actual'],
+  // saldo_actual y saf_disponible se actualizan via trigger
+  // actualizar_saldo_cliente disparado por INSERT en movimientos_cuenta
+  // (ver migrations/0102_extender_trigger_saf_disponible.sql)
+  clientes: ['saldo_actual', 'saf_disponible'],
 }
 
 // Tablas con triggers PostgreSQL que bloquean UPDATE (total o parcialmente).
