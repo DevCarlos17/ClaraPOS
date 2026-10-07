@@ -96,3 +96,44 @@ export function esSaldoSafConsistente(
   const diferencia = nuevo.minus(anterior).abs().minus(montoD).abs()
   return diferencia.lessThanOrEqualTo('0.005')
 }
+
+// =============================================
+// calcularSafDisponibleNuevo
+// =============================================
+
+/** Tipos que mueven `clientes.saf_disponible` (ver migrations/0102). */
+export type TipoMovimientoSaf = 'SAFC' | 'SAF'
+
+/**
+ * Calcula el nuevo valor de `clientes.saf_disponible` para una fila
+ * `movimientos_cuenta` de tipo 'SAFC'/'SAF'. Espejo TS puro (sin I/O) de la
+ * expresion SQL atomica del trigger `actualizar_saldo_cliente()` (ver
+ * migrations/0102_extender_trigger_saf_disponible.sql):
+ *
+ *   SAFC -> disponibleAnterior + monto          (creacion de credito)
+ *   SAF  -> MAX(0, disponibleAnterior - monto)  (consumo, piso en cero)
+ *
+ * A diferencia de `calcularSaldoNuevoMovimientoCuenta` (que para SAF confia
+ * en un `saldoNuevoProvisto` por la app, porque esa direccion es ambigua),
+ * esta funcion NO necesita valor provisto: SAFC/SAF son unambiguous — SAFC
+ * siempre crea, SAF siempre consume. El trigger SQL aplica la misma
+ * expresion directamente sobre la columna (sin leer-luego-escribir desde la
+ * app), por eso esta funcion tampoco acepta un valor "confiado": es un
+ * calculo puro de la MISMA formula, usado por los call sites para escribir
+ * el valor optimista local antes de que el trigger del servidor confirme.
+ */
+export function calcularSafDisponibleNuevo(
+  tipo: TipoMovimientoSaf,
+  disponibleAnterior: DecimalInput,
+  monto: DecimalInput
+): Decimal {
+  const anterior = new Decimal(disponibleAnterior)
+  const montoD = new Decimal(monto)
+
+  if (tipo === 'SAFC') {
+    return anterior.plus(montoD)
+  }
+
+  // tipo === 'SAF'
+  return Decimal.max(new Decimal(0), anterior.minus(montoD))
+}
