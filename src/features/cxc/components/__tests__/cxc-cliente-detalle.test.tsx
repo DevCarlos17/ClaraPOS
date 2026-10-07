@@ -52,7 +52,7 @@ function factura(overrides: Partial<VentaPendiente> = {}): VentaPendiente {
 
 beforeEach(() => {
   mockedUseTasaActual.mockReturnValue({ tasaValor: 100, isLoading: false } as ReturnType<typeof useTasaActual>)
-  mockedUseQuery.mockReturnValue({ data: [{ creado: 0, consumido: 0 }] } as unknown as ReturnType<typeof useQuery>)
+  mockedUseQuery.mockReturnValue({ data: [{ disponible: 0 }] } as unknown as ReturnType<typeof useQuery>)
 })
 
 describe('CxcClienteDetalle - row a card en mobile (S2)', () => {

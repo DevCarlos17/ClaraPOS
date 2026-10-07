@@ -7,7 +7,6 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { useFacturasPendientes, type ClienteConDeuda, type VentaPendiente } from '../hooks/use-cxc'
-import { calcularCreditoDisponible } from '../lib/deuda-credito-cliente'
 import { AbonoGlobalModal } from './abono-global-modal'
 import { AplicarSafModal } from './aplicar-saf-modal'
 import { FacturaDetalleCxc } from './factura-detalle-cxc'
@@ -40,20 +39,19 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
   const [mostrarPagadas, setMostrarPagadas] = useState(false)
   const { facturas, isLoading } = useFacturasPendientes(cliente.id, mostrarPagadas)
 
-  // Saldo a favor reactivo: query directa a movimientos_cuenta para reflejar
-  // cambios inmediatamente sin depender del prop `cliente` que puede quedar
-  // stale tras un abono global. NUNCA se lee clientes.saldo_actual aqui — es
-  // un valor neteado que no distingue deuda de credito (ver spec cxc-deuda-lectura).
+  // Saldo a favor reactivo: lee clientes.saf_disponible directo (snapshot
+  // mantenido por trigger, ver migrations/0102) para reflejar cambios
+  // inmediatamente sin depender del prop `cliente` que puede quedar stale
+  // tras un abono global. Ya NO escanea movimientos_cuenta en cada render
+  // (saf-snapshot-y-trazabilidad, Fase 5). NUNCA se lee clientes.saldo_actual
+  // aqui — es un valor neteado que no distingue deuda de credito (ver spec
+  // cxc-deuda-lectura).
   const { data: creditoLiveData } = useQuery(
-    `SELECT
-       COALESCE(SUM(CASE WHEN tipo = 'SAFC' THEN CAST(monto AS REAL) ELSE 0 END), 0) as creado,
-       COALESCE(SUM(CASE WHEN tipo = 'SAF' THEN CAST(monto AS REAL) ELSE 0 END), 0) as consumido
-     FROM movimientos_cuenta
-     WHERE cliente_id = ?`,
+    'SELECT CAST(saf_disponible AS REAL) as disponible FROM clientes WHERE id = ?',
     [cliente.id]
   )
-  const creditoRow = creditoLiveData?.[0] as { creado: number; consumido: number } | undefined
-  const safCxcValue = calcularCreditoDisponible(creditoRow?.creado ?? 0, creditoRow?.consumido ?? 0).toNumber()
+  const creditoRow = creditoLiveData?.[0] as { disponible: number } | undefined
+  const safCxcValue = creditoRow?.disponible ?? 0
 
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<VentaPendiente | null>(null)
   const [abonoGlobalOpen, setAbonoGlobalOpen] = useState(false)

@@ -2,6 +2,7 @@ import Decimal from 'decimal.js'
 import {
   calcularSaldoNuevoMovimientoCuenta,
   esSaldoSafConsistente,
+  calcularSafDisponibleNuevo,
 } from '../saldo-cliente'
 
 describe('calcularSaldoNuevoMovimientoCuenta', () => {
@@ -104,5 +105,44 @@ describe('esSaldoSafConsistente', () => {
 
   it('rechaza cuando la magnitud del cambio no coincide con monto, fuera de tolerancia', () => {
     expect(esSaldoSafConsistente(100, 50, 100)).toBe(false)
+  })
+})
+
+describe('calcularSafDisponibleNuevo', () => {
+  it('SAFC: suma el monto al disponible anterior (creacion de credito)', () => {
+    const resultado = calcularSafDisponibleNuevo('SAFC', 100, 50)
+
+    expect(resultado.toString()).toBe('150')
+  })
+
+  it('SAF: resta el monto al disponible anterior (consumo de credito)', () => {
+    const resultado = calcularSafDisponibleNuevo('SAF', 100, 30)
+
+    expect(resultado.toString()).toBe('70')
+  })
+
+  it('SAF: consumo exacto deja el disponible en 0', () => {
+    const resultado = calcularSafDisponibleNuevo('SAF', 50, 50)
+
+    expect(resultado.toString()).toBe('0')
+  })
+
+  it('SAF: consumo que excede el disponible NUNCA produce negativo — piso en 0', () => {
+    const resultado = calcularSafDisponibleNuevo('SAF', 10, 40)
+
+    expect(resultado.toString()).toBe('0')
+    expect(resultado.isNegative()).toBe(false)
+  })
+
+  it('acepta instancias de Decimal como entrada', () => {
+    const resultado = calcularSafDisponibleNuevo('SAFC', new Decimal(100), new Decimal('0.70'))
+
+    expect(resultado.toString()).toBe('100.7')
+  })
+
+  it('acepta strings como entrada (formato de almacenamiento PowerSync)', () => {
+    const resultado = calcularSafDisponibleNuevo('SAF', '0.70', '0.70')
+
+    expect(resultado.toString()).toBe('0')
   })
 })
