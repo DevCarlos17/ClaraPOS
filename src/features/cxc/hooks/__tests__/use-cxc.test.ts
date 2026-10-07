@@ -146,16 +146,14 @@ describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no 
 })
 
 // ─────────────────────────────────────────────────────────────────────────
-// aplicarSaldoFavor — gate re-sourced a SUM(SAFC)-SUM(SAF), NO saldo_actual
-// neteado (WARNING 2)
+// aplicarSaldoFavor — gate re-sourced a clientes.saf_disponible (snapshot,
+// ya no escanea movimientos_cuenta), NO saldo_actual neteado
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('aplicarSaldoFavor — gate de credito re-sourced (SUM(SAFC)-SUM(SAF)), no clientes.saldo_actual', () => {
+describe('aplicarSaldoFavor — gate re-sourced a clientes.saf_disponible (snapshot), no clientes.saldo_actual', () => {
   function mockTx(opts: {
     saldoActual: string
-    creado: number
-    consumido: number
-    safDisponible?: string
+    safDisponible: string
     facturaSaldoPend: Record<string, string>
   }) {
     const calls: Call[] = []
@@ -167,12 +165,9 @@ describe('aplicarSaldoFavor — gate de credito re-sourced (SUM(SAFC)-SUM(SAF)),
             return {
               rows: {
                 length: 1,
-                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible ?? '0' }),
+                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible }),
               },
             }
-          }
-          if (sql.includes('as creado') && sql.includes('as consumido')) {
-            return { rows: { length: 1, item: () => ({ creado: opts.creado, consumido: opts.consumido }) } }
           }
           if (sql.startsWith('SELECT saldo_pend_usd FROM ventas WHERE id = ? AND empresa_id = ?')) {
             const ventaId = params[0] as string
@@ -201,11 +196,10 @@ describe('aplicarSaldoFavor — gate de credito re-sourced (SUM(SAFC)-SUM(SAF)),
     }
   }
 
-  it('el gate usa SUM(SAFC)-SUM(SAF), NO clientes.saldo_actual: procede aunque saldo_actual sea 0 (netaria "sin credito") mientras SAFC-SAF sea suficiente', async () => {
+  it('el gate lee saf_disponible, NO clientes.saldo_actual: procede aunque saldo_actual sea 0 (netaria "sin credito") mientras saf_disponible sea suficiente', async () => {
     const calls = mockTx({
       saldoActual: '0.00000000', // netted: parece "sin deuda ni credito"
-      creado: 100, // SAFC
-      consumido: 0, // SAF
+      safDisponible: '100.00000000',
       facturaSaldoPend: { 'venta-1': '50.00000000' },
     })
 
@@ -218,13 +212,16 @@ describe('aplicarSaldoFavor — gate de credito re-sourced (SUM(SAFC)-SUM(SAF)),
     const ventaUpdate = calls.find((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
     expect(ventaUpdate).toBeDefined()
     expect(ventaUpdate!.params).toEqual([toStorageString(0), 'venta-1']) // 50 - 50 = 0
+
+    // El gate ya NO escanea movimientos_cuenta (SUM(SAFC)/SUM(SAF)) — lee el snapshot directo
+    const scanCalls = calls.filter((c) => c.sql.includes('as creado') && c.sql.includes('as consumido'))
+    expect(scanCalls).toHaveLength(0)
   })
 
-  it('regresion: rechaza cuando el monto excede SUM(SAFC)-SUM(SAF), AUNQUE clientes.saldo_actual sugiera mucho mas credito disponible (no se debe volver a leer saldo_actual como gate)', async () => {
+  it('regresion: rechaza cuando el monto excede saf_disponible real, AUNQUE clientes.saldo_actual sugiera mucho mas credito disponible (no se debe volver a leer saldo_actual como gate)', async () => {
     mockTx({
       saldoActual: '-500.00000000', // netted MUY negativo: un gate viejo basado en esto dejaria pasar cualquier monto
-      creado: 10, // SAFC real
-      consumido: 0, // SAF real -> disponible real = 10
+      safDisponible: '10.00000000', // disponible real
       facturaSaldoPend: { 'venta-1': '50.00000000' },
     })
 
@@ -233,11 +230,10 @@ describe('aplicarSaldoFavor — gate de credito re-sourced (SUM(SAFC)-SUM(SAF)),
     ).rejects.toThrow(/excede el crédito disponible/i)
   })
 
-  it('rechaza cuando no hay credito disponible (SAFC-SAF <= 0), sin importar cuantas facturas se seleccionen', async () => {
+  it('rechaza cuando no hay credito disponible (saf_disponible <= 0), sin importar cuantas facturas se seleccionen', async () => {
     mockTx({
       saldoActual: '0.00000000',
-      creado: 0,
-      consumido: 0,
+      safDisponible: '0',
       facturaSaldoPend: { 'venta-1': '50.00000000' },
     })
 
@@ -249,8 +245,6 @@ describe('aplicarSaldoFavor — gate de credito re-sourced (SUM(SAFC)-SUM(SAF)),
   it('escritura optimista pareada: el UPDATE clientes final incluye saf_disponible = anterior - totalAplicado (SAF resta)', async () => {
     const calls = mockTx({
       saldoActual: '0.00000000',
-      creado: 100,
-      consumido: 0,
       safDisponible: '100.00000000',
       facturaSaldoPend: { 'venta-1': '50.00000000' },
     })

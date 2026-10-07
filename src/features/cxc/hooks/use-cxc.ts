@@ -9,7 +9,6 @@ import { generarAsientosPagoCxC, reversarAsientos, leerMonedaContable } from '@/
 import Decimal from 'decimal.js'
 import { bsToUsd, usdToBs, toStorageString } from '@/lib/currency'
 import { calcularSaldoNuevoMovimientoCuenta, calcularSafDisponibleNuevo } from '@/features/cxc/lib/saldo-cliente'
-import { calcularCreditoDisponible } from '@/features/cxc/lib/deuda-credito-cliente'
 
 export interface VentaPendiente {
   id: string
@@ -1685,10 +1684,13 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
 
     // 1. Validar que el cliente tenga crédito SAF disponible.
     // saldo_actual sigue siendo la fuente del ledger crudo (para
-    // saldo_anterior/saldo_nuevo mas abajo), pero el GATE de validacion usa
-    // la fuente confiable SUM(SAFC)-SUM(SAF) — saldo_actual mezcla deuda y
-    // credito y puede leer casi-cero con credito real disponible. Ver
-    // design.md Decision 1/3.
+    // saldo_anterior/saldo_nuevo mas abajo). El GATE de validacion lee
+    // clientes.saf_disponible directamente (snapshot mantenido por trigger,
+    // ver migrations/0102) — ya NO escanea movimientos_cuenta en cada
+    // llamada (saf-snapshot-y-trazabilidad, reemplaza el SUM(SAFC)-SUM(SAF)
+    // de cxc-saldo-favor-modelo Decision 1/3 por la misma fuente confiable,
+    // ahora O(1); misma SELECT ya usada para la escritura optimista pareada
+    // de abajo — cero round trips extra).
     const clienteResult = await tx.execute(
       'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? AND empresa_id = ?',
       [clienteId, empresaId]
@@ -1702,24 +1704,14 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
     const tasaD = new Decimal(tasa)
     const totalAplicadoD = new Decimal(totalAplicadoUsd)
 
-    const creditoResult = await tx.execute(
-      `SELECT
-         COALESCE(SUM(CASE WHEN tipo = 'SAFC' THEN CAST(monto AS REAL) ELSE 0 END), 0) as creado,
-         COALESCE(SUM(CASE WHEN tipo = 'SAF' THEN CAST(monto AS REAL) ELSE 0 END), 0) as consumido
-       FROM movimientos_cuenta WHERE cliente_id = ? AND empresa_id = ?`,
-      [clienteId, empresaId]
-    )
-    const creditoRow = creditoResult.rows?.item(0) as { creado: number; consumido: number } | undefined
-    const creditoDisponible = calcularCreditoDisponible(creditoRow?.creado ?? 0, creditoRow?.consumido ?? 0)
-
-    if (creditoDisponible.lte('0.001')) {
+    if (safDisponibleAntes.lte('0.001')) {
       throw new Error('El cliente no tiene saldo a favor disponible')
     }
 
     // 2. Validar que el total a aplicar no exceda el crédito disponible
-    if (totalAplicadoD.gt(creditoDisponible.plus(new Decimal('0.01')))) {
+    if (totalAplicadoD.gt(safDisponibleAntes.plus(new Decimal('0.01')))) {
       throw new Error(
-        `El monto a aplicar ($${toStorageString(totalAplicadoD)}) excede el crédito disponible ($${toStorageString(creditoDisponible)})`
+        `El monto a aplicar ($${toStorageString(totalAplicadoD)}) excede el crédito disponible ($${toStorageString(safDisponibleAntes)})`
       )
     }
 
