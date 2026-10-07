@@ -49,11 +49,31 @@ const FETCH_FAILURE_MESSAGES = new Set([
  * (cuenta hacia MAX_UPLOAD_RETRIES).
  */
 export function isNoConnectivityError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
+  // Defense-in-depth: a raw, unswallowed fetch TypeError (if some future code
+  // path throws it directly instead of going through postgrest-js's catch
+  // handler) is unambiguously a connectivity failure.
   if (error instanceof TypeError) return true
 
-  const err = error as { code?: string; status?: number; details?: string; hint?: string }
-  if (FETCH_FAILURE_MESSAGES.has(error.message)) return true
+  if (!error || typeof error !== 'object') return false
+  const err = error as { message?: unknown; code?: string; status?: number; details?: string; hint?: string }
+
+  // Authoritative signal, checked FIRST and unconditionally (works for both
+  // real Error instances and the plain object literal that supabase-js's
+  // PostgrestBuilder actually throws when fetch() itself rejects). Substring
+  // match, not exact-set, because postgrest-js always prefixes the message
+  // with the error name: "TypeError: Failed to fetch".
+  const message = typeof err.message === 'string' ? err.message : ''
+  for (const fetchMsg of FETCH_FAILURE_MESSAGES) {
+    if (message.includes(fetchMsg)) return true
+  }
+
+  // Below this point: ambiguous no-code error fallback. Scoped to real Error
+  // instances only — plain objects with an unrecognized message (ej. un
+  // body 5xx no-JSON) caen a `false` (transitorio-con-conexión), igual que
+  // hoy. `details` no es confiable para objetos planos (viene con el stack
+  // trace en el error real de sin-conectividad), asi que este heuristico no
+  // puede correr para ellos.
+  if (!(error instanceof Error)) return false
 
   const hasPostgrestShape =
     (typeof err.code === 'string' && err.code.length > 0) ||
