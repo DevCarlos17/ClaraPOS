@@ -57,8 +57,13 @@
 --          saldo_anterior, saldo_nuevo, fecha, created_at, created_by)
 --       VALUES
 --         (gen_random_uuid(), '<empresa-test>', '<cliente-test>', 'SAF',
---          'TEST-0102-B', 100, 0, 0, now(), now(), '<usuario-test>');
---       -- Debe ser 0, NUNCA negativo (consumo excede disponible)
+--          'TEST-0102-B', 100, 0, 100, now(), now(), '<usuario-test>');
+--       -- Debe ser 0, NUNCA negativo (consumo excede disponible).
+--       -- NOTA: saldo_nuevo DEBE respetar la asercion SAF del trigger
+--       -- (lineas 91-95): ABS(ABS(saldo_nuevo - saldo_anterior) - monto) <= 0.005.
+--       -- Con saldo_anterior=0 y monto=100 => saldo_nuevo=100 (consumo de
+--       -- credito suma al saldo de deuda). Usar saldo_nuevo=0 aqui dispararia
+--       -- la excepcion 'SAF saldo_nuevo inconsistent' ANTES de tocar saf_disponible.
 --       SELECT saf_disponible FROM clientes WHERE id = '<cliente-test>';
 --     ROLLBACK;
 --
