@@ -241,7 +241,15 @@ export function DepartamentoList() {
                   onClick={() => handleRowClick(dep)}
                   className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
                 >
-                  <td className="px-4 py-3 font-mono">{dep.codigo}</td>
+                  <td className="px-4 py-3 font-mono">
+                    {dep.codigo === '' ? (
+                      <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-600/20 ring-inset">
+                        PENDIENTE
+                      </span>
+                    ) : (
+                      dep.codigo
+                    )}
+                  </td>
                   <td className="px-4 py-3">{dep.nombre}</td>
                   <td className="px-4 py-3 tabular-nums">
                     {dep.articulos_activos}
