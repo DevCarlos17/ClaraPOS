@@ -28,8 +28,21 @@ const { SupabaseConnector, isNoConnectivityError, FATAL_RESPONSE_CODES } = await
   '../powersync/connector'
 )
 
-/** Fallo de conectividad real tal como llega del navegador — nunca hubo respuesta del servidor. */
-const NO_CONNECTIVITY_ERROR = Object.assign(new Error('Failed to fetch'), { code: '' })
+/**
+ * Fallo de conectividad real tal como lo lanza `PostgrestBuilder` cuando `fetch()`
+ * rechaza (sin internet): un objeto plano, NUNCA una instancia de `Error`. `details`
+ * queda poblado con el stack trace del `TypeError` original, no con un mensaje de
+ * PostgREST — por eso el heuristico `hasPostgrestShape` no puede confiar en el shape.
+ */
+const NO_CONNECTIVITY_ERROR = {
+  code: '',
+  message: 'TypeError: Failed to fetch',
+  details: 'TypeError: Failed to fetch\n    at foo',
+  hint: '',
+}
+
+/** Variante como instancia real de `Error` — cubre el caso legado (regresion). */
+const NO_CONNECTIVITY_ERROR_INSTANCE = Object.assign(new Error('Failed to fetch'), { code: '' })
 
 /** Error transitorio CON conexión — el servidor respondió (ej. 503 upstream caído). */
 const TRANSIENT_SERVER_ERROR = Object.assign(new Error('Service Unavailable'), {
@@ -107,7 +120,7 @@ describe('isNoConnectivityError', () => {
   })
 
   it('es true para un error con code vacio y mensaje de fetch (fixture real del navegador)', () => {
-    expect(isNoConnectivityError(Object.assign(new Error('Failed to fetch'), { code: '' }))).toBe(true)
+    expect(isNoConnectivityError(NO_CONNECTIVITY_ERROR_INSTANCE)).toBe(true)
   })
 
   it('es false para una respuesta real de PostgREST (status/details presentes)', () => {
@@ -118,6 +131,49 @@ describe('isNoConnectivityError', () => {
 
   it('es false para un error con code fatal (respuesta real del servidor)', () => {
     expect(isNoConnectivityError(Object.assign(new Error('constraint'), { code: '23505' }))).toBe(false)
+  })
+
+  it('es true para el objeto plano real de sin-conectividad (PostgrestBuilder, no es instancia de Error)', () => {
+    expect(isNoConnectivityError(NO_CONNECTIVITY_ERROR)).toBe(true)
+  })
+
+  it('es true para un objeto plano con mensaje de Firefox ("NetworkError when attempting to fetch resource.")', () => {
+    expect(
+      isNoConnectivityError({
+        code: '',
+        message: 'NetworkError when attempting to fetch resource.',
+        details: '',
+        hint: '',
+      })
+    ).toBe(true)
+  })
+
+  it('es true para un objeto plano con mensaje de Safari ("Load failed")', () => {
+    expect(
+      isNoConnectivityError({ code: '', message: 'Load failed', details: '', hint: '' })
+    ).toBe(true)
+  })
+
+  it('es false para un objeto plano fatal con code real (FK violation) aunque tenga details', () => {
+    expect(
+      isNoConnectivityError({
+        code: '23503',
+        message: 'insert or update on table violates foreign key constraint',
+        details: 'Key (producto_id)=(x) is not present in table "productos".',
+        hint: '',
+      })
+    ).toBe(false)
+  })
+
+  it('es false para un objeto plano transitorio sin substring de fetch (5xx no-JSON, ej. Internal Server Error)', () => {
+    expect(
+      isNoConnectivityError({
+        code: '',
+        message: 'Internal Server Error',
+        details: '<html><body>500</body></html>',
+        hint: '',
+      })
+    ).toBe(false)
   })
 })
 
