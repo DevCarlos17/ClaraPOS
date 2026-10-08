@@ -675,6 +675,77 @@ const vencimientos_cobrar = new Table(
   { indexes: {} }
 )
 
+// SAF — Lotes de credito (design-v2.md §3, migrations/0104_saf_creditos_lotes.sql).
+// Capa 1 del modelo open-item: cada lote es un credito SAF individual con su
+// propio saldo remanente, pareado 1:1 con la fila SAFC existente en
+// movimientos_cuenta (`movimiento_cuenta_id`). `saldo_disponible_usd`/`status`
+// son gestionadas EXCLUSIVAMENTE por el trigger `consumir_saf_lote()` (0105) —
+// ver connector.ts `TRIGGER_MANAGED_PATCH_COLUMNS.saf_creditos_lotes`.
+//
+// Indices: espejo de los 3 indices SQL de 0104, salvo la condicion parcial
+// `WHERE saldo_disponible_usd > 0` de `idx_saf_lotes_cliente_disponible` — la
+// sintaxis corta de indices de PowerSync (`IndexShorthand`) no soporta indices
+// parciales; se indexa (cliente_id, fecha) completo, el filtro por saldo > 0
+// sigue aplicandose en el WHERE de la query, solo sin el beneficio de un
+// indice parcial en SQLite local.
+const saf_creditos_lotes = new Table(
+  {
+    empresa_id: column.text,
+    cliente_id: column.text,
+    movimiento_cuenta_id: column.text,
+    origen_tipo: column.text,
+    origen_id: column.text,
+    monto_original_usd: column.text,
+    saldo_disponible_usd: column.text,
+    status: column.text,
+    moneda_origen: column.text,
+    tasa_origen: column.text,
+    fecha: column.text,
+    created_at: column.text,
+    updated_at: column.text,
+    created_by: column.text,
+  },
+  {
+    indexes: {
+      idx_saf_lotes_cliente_disponible: ['cliente_id', 'fecha'],
+      idx_saf_lotes_empresa: ['empresa_id'],
+      idx_saf_lotes_origen: ['origen_tipo', 'origen_id'],
+    },
+  }
+)
+
+// SAF — Aplicaciones de credito (design-v2.md §4, migrations/0105_saf_creditos_aplicaciones.sql).
+// Capa 2 del modelo open-item: evento 100% append-only (ningun campo cambia
+// tras el INSERT) — espejo de `movimientos_inventario` para el kardex FIFO.
+// `insertOnly: true` porque PowerSync nunca necesita sincronizar un PATCH de
+// vuelta para esta tabla (confirmado via Context7 `powersync-ja/powersync-docs`,
+// "Insert-Only Client Schema" — ver design-v2.md §7).
+const saf_creditos_aplicaciones = new Table(
+  {
+    empresa_id: column.text,
+    cliente_id: column.text,
+    lote_id: column.text,
+    venta_id: column.text,
+    movimiento_cuenta_id: column.text,
+    monto_aplicado_usd: column.text,
+    lote_saldo_antes_usd: column.text,
+    lote_saldo_despues_usd: column.text,
+    tasa_pago: column.text,
+    fecha: column.text,
+    created_at: column.text,
+    created_by: column.text,
+  },
+  {
+    insertOnly: true,
+    indexes: {
+      idx_saf_aplic_venta: ['venta_id'],
+      idx_saf_aplic_lote: ['lote_id'],
+      idx_saf_aplic_empresa: ['empresa_id'],
+      idx_saf_aplic_cliente: ['cliente_id'],
+    },
+  }
+)
+
 // =============================================
 // VENTAS
 // =============================================
@@ -1644,6 +1715,8 @@ export const AppSchema = new Schema({
   clientes,
   movimientos_cuenta,
   vencimientos_cobrar,
+  saf_creditos_lotes,
+  saf_creditos_aplicaciones,
   // Ventas
   ventas,
   ventas_det,
