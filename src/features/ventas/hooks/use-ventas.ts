@@ -1169,6 +1169,22 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 ]
               )
 
+              // PR3 (saf-snapshot-y-trazabilidad, design-v2.md §3/§6): lote de
+              // credito pareado 1:1 con el SAFC recien creado. `origen_tipo`
+              // ='VENTA' porque este excedente nace del checkout POS mismo.
+              await tx.execute(
+                `INSERT INTO saf_creditos_lotes
+                   (id, empresa_id, cliente_id, movimiento_cuenta_id, origen_tipo, origen_id,
+                    monto_original_usd, saldo_disponible_usd, status, moneda_origen, tasa_origen,
+                    fecha, created_at, updated_at, created_by)
+                 VALUES (?, ?, ?, ?, 'VENTA', ?, ?, ?, 'ACTIVO', ?, ?, ?, ?, ?, ?)`,
+                [
+                  uuidv4(), empresa_id, discrepancy.clienteId, movRemId, ventaId,
+                  toStorageString(remainingSaf), toStorageString(remainingSaf),
+                  monedaSaf, toStorageString(tasa), now, now, now, usuario_id,
+                ]
+              )
+
               // Escritura optimista pareada de saf_disponible (SAFC suma) —
               // mismo writeTransaction, el trigger del servidor (migration
               // 0102) es la autoridad final al reconectar.
