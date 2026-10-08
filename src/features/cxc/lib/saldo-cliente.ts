@@ -137,3 +137,50 @@ export function calcularSafDisponibleNuevo(
   // tipo === 'SAF'
   return Decimal.max(new Decimal(0), anterior.minus(montoD))
 }
+
+// =============================================
+// calcularSaldoLoteDespues
+// =============================================
+
+/** Tolerancia de redondeo decimal, igual a la usada por el trigger Postgres. */
+const TOLERANCIA_SALDO_LOTE = '0.005'
+
+/** Estado derivado de `saf_creditos_lotes.status` (ver migrations/0104). */
+export type StatusLoteSaf = 'ACTIVO' | 'AGOTADO'
+
+/**
+ * Calcula `saldo_disponible_usd`/`status` de un lote SAF luego de aplicarle
+ * `montoAplicado`, espejo TS puro (sin I/O) del trigger `consumir_saf_lote()`
+ * (ver migrations/0105_saf_creditos_aplicaciones.sql):
+ *
+ *   saldoDespues = saldoAntes - montoAplicado
+ *   si saldoDespues < -0.005  -> RAISE EXCEPTION (sobregiro real, fuera de tolerancia)
+ *   si no                    -> saldoDespues = GREATEST(0, saldoDespues)
+ *   status = saldoDespues <= 0.005 ? 'AGOTADO' : 'ACTIVO'
+ *
+ * Usado por los write-sites de consumo de SAF (PR3/PR4 de este change) para
+ * escribir el valor optimista local de `saf_creditos_lotes` antes de que el
+ * trigger del servidor confirme — el servidor sigue siendo la autoridad
+ * final (ver design-v2.md §7).
+ */
+export function calcularSaldoLoteDespues(
+  saldoAntes: DecimalInput,
+  montoAplicado: DecimalInput
+): { saldoDespues: Decimal; status: StatusLoteSaf } {
+  const antes = new Decimal(saldoAntes)
+  const monto = new Decimal(montoAplicado)
+
+  const crudo = antes.minus(monto)
+  if (crudo.lessThan(new Decimal(TOLERANCIA_SALDO_LOTE).negated())) {
+    throw new Error(
+      `Aplicacion ($${monto.toFixed(8)}) excede el saldo disponible del lote ($${antes.toFixed(8)})`
+    )
+  }
+
+  const saldoDespues = Decimal.max(new Decimal(0), crudo)
+  const status: StatusLoteSaf = saldoDespues.lessThanOrEqualTo(TOLERANCIA_SALDO_LOTE)
+    ? 'AGOTADO'
+    : 'ACTIVO'
+
+  return { saldoDespues, status }
+}
