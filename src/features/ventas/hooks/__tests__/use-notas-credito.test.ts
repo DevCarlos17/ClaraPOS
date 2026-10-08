@@ -880,6 +880,33 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
     expect(crearVentaSpy).not.toHaveBeenCalled()
   })
 
+  it('PR3 (saf-snapshot-y-trazabilidad): SALDO_FAVOR inserta UN lote saf_creditos_lotes anclado al SAFC, origen_tipo=NOTA_CREDITO, origen_id=ncrId, saldo_disponible_usd=monto_original_usd', async () => {
+    const calls = mockCrearNcrTx(fixturesModalidad())
+
+    await crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL', modalidad: 'SALDO_FAVOR' }))
+
+    const safcInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+    )
+    expect(safcInsert).toBeDefined()
+    const safcMovId = safcInsert!.params[0] as string
+
+    const ncrInsert = calls.find((c) => c.sql.startsWith('INSERT INTO notas_credito'))
+    const ncrId = ncrInsert!.params[0] as string
+
+    const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
+    expect(loteInsert).toBeDefined()
+    expect(loteInsert!.sql).toContain("'NOTA_CREDITO'")
+    expect(loteInsert!.sql).toContain("'ACTIVO'")
+    // movimiento_cuenta_id ancla el lote al SAFC recien insertado
+    expect(loteInsert!.params).toContain(safcMovId)
+    // origen_id = nota_credito_id de origen
+    expect(loteInsert!.params).toContain(ncrId)
+    // monto_original_usd = saldo_disponible_usd = remanente completo (30.00)
+    const montoOcurrencias = loteInsert!.params.filter((p) => p === '30.00000000')
+    expect(montoOcurrencias).toHaveLength(2)
+  })
+
   it('AJUSTE_CXC: reduce clientes.saldo_actual via movimientos_cuenta (Step B), CERO escritura de caja', async () => {
     const calls = mockCrearNcrTx(fixturesModalidad())
 
@@ -1169,6 +1196,47 @@ describe('crearNotaCredito — Slice 4 (REFUND_TESORERIA: motor de egreso real d
     )
     expect(clienteUpdate).toBeDefined()
     expect(clienteUpdate!.params).toContain('40.00000000')
+  })
+
+  it('PR3 (saf-snapshot-y-trazabilidad): REFUND_TESORERIA remanente inserta UN lote saf_creditos_lotes anclado al SAFC del remanente, origen_tipo=NOTA_CREDITO, saldo_disponible_usd=monto_original_usd=remanenteSafc', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        { total_usd: '100.00', total_bs: '4000.00' },
+        { cuentasTesoreria: { 'banco-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' } } }
+      )
+    )
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'REFUND_TESORERIA',
+        egresoParams: [{ destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '60.00' }],
+      })
+    )
+
+    const safcInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+    )
+    expect(safcInsert).toBeDefined()
+    const safcMovId = safcInsert!.params[0] as string
+
+    const ncrInsert = calls.find((c) => c.sql.startsWith('INSERT INTO notas_credito ('))
+    const ncrId = ncrInsert!.params[0] as string
+
+    const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
+    expect(loteInsert).toBeDefined()
+    expect(loteInsert!.sql).toContain("'NOTA_CREDITO'")
+    expect(loteInsert!.sql).toContain("'ACTIVO'")
+    expect(loteInsert!.params).toContain(safcMovId)
+    expect(loteInsert!.params).toContain(ncrId)
+    // remanenteSafc = 100 - 60 = 40.00 — columnas monto_original_usd/saldo_disponible_usd
+    // por posicion (id, empresa_id, cliente_id, movimiento_cuenta_id, origen_id,
+    // monto_original_usd, saldo_disponible_usd, tasa_origen, ...). Nota: tasa_origen
+    // coincide numericamente con 40.00000000 en este fixture (venta.tasa='40') — se
+    // verifica por posicion en vez de contar ocurrencias para no depender de esa
+    // coincidencia.
+    expect(loteInsert!.params[5]).toBe('40.00000000')
+    expect(loteInsert!.params[6]).toBe('40.00000000')
   })
 
   it('Scenario "Sin impacto en sesión POS activa": sesion POS activa + REFUND_TESORERIA -> CERO escritura en movimientos_metodo_cobro (Regla de Oro solo dispara con EFECTIVO_REAL)', async () => {

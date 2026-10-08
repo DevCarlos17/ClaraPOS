@@ -1303,11 +1303,12 @@ export async function crearNotaCredito(
         const safDisponibleSafcAntes = new Decimal(clienteSafcRow.saf_disponible || '0')
         const saldoNuevoSafc = saldoActualSafc.minus(remanenteALiquidar)
 
+        const safcMovIdNcr = uuidv4()
         await tx.execute(
           `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, doc_origen_id, doc_origen_tipo, tasa_pago)
            VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            uuidv4(),
+            safcMovIdNcr,
             venta.cliente_id,
             `SAF-NCR-${nroNcr}`,
             toStorageString(remanenteALiquidar),
@@ -1322,6 +1323,23 @@ export async function crearNotaCredito(
             ncrId,
             'NOTA_CREDITO',
             toStorageString(venta.tasa),
+          ]
+        )
+
+        // PR3 (saf-snapshot-y-trazabilidad, design-v2.md §3/§6): lote de
+        // credito pareado 1:1 con el SAFC recien creado. `origen_tipo` =
+        // 'NOTA_CREDITO', `origen_id` = ncrId (SALDO_FAVOR y COMPENSACION_VENTA
+        // comparten este mismo bloque, ver comentario arriba).
+        await tx.execute(
+          `INSERT INTO saf_creditos_lotes
+             (id, empresa_id, cliente_id, movimiento_cuenta_id, origen_tipo, origen_id,
+              monto_original_usd, saldo_disponible_usd, status, moneda_origen, tasa_origen,
+              fecha, created_at, updated_at, created_by)
+           VALUES (?, ?, ?, ?, 'NOTA_CREDITO', ?, ?, ?, 'ACTIVO', 'USD', ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(), empresa_id, venta.cliente_id, safcMovIdNcr, ncrId,
+            toStorageString(remanenteALiquidar), toStorageString(remanenteALiquidar),
+            toStorageString(venta.tasa), now, now, now, usuario_id,
           ]
         )
 
@@ -1453,11 +1471,12 @@ export async function crearNotaCredito(
           const safDisponibleRefundAntes = new Decimal(clienteRefundSafcRow.saf_disponible || '0')
           const saldoNuevoRefundSafc = saldoActualRefundSafc.minus(remanenteSafc)
 
+          const safcMovIdRefund = uuidv4()
           await tx.execute(
             `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, doc_origen_id, doc_origen_tipo, tasa_pago)
              VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-              uuidv4(),
+              safcMovIdRefund,
               venta.cliente_id,
               `SAF-NCR-${nroNcr}`,
               toStorageString(remanenteSafc),
@@ -1472,6 +1491,22 @@ export async function crearNotaCredito(
               ncrId,
               'NOTA_CREDITO',
               toStorageString(venta.tasa),
+            ]
+          )
+
+          // PR3 (saf-snapshot-y-trazabilidad, design-v2.md §3/§6): lote de
+          // credito pareado 1:1 con el SAFC del remanente no reembolsado por
+          // tesoreria. `origen_tipo`='NOTA_CREDITO', `origen_id`=ncrId.
+          await tx.execute(
+            `INSERT INTO saf_creditos_lotes
+               (id, empresa_id, cliente_id, movimiento_cuenta_id, origen_tipo, origen_id,
+                monto_original_usd, saldo_disponible_usd, status, moneda_origen, tasa_origen,
+                fecha, created_at, updated_at, created_by)
+             VALUES (?, ?, ?, ?, 'NOTA_CREDITO', ?, ?, ?, 'ACTIVO', 'USD', ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(), empresa_id, venta.cliente_id, safcMovIdRefund, ncrId,
+              toStorageString(remanenteSafc), toStorageString(remanenteSafc),
+              toStorageString(venta.tasa), now, now, now, usuario_id,
             ]
           )
 

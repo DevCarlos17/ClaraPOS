@@ -553,6 +553,48 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       expect(clienteUpdate!.sql).toContain('saf_disponible')
       expect(clienteUpdate!.params).toContain(toStorageString(5))
     })
+
+    it('PR3 (saf-snapshot-y-trazabilidad): inserta UN lote saf_creditos_lotes anclado al SAFC de Paso B, origen_tipo=VENTA, saldo_disponible_usd=monto_original_usd=remainingSaf, status=ACTIVO', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          cliente_id: 'cliente-1',
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-1', moneda: 'USD', monto: 15 })],
+          discrepancy: {
+            mode: 'SAF',
+            montoUsd: 5,
+            montoBs: 200,
+            clienteId: 'cliente-1',
+          },
+        })
+      )
+
+      const safcInsert = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+      )
+      expect(safcInsert).toBeDefined()
+      const safcMovId = safcInsert!.params[0] as string
+
+      const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
+      expect(loteInsert).toBeDefined()
+      expect(loteInsert!.sql).toContain("'VENTA'")
+      expect(loteInsert!.sql).toContain("'ACTIVO'")
+
+      // movimiento_cuenta_id ancla el lote al SAFC recien insertado (coexistencia)
+      expect(loteInsert!.params).toContain(safcMovId)
+      // monto_original_usd = saldo_disponible_usd = remainingSaf ($5)
+      const montoOcurrencias = loteInsert!.params.filter((p) => p === toStorageString(5))
+      expect(montoOcurrencias).toHaveLength(2)
+    })
   })
 
   describe('Defensa en profundidad de `tipo` NO debe corromper ventas ABSORBER/DIFERENCIAL_FALTANTE (CRITICAL, review adversarial pos-aplicar-saf-checkout)', () => {

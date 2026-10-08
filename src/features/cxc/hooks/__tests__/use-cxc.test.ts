@@ -143,6 +143,35 @@ describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no 
     // 20 (anterior) + 15 (excedente) = 35
     expect(clienteUpdate!.params).toContain(toStorageString(35))
   })
+
+  it('PR3 (saf-snapshot-y-trazabilidad): inserta UN lote saf_creditos_lotes anclado al SAFC recien creado, origen_tipo=VENTA, saldo_disponible_usd=monto_original_usd, status=ACTIVO, misma transaccion', async () => {
+    const calls = mockTx({ saldoActual: '0.00000000' })
+
+    await registrarSafExcedente(baseParams({ excedenteUsd: 25, venta_id: 'venta-9', tasa: 36.5 }))
+
+    const safcInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+    )
+    expect(safcInsert).toBeDefined()
+    const safcMovId = safcInsert!.params[0] as string
+
+    const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
+    expect(loteInsert).toBeDefined()
+    expect(loteInsert!.sql).toContain('movimiento_cuenta_id')
+    expect(loteInsert!.sql).toContain("'VENTA'")
+    expect(loteInsert!.sql).toContain("'ACTIVO'")
+
+    // movimiento_cuenta_id ancla el lote al SAFC recien insertado (coexistencia, design-v2.md §3)
+    expect(loteInsert!.params).toContain(safcMovId)
+    // origen_id = venta_id del excedente que origino el credito
+    expect(loteInsert!.params).toContain('venta-9')
+    // monto_original_usd = saldo_disponible_usd = excedente completo (creacion, sin consumo aun)
+    expect(loteInsert!.params).toContain(toStorageString(25))
+    const montoOcurrencias = loteInsert!.params.filter((p) => p === toStorageString(25))
+    expect(montoOcurrencias).toHaveLength(2) // monto_original_usd Y saldo_disponible_usd
+    // tasa_origen fotografia la tasa provista
+    expect(loteInsert!.params).toContain(toStorageString(36.5))
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────

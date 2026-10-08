@@ -2022,6 +2022,7 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
     // El excedente que el cliente pagó de más queda como crédito (saldo negativo)
     const saldoNuevo = saldoActual.minus(excedenteD)
 
+    const safcMovId = uuidv4()
     await tx.execute(
       `INSERT INTO movimientos_cuenta
          (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
@@ -2029,7 +2030,7 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
           moneda_pago, monto_moneda, tasa_pago, saf_origen_refs)
        VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)`,
       [
-        uuidv4(), cliente_id,
+        safcMovId, cliente_id,
         `SAF-CXC-${nro_factura}`,
         toStorageString(excedenteD),
         toStorageString(saldoActual), toStorageString(saldoNuevo),
@@ -2039,6 +2040,24 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
         safOrigenRefs && safOrigenRefs.length > 0
           ? JSON.stringify(safOrigenRefs)
           : JSON.stringify([nro_factura]),
+      ]
+    )
+
+    // PR3 (saf-snapshot-y-trazabilidad, design-v2.md §3/§6): lote de credito
+    // pareado 1:1 con el SAFC recien creado (`movimiento_cuenta_id` ancla la
+    // coexistencia). `saldo_disponible_usd = monto_original_usd` porque el
+    // lote nace sin consumo todavia (consumo vive en PR4). `origen_tipo` =
+    // 'VENTA' porque el excedente viene de un pago a una factura especifica.
+    await tx.execute(
+      `INSERT INTO saf_creditos_lotes
+         (id, empresa_id, cliente_id, movimiento_cuenta_id, origen_tipo, origen_id,
+          monto_original_usd, saldo_disponible_usd, status, moneda_origen, tasa_origen,
+          fecha, created_at, updated_at, created_by)
+       VALUES (?, ?, ?, ?, 'VENTA', ?, ?, ?, 'ACTIVO', 'USD', ?, ?, ?, ?, ?)`,
+      [
+        uuidv4(), empresa_id, cliente_id, safcMovId, venta_id,
+        toStorageString(excedenteD), toStorageString(excedenteD),
+        toStorageString(tasaD), now, now, now, procesado_por,
       ]
     )
 
