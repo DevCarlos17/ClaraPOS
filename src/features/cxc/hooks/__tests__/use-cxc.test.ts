@@ -41,6 +41,7 @@ import {
   registrarPagoFactura,
   registrarAbonoGlobal,
   registrarReversoAbono,
+  consumirSafLotesEnTx,
   useDetalleFactura,
   useAfectacionCxc,
   useEvolucionFactura,
@@ -49,6 +50,7 @@ import {
   type AplicarSaldoFavorParams,
   type PagoFacturaParams,
   type AbonoGlobalParams,
+  type ConsumirSafLotesEnTxParams,
 } from '../use-cxc'
 
 const mockedDb = vi.mocked(db, true)
@@ -184,8 +186,17 @@ describe('aplicarSaldoFavor — gate re-sourced a clientes.saf_disponible (snaps
     saldoActual: string
     safDisponible: string
     facturaSaldoPend: Record<string, string>
+    /**
+     * Lotes SAF activos disponibles para `consumirSafLotesEnTx` (PR4). Default:
+     * un lote unico con saldo suficiente para cubrir `safDisponible` — cubre
+     * todos los tests PRE-EXISTENTES de este describe (que no les interesa el
+     * detalle de lotes, solo que la llamada no lance por falta de cobertura).
+     */
+    lotes?: Array<{ id: string; saldo_disponible_usd: string }>
   }) {
     const calls: Call[] = []
+    const lotesIniciales = opts.lotes ?? [{ id: 'lote-default', saldo_disponible_usd: opts.safDisponible }]
+    const lotesState = new Map(lotesIniciales.map((l) => [l.id, l.saldo_disponible_usd]))
     mockedDb.writeTransaction.mockImplementation(async (callback) => {
       const tx = {
         execute: vi.fn(async (sql: string, params: unknown[] = []) => {
@@ -204,6 +215,15 @@ describe('aplicarSaldoFavor — gate re-sourced a clientes.saf_disponible (snaps
             return saldo !== undefined
               ? { rows: { length: 1, item: () => ({ saldo_pend_usd: saldo }) } }
               : { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('SELECT id, saldo_disponible_usd FROM saf_creditos_lotes')) {
+            const rows = lotesIniciales
+              .filter((l) => Number(lotesState.get(l.id) ?? '0') > 0.0000001)
+              .map((l) => ({ id: l.id, saldo_disponible_usd: lotesState.get(l.id) ?? '0' }))
+            return { rows: { length: rows.length, item: (i: number) => rows[i] } }
+          }
+          if (sql.startsWith('UPDATE saf_creditos_lotes SET saldo_disponible_usd')) {
+            lotesState.set(params[3] as string, params[0] as string)
           }
           return { rows: { length: 0, item: () => undefined } }
         }),
@@ -286,6 +306,37 @@ describe('aplicarSaldoFavor — gate re-sourced a clientes.saf_disponible (snaps
     // 100 (anterior) - 50 (aplicado) = 50
     expect(clienteUpdate!.params).toContain(toStorageString(50))
   })
+
+  it('PR4 (saf-snapshot-y-trazabilidad): 2 facturas aplicadas comparten el pool de lotes FIFO — la 2a factura ve el saldo del lote YA decrementado por la 1a (dentro de la misma writeTransaction)', async () => {
+    const calls = mockTx({
+      saldoActual: '0.00000000',
+      safDisponible: '100.00000000',
+      facturaSaldoPend: { 'venta-1': '30.00000000', 'venta-2': '20.00000000' },
+      lotes: [{ id: 'lote-unico', saldo_disponible_usd: '100.00000000' }],
+    })
+
+    await aplicarSaldoFavor(
+      baseParams({
+        facturas: [
+          { ventaId: 'venta-1', nroFactura: 'F-001', montoAplicarUsd: 30 },
+          { ventaId: 'venta-2', nroFactura: 'F-002', montoAplicarUsd: 20 },
+        ],
+        totalAplicadoUsd: 50,
+      })
+    )
+
+    const aplicaciones = calls.filter((c) => c.sql.startsWith('INSERT INTO saf_creditos_aplicaciones'))
+    expect(aplicaciones).toHaveLength(2)
+    expect(aplicaciones[0]!.params[4]).toBe('venta-1')
+    expect(aplicaciones[0]!.params[6]).toBe(toStorageString(30))
+    expect(aplicaciones[0]!.params[7]).toBe(toStorageString(100)) // lote_saldo_antes
+    expect(aplicaciones[0]!.params[8]).toBe(toStorageString(70)) // lote_saldo_despues
+
+    expect(aplicaciones[1]!.params[4]).toBe('venta-2')
+    expect(aplicaciones[1]!.params[6]).toBe(toStorageString(20))
+    expect(aplicaciones[1]!.params[7]).toBe(toStorageString(70)) // ve el remanente de la 1a llamada
+    expect(aplicaciones[1]!.params[8]).toBe(toStorageString(50))
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -300,8 +351,12 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.s
     safDisponible: string
     facturaSaldoPend: string
     nroFactura?: string
+    /** Lotes SAF activos para `consumirSafLotesEnTx` (PR4). Default: un lote con saldo = safDisponible. */
+    lotes?: Array<{ id: string; saldo_disponible_usd: string }>
   }) {
     const calls: Call[] = []
+    const lotesIniciales = opts.lotes ?? [{ id: 'lote-default', saldo_disponible_usd: opts.safDisponible }]
+    const lotesState = new Map(lotesIniciales.map((l) => [l.id, l.saldo_disponible_usd]))
     mockedDb.writeTransaction.mockImplementation(async (callback) => {
       const tx = {
         execute: vi.fn(async (sql: string, params: unknown[] = []) => {
@@ -321,6 +376,15 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.s
                 item: () => ({ nro_factura: opts.nroFactura ?? 'F-001', saldo_pend_usd: opts.facturaSaldoPend }),
               },
             }
+          }
+          if (sql.startsWith('SELECT id, saldo_disponible_usd FROM saf_creditos_lotes')) {
+            const rows = lotesIniciales
+              .filter((l) => Number(lotesState.get(l.id) ?? '0') > 0.0000001)
+              .map((l) => ({ id: l.id, saldo_disponible_usd: lotesState.get(l.id) ?? '0' }))
+            return { rows: { length: rows.length, item: (i: number) => rows[i] } }
+          }
+          if (sql.startsWith('UPDATE saf_creditos_lotes SET saldo_disponible_usd')) {
+            lotesState.set(params[3] as string, params[0] as string)
           }
           return { rows: { length: 0, item: () => undefined } }
         }),
@@ -395,6 +459,33 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.s
     // 80 (anterior) - 50 (montoSaf) = 30
     expect(clienteUpdate!.params).toContain(toStorageString(30))
   })
+
+  it('PR4 (saf-snapshot-y-trazabilidad): montoSaf que cruza 2 lotes genera 2 filas saf_creditos_aplicaciones, ambas pareadas con el SAF recien creado', async () => {
+    const calls = mockTx({
+      saldoActual: '0.00000000',
+      safDisponible: '80.00000000',
+      facturaSaldoPend: '50.00000000',
+      lotes: [
+        { id: 'lote-viejo', saldo_disponible_usd: '30.00000000' },
+        { id: 'lote-nuevo', saldo_disponible_usd: '50.00000000' },
+      ],
+    })
+
+    await registrarPagoFactura(baseParams({ montoSaf: 50 }))
+
+    const safInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAF'"))
+    const safMovId = safInsert!.params[0] as string
+
+    const aplicaciones = calls.filter((c) => c.sql.startsWith('INSERT INTO saf_creditos_aplicaciones'))
+    expect(aplicaciones).toHaveLength(2)
+    expect(aplicaciones[0]!.params[3]).toBe('lote-viejo')
+    expect(aplicaciones[0]!.params[6]).toBe(toStorageString(30)) // lote-viejo agotado
+    expect(aplicaciones[1]!.params[3]).toBe('lote-nuevo')
+    expect(aplicaciones[1]!.params[6]).toBe(toStorageString(20)) // resto: 50 - 30 = 20
+
+    expect(aplicaciones[0]!.params[5]).toBe(safMovId)
+    expect(aplicaciones[1]!.params[5]).toBe(safMovId)
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -406,13 +497,26 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.s
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de saf_disponible', () => {
-  function mockTx(opts: { saldoActual: string; safDisponible: string }) {
+  function mockTx(opts: {
+    saldoActual: string
+    safDisponible: string
+    /** Facturas pendientes que el pre-step SAF distribuye FIFO. Default: ninguna (comportamiento pre-existente). */
+    facturasSaf?: Array<{ id: string; nro_factura: string; saldo_pend_usd: string }>
+    /** Lotes SAF activos para la cascada 2D (`consumirSafLotesEnTx`, PR4). Default: un lote con saldo = safDisponible. */
+    lotes?: Array<{ id: string; saldo_disponible_usd: string }>
+  }) {
     const calls: Call[] = []
+    const facturas = opts.facturasSaf ?? []
+    const lotesIniciales = opts.lotes ?? [{ id: 'lote-default', saldo_disponible_usd: opts.safDisponible }]
+    const lotesState = new Map(lotesIniciales.map((l) => [l.id, l.saldo_disponible_usd]))
     mockedDb.writeTransaction.mockImplementation(async (callback) => {
       const tx = {
         execute: vi.fn(async (sql: string, params: unknown[] = []) => {
           calls.push({ sql, params })
-          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1')) {
+          // Prefijo comun a ambas lecturas de cliente de esta funcion: el gate del
+          // SAF pre-step ('...WHERE id = ? LIMIT 1') y el nuevo paso 5 (bug fix,
+          // PR4, '...WHERE id = ?' sin LIMIT) — mismo shape de fila para ambas.
+          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?')) {
             return {
               rows: {
                 length: 1,
@@ -421,7 +525,20 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
             }
           }
           if (sql.startsWith('SELECT id, nro_factura, saldo_pend_usd FROM ventas')) {
-            return { rows: { length: 0, item: () => undefined } }
+            return { rows: { length: facturas.length, item: (i: number) => facturas[i] } }
+          }
+          if (sql.startsWith('SELECT id, saldo_disponible_usd FROM saf_creditos_lotes')) {
+            const rows = lotesIniciales
+              .filter((l) => Number(lotesState.get(l.id) ?? '0') > 0.0000001)
+              .map((l) => ({ id: l.id, saldo_disponible_usd: lotesState.get(l.id) ?? '0' }))
+            return { rows: { length: rows.length, item: (i: number) => rows[i] } }
+          }
+          if (sql.startsWith('UPDATE saf_creditos_lotes SET saldo_disponible_usd')) {
+            lotesState.set(params[3] as string, params[0] as string)
+          }
+          if (sql.startsWith('SELECT id FROM monedas WHERE codigo_iso = ?')) {
+            const codigo = params[0] as string
+            return { rows: { length: 1, item: () => ({ id: codigo === 'VES' ? 'moneda-bs' : 'moneda-usd' }) } }
           }
           return { rows: { length: 0, item: () => undefined } }
         }),
@@ -456,6 +573,254 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
     expect(clienteUpdate!.sql).toContain('saf_disponible')
     // 80 (anterior) - 50 (montoSaf) = 30
     expect(clienteUpdate!.params).toContain(toStorageString(30))
+  })
+
+  it('cascada 2D (tasks-v2.md 5.1, PR4): 2 lotes x 3 facturas — SUM(aplicaciones.monto_aplicado_usd) = monto SAF total, split exacto por combo lote x factura, FIFO de lotes dentro de cada factura', async () => {
+    const calls = mockTx({
+      saldoActual: '-100.00000000',
+      safDisponible: '100.00000000',
+      facturasSaf: [
+        { id: 'fac-1', nro_factura: 'F-001', saldo_pend_usd: '20.00000000' },
+        { id: 'fac-2', nro_factura: 'F-002', saldo_pend_usd: '30.00000000' },
+        { id: 'fac-3', nro_factura: 'F-003', saldo_pend_usd: '50.00000000' },
+      ],
+      lotes: [
+        { id: 'lote-A', saldo_disponible_usd: '60.00000000' },
+        { id: 'lote-B', saldo_disponible_usd: '50.00000000' },
+      ],
+    })
+
+    await registrarAbonoGlobal(baseParams({ montoSaf: 90 }))
+
+    const aplicaciones = calls.filter((c) => c.sql.startsWith('INSERT INTO saf_creditos_aplicaciones'))
+    // 4 combos tocados: (A,fac-1) (A,fac-2) (A,fac-3) (B,fac-3) — fac-3 cruza 2 lotes
+    expect(aplicaciones).toHaveLength(4)
+
+    const sumaTotal = aplicaciones.reduce((acc, c) => acc + Number(c.params[6]), 0)
+    expect(sumaTotal).toBeCloseTo(90, 8)
+
+    // Columnas: id, empresa_id, cliente_id, lote_id, venta_id, movimiento_cuenta_id,
+    // monto_aplicado_usd, lote_saldo_antes_usd, lote_saldo_despues_usd, tasa_pago, fecha, created_by
+    expect(aplicaciones[0]!.params[3]).toBe('lote-A')
+    expect(aplicaciones[0]!.params[4]).toBe('fac-1')
+    expect(aplicaciones[0]!.params[6]).toBe(toStorageString(20))
+
+    expect(aplicaciones[1]!.params[3]).toBe('lote-A')
+    expect(aplicaciones[1]!.params[4]).toBe('fac-2')
+    expect(aplicaciones[1]!.params[6]).toBe(toStorageString(30))
+
+    // fac-3 necesita $40 (90 - 20 - 30); lote-A solo le quedan $10 (60-20-30) -> se agota y cruza a lote-B
+    expect(aplicaciones[2]!.params[3]).toBe('lote-A')
+    expect(aplicaciones[2]!.params[4]).toBe('fac-3')
+    expect(aplicaciones[2]!.params[6]).toBe(toStorageString(10))
+
+    expect(aplicaciones[3]!.params[3]).toBe('lote-B')
+    expect(aplicaciones[3]!.params[4]).toBe('fac-3')
+    expect(aplicaciones[3]!.params[6]).toBe(toStorageString(30))
+
+    // Todas las aplicaciones comparten el MISMO movimiento_cuenta_id (el SAF
+    // unico del abono global) — venta_id por fila es lo que cierra el "blind
+    // spot" de trazabilidad (design-v2.md Pregunta 9): antes
+    // movimientos_cuenta.venta_id=NULL para este caso, ahora cada aplicacion
+    // apunta a su factura real.
+    const movCuentaIds = new Set(aplicaciones.map((c) => c.params[5]))
+    expect(movCuentaIds.size).toBe(1)
+  })
+
+  it('bug fix (design-v2.md Pregunta 5): excedente de efectivo tras FIFO de facturas se promueve a credito real (SAFC + lote), ya NO se evapora con Decimal.max(0,...)', async () => {
+    const calls = mockTx({
+      saldoActual: '50.00000000',
+      safDisponible: '0.00000000',
+      facturasSaf: [
+        { id: 'fac-1', nro_factura: 'F-001', saldo_pend_usd: '30.00000000' },
+        { id: 'fac-2', nro_factura: 'F-002', saldo_pend_usd: '20.00000000' },
+      ],
+    })
+
+    const result = await registrarAbonoGlobal(baseParams({ aplicarSaf: false, montoSaf: undefined, monto: 70 }))
+
+    expect(result.facturasAfectadas).toBe(2)
+
+    // El PAG se escribe SOLO por lo realmente aplicado a facturas reales (50),
+    // NO por el monto total pagado (70) — ya no absorbe el excedente.
+    const pagInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'PAG'"))
+    expect(pagInsert).toBeDefined()
+    expect(pagInsert!.params[3]).toBe(toStorageString(50)) // monto = aplicado a facturas
+    expect(pagInsert!.params[5]).toBe(toStorageString(0)) // saldo_nuevo = 50 - 50, SIN floor artificial
+
+    // El excedente ($20) se promueve: SAFC + lote, NO se evapora.
+    const safcInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'"))
+    expect(safcInsert).toBeDefined()
+    expect(safcInsert!.params[4]).toBe(toStorageString(20)) // monto = excedente
+    expect(safcInsert!.params[6]).toBe(toStorageString(-20)) // saldo_nuevo = 0 (post-PAG) - 20 = credito real visible
+
+    const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
+    expect(loteInsert).toBeDefined()
+    expect(loteInsert!.sql).toContain("'PAGO'")
+    const safcMovId = safcInsert!.params[0] as string
+    expect(loteInsert!.params).toContain(safcMovId)
+
+    // origen_id = pagoAnticipoId (la fila `pagos` sin venta_id que ya se crea hoy)
+    const anticipoPago = calls.find((c) => c.sql.startsWith('INSERT INTO pagos') && c.params[1] === null)
+    expect(anticipoPago).toBeDefined()
+    const pagoAnticipoId = anticipoPago!.params[0] as string
+    expect(loteInsert!.params).toContain(pagoAnticipoId)
+
+    // Escritura optimista pareada final: saf_disponible sube por el excedente
+    const clienteUpdates = calls.filter((c) => c.sql.startsWith('UPDATE clientes SET'))
+    const ultimoUpdate = clienteUpdates[clienteUpdates.length - 1]!
+    expect(ultimoUpdate.sql).toContain('saf_disponible')
+    expect(ultimoUpdate.params).toContain(toStorageString(20)) // 0 (antes) + 20 (excedente)
+  })
+
+  it('regresion (comportamiento default sin cambios): monto cash == deuda exacta, sin excedente -> NO crea SAFC/lote', async () => {
+    const calls = mockTx({
+      saldoActual: '50.00000000',
+      safDisponible: '0.00000000',
+      facturasSaf: [{ id: 'fac-1', nro_factura: 'F-001', saldo_pend_usd: '50.00000000' }],
+    })
+
+    await registrarAbonoGlobal(baseParams({ aplicarSaf: false, montoSaf: undefined, monto: 50 }))
+
+    const safcInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'"))
+    expect(safcInsert).toBeUndefined()
+
+    const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
+    expect(loteInsert).toBeUndefined()
+
+    const pagInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'PAG'"))
+    expect(pagInsert).toBeDefined()
+    expect(pagInsert!.params[3]).toBe(toStorageString(50)) // monto = aplicado = total, sin cambio
+  })
+
+  it('guard CHECK (monto > 0): cliente SIN facturas pendientes + pago completo cae como excedente -> NO escribe PAG con monto=0 (violaria movimientos_cuenta CHECK, migrations/0006), el 100% se promueve directo a SAFC+lote', async () => {
+    const calls = mockTx({
+      saldoActual: '0.00000000',
+      safDisponible: '0.00000000',
+      facturasSaf: [], // sin facturas pendientes
+    })
+
+    await registrarAbonoGlobal(baseParams({ aplicarSaf: false, montoSaf: undefined, monto: 30 }))
+
+    const pagInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'PAG'"))
+    expect(pagInsert).toBeUndefined() // nunca se escribe PAG con monto=0
+
+    const safcInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'"))
+    expect(safcInsert).toBeDefined()
+    expect(safcInsert!.params[4]).toBe(toStorageString(30)) // excedente completo
+    expect(safcInsert!.params[5]).toBe(toStorageString(0)) // saldo_anterior del SAFC = saldoActual sin tocar (0, PAG se salto)
+    expect(safcInsert!.params[6]).toBe(toStorageString(-30)) // saldo_nuevo = credito real
+
+    const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
+    expect(loteInsert).toBeDefined()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// consumirSafLotesEnTx (PR4, saf-snapshot-y-trazabilidad Fase 4) — helper
+// compartido por los 3 sitios de consumo SAF. Tests directos sobre la
+// funcion exportada (el llamador ya provee `tx`, no abre su propia
+// writeTransaction) para cubrir el algoritmo de cascada FIFO en aislamiento.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('consumirSafLotesEnTx — cascada FIFO de lotes (PR4)', () => {
+  function makeTx(opts: { lotes: Array<{ id: string; saldo_disponible_usd: string }> }) {
+    const calls: Call[] = []
+    const lotesState = new Map(opts.lotes.map((l) => [l.id, l.saldo_disponible_usd]))
+    const tx = {
+      execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params })
+        if (sql.startsWith('SELECT id, saldo_disponible_usd FROM saf_creditos_lotes')) {
+          const rows = opts.lotes
+            .filter((l) => Number(lotesState.get(l.id) ?? '0') > 0.0000001)
+            .map((l) => ({ id: l.id, saldo_disponible_usd: lotesState.get(l.id) ?? '0' }))
+          return { rows: { length: rows.length, item: (i: number) => rows[i] } }
+        }
+        if (sql.startsWith('UPDATE saf_creditos_lotes SET saldo_disponible_usd')) {
+          lotesState.set(params[3] as string, params[0] as string)
+        }
+        return { rows: { length: 0, item: () => undefined } }
+      }),
+    } as unknown as Transaction
+    return { tx, calls, lotesState }
+  }
+
+  function baseParams(overrides: Partial<ConsumirSafLotesEnTxParams> = {}): ConsumirSafLotesEnTxParams {
+    return {
+      empresaId: 'emp-1',
+      clienteId: 'cliente-1',
+      ventaId: 'venta-1',
+      movimientoCuentaId: 'mov-1',
+      montoUsd: 10,
+      tasaPago: 40,
+      fecha: '2026-10-08T00:00:00-04:00',
+      now: '2026-10-08T00:00:00-04:00',
+      usuarioId: 'user-1',
+      ...overrides,
+    }
+  }
+
+  it('1 factura consume de 3 lotes FIFO (orden de llegada): 3 filas saf_creditos_aplicaciones, suma = monto total, snapshot antes/despues correcto por fila', async () => {
+    const { tx, calls } = makeTx({
+      lotes: [
+        { id: 'lote-A', saldo_disponible_usd: '5.00000000' },
+        { id: 'lote-B', saldo_disponible_usd: '3.00000000' },
+        { id: 'lote-C', saldo_disponible_usd: '20.00000000' },
+      ],
+    })
+
+    await consumirSafLotesEnTx(tx, baseParams({ montoUsd: 10 }))
+
+    const inserts = calls.filter((c) => c.sql.startsWith('INSERT INTO saf_creditos_aplicaciones'))
+    expect(inserts).toHaveLength(3)
+
+    expect(inserts[0]!.params[3]).toBe('lote-A')
+    expect(inserts[0]!.params[6]).toBe(toStorageString(5)) // lote-A agotado
+    expect(inserts[1]!.params[3]).toBe('lote-B')
+    expect(inserts[1]!.params[6]).toBe(toStorageString(3)) // lote-B agotado
+    expect(inserts[2]!.params[3]).toBe('lote-C')
+    expect(inserts[2]!.params[6]).toBe(toStorageString(2)) // resto: 10 - 5 - 3 = 2
+
+    const sumaAplicada = inserts.reduce((acc, c) => acc + Number(c.params[6]), 0)
+    expect(sumaAplicada).toBeCloseTo(10, 8)
+  })
+
+  it('1 lote dividido entre 3 facturas (llamadas secuenciales dentro de la misma tx): cada llamada ve el saldo YA decrementado por la anterior (escritura optimista local, SQLite no corre el trigger Postgres)', async () => {
+    const { tx, calls } = makeTx({ lotes: [{ id: 'lote-unico', saldo_disponible_usd: '10.00000000' }] })
+
+    await consumirSafLotesEnTx(tx, baseParams({ ventaId: 'venta-1', montoUsd: 4 }))
+    await consumirSafLotesEnTx(tx, baseParams({ ventaId: 'venta-2', montoUsd: 4 }))
+    await consumirSafLotesEnTx(tx, baseParams({ ventaId: 'venta-3', montoUsd: 2 }))
+
+    const inserts = calls.filter((c) => c.sql.startsWith('INSERT INTO saf_creditos_aplicaciones'))
+    expect(inserts).toHaveLength(3)
+
+    expect(inserts[0]!.params[4]).toBe('venta-1')
+    expect(inserts[0]!.params[6]).toBe(toStorageString(4))
+    expect(inserts[0]!.params[7]).toBe(toStorageString(10)) // lote_saldo_antes
+    expect(inserts[0]!.params[8]).toBe(toStorageString(6)) // lote_saldo_despues
+
+    expect(inserts[1]!.params[4]).toBe('venta-2')
+    expect(inserts[1]!.params[7]).toBe(toStorageString(6))
+    expect(inserts[1]!.params[8]).toBe(toStorageString(2))
+
+    expect(inserts[2]!.params[4]).toBe('venta-3')
+    expect(inserts[2]!.params[7]).toBe(toStorageString(2))
+    expect(inserts[2]!.params[8]).toBe(toStorageString(0))
+  })
+
+  it('reconciliacion/overdraft: si el total de lotes activos no cubre el monto solicitado, lanza (defensa en profundidad — mirror del guard SQL del trigger)', async () => {
+    const { tx } = makeTx({ lotes: [{ id: 'lote-chico', saldo_disponible_usd: '5.00000000' }] })
+
+    await expect(consumirSafLotesEnTx(tx, baseParams({ montoUsd: 100 }))).rejects.toThrow(/insuficiente/i)
+  })
+
+  it('monto 0: no-op, cero INSERTs (defensa adicional; los sitios de llamada ya validan monto > 0 antes de invocar)', async () => {
+    const { tx, calls } = makeTx({ lotes: [{ id: 'lote-A', saldo_disponible_usd: '5' }] })
+
+    await consumirSafLotesEnTx(tx, baseParams({ montoUsd: 0 }))
+
+    expect(calls.filter((c) => c.sql.startsWith('INSERT INTO saf_creditos_aplicaciones'))).toHaveLength(0)
   })
 })
 
