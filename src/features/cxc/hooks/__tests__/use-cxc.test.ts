@@ -45,6 +45,7 @@ import {
   useDetalleFactura,
   useAfectacionCxc,
   useEvolucionFactura,
+  useSafAplicacionesFactura,
   useClientesConDeuda,
   type RegistrarSafExcedenteParams,
   type AplicarSaldoFavorParams,
@@ -1149,5 +1150,71 @@ describe('useEvolucionFactura (movimientos_cuenta PAG/REV/SAFC, pre-agrupado por
 
     expect(result.current.saldoAFavor).toEqual([])
     expect(result.current.abonos).toHaveLength(1)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// useSafAplicacionesFactura — PR5 read-path (design-v2.md §9, Pregunta 9).
+// Reemplaza `movimientos_cuenta WHERE venta_id AND tipo='SAF'` por
+// `saf_creditos_aplicaciones WHERE venta_id=?` — cierra el blind spot de
+// `registrarAbonoGlobal` (fila SAF ancla con venta_id=NULL).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('useSafAplicacionesFactura (saf_creditos_aplicaciones WHERE venta_id, PR5 read-path)', () => {
+  it('sin ventaId: no ejecuta la query (sql vacio) y retorna lista vacia', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    const { result } = renderHook(() => useSafAplicacionesFactura(null))
+
+    expect(mockedUseQuery).toHaveBeenCalledWith('', [])
+    expect(result.current.safAplicaciones).toEqual([])
+  })
+
+  it('con ventaId: consulta saf_creditos_aplicaciones (no movimientos_cuenta.tipo=SAF) filtrando por sca.venta_id', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    renderHook(() => useSafAplicacionesFactura('venta-1'))
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]
+    expect(sql).toContain('FROM saf_creditos_aplicaciones sca')
+    expect(sql).toContain('WHERE sca.venta_id = ?')
+    expect(sql).not.toContain("tipo = 'SAF'")
+    expect(sql).toContain('JOIN movimientos_cuenta mc ON mc.id = sca.movimiento_cuenta_id')
+    expect(params).toEqual(['venta-1'])
+  })
+
+  it('1 aplicacion: mapea monto_aplicado_usd -> monto y trae referencia/saf_origen_refs via JOIN', () => {
+    mockedUseQuery.mockReturnValue({
+      data: [
+        { id: 'sca-1', referencia: 'SAF-0001', monto: '30.00000000', fecha: '2026-02-01', saf_origen_refs: '["VTA-100"]' },
+      ],
+      isLoading: false,
+    } as never)
+
+    const { result } = renderHook(() => useSafAplicacionesFactura('venta-1'))
+
+    expect(result.current.safAplicaciones).toHaveLength(1)
+    expect(result.current.safAplicaciones[0]).toMatchObject({
+      id: 'sca-1',
+      referencia: 'SAF-0001',
+      monto: '30.00000000',
+      saf_origen_refs: '["VTA-100"]',
+    })
+  })
+
+  it('abono-global cruzando 2 lotes: retorna 2 filas de aplicacion para la MISMA factura (antes invisible via movimientos_cuenta.venta_id=NULL)', () => {
+    mockedUseQuery.mockReturnValue({
+      data: [
+        { id: 'sca-1', referencia: 'ABG-0001', monto: '20.00000000', fecha: '2026-02-01', saf_origen_refs: null },
+        { id: 'sca-2', referencia: 'ABG-0001', monto: '15.00000000', fecha: '2026-02-01', saf_origen_refs: null },
+      ],
+      isLoading: false,
+    } as never)
+
+    const { result } = renderHook(() => useSafAplicacionesFactura('venta-2'))
+
+    expect(result.current.safAplicaciones).toHaveLength(2)
+    const total = result.current.safAplicaciones.reduce((sum, r) => sum + parseFloat(r.monto), 0)
+    expect(total).toBe(35)
   })
 })

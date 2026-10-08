@@ -381,6 +381,40 @@ export function useVencimientosVenta(ventaId: string | null) {
   return { vencimientos: (data ?? []) as VencimientoVenta[], isLoading }
 }
 
+export interface SafAplicacionFacturaCxc {
+  id: string
+  referencia: string | null
+  monto: string
+  fecha: string
+  saf_origen_refs: string | null
+}
+
+/**
+ * Aplicaciones de saldo a favor (SAF) a una factura especifica, leidas desde
+ * `saf_creditos_aplicaciones` (design-v2.md §4/§9, Pregunta 9 — reemplaza el
+ * `SELECT ... FROM movimientos_cuenta WHERE venta_id = ? AND tipo = 'SAF'`
+ * anterior). Usa `idx_saf_aplic_venta` (venta_id de la APLICACION, no del
+ * movimiento_cuenta ancla) — por eso ya no es ciego al caso
+ * `registrarAbonoGlobal`, donde la fila `movimientos_cuenta` tipo='SAF' tiene
+ * `venta_id=NULL` (un solo evento puede repartirse entre varias facturas)
+ * pero cada fila `saf_creditos_aplicaciones` sí trae su propio `venta_id`.
+ * JOIN a `movimientos_cuenta` solo para `referencia`/`saf_origen_refs`
+ * (columnas que no se duplican en la tabla de aplicaciones).
+ */
+export function useSafAplicacionesFactura(ventaId: string | null) {
+  const { data, isLoading } = useQuery(
+    ventaId
+      ? `SELECT sca.id, mc.referencia, sca.monto_aplicado_usd as monto, sca.fecha, mc.saf_origen_refs
+         FROM saf_creditos_aplicaciones sca
+         JOIN movimientos_cuenta mc ON mc.id = sca.movimiento_cuenta_id
+         WHERE sca.venta_id = ?
+         ORDER BY sca.fecha ASC, sca.created_at ASC`
+      : '',
+    ventaId ? [ventaId] : []
+  )
+  return { safAplicaciones: (data ?? []) as SafAplicacionFacturaCxc[], isLoading }
+}
+
 /**
  * Pagos realizados a una factura
  */

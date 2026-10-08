@@ -66,7 +66,7 @@ Chain strategy: stacked-to-main
 
 ## Phase 6: Read Path + UX-Unchanged Verification
 
-- [ ] 6.1 `factura-detalle-cxc.tsx` (~L194-202): replace `movimientos_cuenta WHERE venta_id AND tipo='SAF'` with `saf_creditos_aplicaciones WHERE venta_id=? ORDER BY fecha` (`idx_saf_aplic_venta`); fixes blind spot for abono-global (`venta_id` was NULL there)
-- [ ] 6.2 Test: invoice touched only via abono-global now shows "SAF aplicado"
-- [ ] 6.3 Checklist: POS gen/apply, CxC abono gen/apply, cuadre, invoice-list flag, SAF-vs-pending display — identical to pre-change UX (design-v2 §9)
-- [ ] 6.4 Staging spot-check: `monto_original_usd - SUM(aplicaciones) = saldo_disponible_usd` for all lotes after test writes
+- [x] 6.1 `factura-detalle-cxc.tsx` (~L194-202): replace `movimientos_cuenta WHERE venta_id AND tipo='SAF'` with `saf_creditos_aplicaciones WHERE venta_id=? ORDER BY fecha` (`idx_saf_aplic_venta`); fixes blind spot for abono-global (`venta_id` was NULL there). Implemented as a new hook `useSafAplicacionesFactura` in `use-cxc.ts` (matches existing hook-per-query convention, e.g. `useVencimientosVenta`), consumed by the component — not an inline query swap, to keep the read testable in isolation.
+- [x] 6.2 Test: invoice touched only via abono-global now shows "SAF aplicado" — `use-cxc.test.ts` describe `useSafAplicacionesFactura`, case "abono-global cruzando 2 lotes: retorna 2 filas de aplicacion para la MISMA factura (antes invisible via movimientos_cuenta.venta_id=NULL)"
+- [x] 6.3 Checklist: POS gen/apply, CxC abono gen/apply, cuadre, invoice-list flag, SAF-vs-pending display — identical to pre-change UX (design-v2 §9). See apply-progress / PR5 report for the full flow-by-flow table.
+- [ ] 6.4 Staging spot-check: `monto_original_usd - SUM(aplicaciones) = saldo_disponible_usd` for all lotes after test writes — requires live Supabase ClaraPos-Staging credentials, not available in this session (same constraint noted in design-v2.md §10 for 0101-0105). Owner-performed; exact SQL provided in PR5 report.
