@@ -8,7 +8,7 @@ import { usdToBs, bsToUsd, toStorageString } from '@/lib/currency'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosVenta, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import { connector } from '@/core/db/powersync/connector'
-import { aplicarPagoFacturaEnTx } from '@/features/cxc/hooks/use-cxc'
+import { aplicarPagoFacturaEnTx, consumirSafLotesEnTx } from '@/features/cxc/hooks/use-cxc'
 import { calcularSafDisponibleNuevo } from '@/features/cxc/lib/saldo-cliente'
 import { buildStockPorDepositoFragments, resolveDepositoEgresoVenta } from '../lib/deposito-venta'
 import { calcularCierreVentaConSaf } from '../lib/calcular-cierre-venta-saf'
@@ -1012,6 +1012,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
         // INSERT movimiento_cuenta tipo='SAF' — referencia de trazabilidad apunta a esta venta
         const safOrigenRefsWithVenta = safOrigenRefs.length > 0 ? safOrigenRefs : [ventaId]
+        const safMovIdVenta = uuidv4()
         await tx.execute(
           `INSERT INTO movimientos_cuenta
              (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
@@ -1019,7 +1020,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               moneda_pago, monto_moneda, tasa_pago, saf_origen_refs, sesion_caja_id)
            VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?)`,
           [
-            uuidv4(), empresa_id, safClienteId,
+            safMovIdVenta, empresa_id, safClienteId,
             `SAF-VTA-${nroFactura}`,
             toStorageString(safAplicadoUsd),
             toStorageString(saldoAntesSaf),
@@ -1043,6 +1044,21 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?',
           [toStorageString(saldoDespuesSaf), toStorageString(safDisponibleDespues), now, safClienteId]
         )
+
+        // PR4 (saf-snapshot-y-trazabilidad Fase 4): consumir lotes FIFO, 1..N
+        // filas saf_creditos_aplicaciones pareadas con el SAF recien creado
+        // arriba — POS "SAF como metodo de pago" (design-v2.md §6/§9).
+        await consumirSafLotesEnTx(tx, {
+          empresaId: empresa_id,
+          clienteId: safClienteId,
+          ventaId,
+          movimientoCuentaId: safMovIdVenta,
+          montoUsd: safAplicadoUsd,
+          tasaPago: tasa,
+          fecha: now,
+          now,
+          usuarioId: usuario_id,
+        })
       }
     }
 

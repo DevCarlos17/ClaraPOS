@@ -8,7 +8,11 @@ import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-con
 import { generarAsientosPagoCxC, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import Decimal from 'decimal.js'
 import { bsToUsd, usdToBs, toStorageString } from '@/lib/currency'
-import { calcularSaldoNuevoMovimientoCuenta, calcularSafDisponibleNuevo } from '@/features/cxc/lib/saldo-cliente'
+import {
+  calcularSaldoNuevoMovimientoCuenta,
+  calcularSafDisponibleNuevo,
+  calcularSaldoLoteDespues,
+} from '@/features/cxc/lib/saldo-cliente'
 
 export interface VentaPendiente {
   id: string
@@ -733,6 +737,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
       // 3. INSERT movimiento_cuenta tipo='SAF'
       const saldoAntesSaf = saldoActualSaf
       const saldoDespuesSaf = saldoActualSaf.plus(montoSaf)
+      const safMovId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_cuenta
            (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
@@ -740,7 +745,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
             moneda_pago, monto_moneda, tasa_pago, saf_origen_refs)
          VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)`,
         [
-          uuidv4(), empresa_id, cliente_id,
+          safMovId, empresa_id, cliente_id,
           `SAF-CXC-${ventaSaf.nro_factura}`,
           toStorageString(montoSaf),
           toStorageString(saldoAntesSaf),
@@ -761,14 +766,27 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
       ])
 
       // 5. Update cliente saldo_actual (consume SAF credit). Escritura
-      // optimista pareada de saf_disponible — mismo writeTransaction, cero
-      // round trips extra. El trigger del servidor (migration 0102) es la
-      // autoridad final al reconectar (PATCH stripea esta columna, ver
-      // connector.ts TRIGGER_MANAGED_PATCH_COLUMNS).
+      // optimista pareada de saf_disponible — mismo writeTransaction, el
+      // trigger del servidor (migration 0102) es la autoridad final al
+      // reconectar.
       const safDisponibleNuevo = calcularSafDisponibleNuevo('SAF', creditoSafDisponible, montoSaf)
       await tx.execute('UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?', [
         toStorageString(saldoDespuesSaf), toStorageString(safDisponibleNuevo), now, cliente_id,
       ])
+
+      // PR4 (saf-snapshot-y-trazabilidad Fase 4): consumir lotes FIFO, 1..N
+      // filas saf_creditos_aplicaciones pareadas con el SAF recien creado.
+      await consumirSafLotesEnTx(tx, {
+        empresaId: empresa_id,
+        clienteId: cliente_id,
+        ventaId: venta_id,
+        movimientoCuentaId: safMovId,
+        montoUsd: montoSaf,
+        tasaPago: tasaD,
+        fecha: fechaDoc,
+        now,
+        usuarioId: procesado_por,
+      })
     }
 
     // Process remaining payment via payment method (if any)
@@ -828,6 +846,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       const saldoDespuesSaf = saldoActualSaf.plus(montoSaf)
 
       // INSERT movimiento_cuenta tipo='SAF' for the global abono
+      const safMovId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_cuenta
            (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
@@ -835,7 +854,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
             moneda_pago, monto_moneda, tasa_pago, saf_origen_refs)
          VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'USD', ?, ?, ?)`,
         [
-          uuidv4(), empresa_id, cliente_id,
+          safMovId, empresa_id, cliente_id,
           'SAF-ABONO-GLOBAL',
           toStorageString(montoSaf),
           toStorageString(saldoAntesSaf),
@@ -848,7 +867,19 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         ]
       )
 
-      // Distribute SAF across pending invoices (FIFO)
+      // Distribute SAF across pending invoices (FIFO) — cascada 2D
+      // (design-v2.md §6, tasks-v2.md 5.1/5.2): por cada factura tocada en
+      // este eje, `consumirSafLotesEnTx` corre su PROPIO FIFO de lotes (el
+      // otro eje), generando 1..N filas `saf_creditos_aplicaciones` por
+      // combinacion lote×factura. El pool de lotes se actualiza de forma
+      // optimista DENTRO de cada llamada (ver docstring del helper), por lo
+      // que llamadas sucesivas en este mismo bucle ya ven el saldo
+      // remanente correcto — sin necesidad de un segundo bucle anidado
+      // explicito aqui. Todas las filas de aplicacion comparten el MISMO
+      // `safMovId` (el SAF unico de este abono) pero cada una lleva su
+      // propio `venta_id` real — esto es lo que cierra el "blind spot" de
+      // trazabilidad (Pregunta 9): antes `movimientos_cuenta.venta_id=NULL`
+      // para este caso, ahora cada aplicacion apunta a su factura real.
       const facturasSafRes = await tx.execute(
         `SELECT id, nro_factura, saldo_pend_usd FROM ventas
          WHERE cliente_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
@@ -865,6 +896,19 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
             toStorageString(nuevoSaldoFSaf), fSaf.id,
           ])
+
+          await consumirSafLotesEnTx(tx, {
+            empresaId: empresa_id,
+            clienteId: cliente_id,
+            ventaId: fSaf.id,
+            movimientoCuentaId: safMovId,
+            montoUsd: aplicarSaf,
+            tasaPago: tasaD,
+            fecha: now,
+            now,
+            usuarioId: procesado_por,
+          })
+
           montoSafRestante = montoSafRestante.minus(aplicarSaf)
         }
       }
@@ -985,9 +1029,12 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       }
     }
 
-    // 4. Si sobra monto, crear pago sin factura (anticipo)
+    // 4. Si sobra monto, crear pago sin factura (anticipo). Este `pagos` se
+    // PROMUEVE a credito real en el paso 5b (bug fix, design-v2.md Pregunta
+    // 5) — se captura `pagoAnticipoId` para anclar el `origen_id` del lote.
+    let pagoAnticipoId: string | null = null
     if (montoRestante.gt(new Decimal('0.01'))) {
-      const pagoAnticipoId = uuidv4()
+      pagoAnticipoId = uuidv4()
       const montoRestanteNativo = moneda === 'BS' ? montoRestante.times(tasaD) : montoRestante
       await tx.execute(
         `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
@@ -1014,49 +1061,118 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
 
     montoAplicado = montoTotalUsd.toNumber()
 
-    // 5. Crear UN SOLO movimiento_cuenta (tipo PAG) por el total
-    const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
+    // 5. Crear movimiento_cuenta (tipo PAG) SOLO por el monto realmente
+    // aplicado a facturas reales via FIFO (bug fix, design-v2.md Pregunta 5):
+    // ANTES este monto era `montoTotalUsd` completo (incluyendo el
+    // excedente) y `saldoNuevo` se floreaba con `Decimal.max(0, ...)`,
+    // perdiendo SILENCIOSAMENTE el credito cuando el cliente pagaba de mas.
+    // `calcularSaldoNuevoMovimientoCuenta('PAG', ...)` ya NO floorea (mismo
+    // patron que `aplicarPagoFacturaEnTx`) — el excedente se promueve por
+    // separado a SAFC+lote en el paso 5b, nunca se evapora.
+    const montoAplicadoFacturas = montoTotalUsd.minus(montoRestante)
+    const clienteResult = await tx.execute('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?', [
       cliente_id,
     ])
     if (!clienteResult.rows || clienteResult.rows.length === 0) {
       throw new Error('Cliente no encontrado')
     }
-    const saldoActual = new Decimal(
-      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
-    )
-    const saldoNuevo = Decimal.max(new Decimal(0), saldoActual.minus(montoTotalUsd))
+    const clienteAbonoRow = clienteResult.rows.item(0) as { saldo_actual: string; saf_disponible: string }
+    const saldoActual = new Decimal(clienteAbonoRow.saldo_actual || '0')
+    const safDisponibleAntesAbono = new Decimal(clienteAbonoRow.saf_disponible || '0')
+    // Guard: `movimientos_cuenta.monto` tiene CHECK (monto > 0) en Postgres
+    // (migrations/0006). Si el cliente no tenia NINGUNA factura pendiente
+    // (facturasResult vacio) el 100% del pago cae en `montoRestante` y
+    // `montoAplicadoFacturas` queda en 0 — en ese caso NO se escribe el PAG
+    // (violaria el CHECK), el excedente completo se promueve a SAFC+lote en
+    // el paso 5b, y `saldoNuevo` simplemente arranca igual a `saldoActual`
+    // (sin cambio, porque no se aplico nada a facturas reales).
+    const hayMontoAplicadoFacturas = montoAplicadoFacturas.gt(0)
+    const saldoNuevo = hayMontoAplicadoFacturas
+      ? calcularSaldoNuevoMovimientoCuenta('PAG', saldoActual, montoAplicadoFacturas)
+      : saldoActual
 
     const movId = uuidv4()
     const anticiPoSuffix = montoRestante.gt(new Decimal('0.01'))
-      ? `, anticipo $${toStorageString(montoRestante)}`
+      ? `, excedente $${toStorageString(montoRestante)} promovido a saldo a favor`
       : ''
-    await tx.execute(
-      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
-       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        movId,
-        cliente_id,
-        `ABONO-GLOBAL`,
-        toStorageString(montoTotalUsd),
-        toStorageString(saldoActual),
-        toStorageString(saldoNuevo),
-        `Abono global: ${facturasAfectadas} factura(s) afectada(s)${anticiPoSuffix}`,
-        null,
-        now,
-        empresa_id,
-        now,
-        procesado_por,
-        moneda,
-        toStorageString(montoD),
-        toStorageString(tasaD),
-      ]
-    )
+    if (hayMontoAplicadoFacturas) {
+      await tx.execute(
+        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
+         VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          movId,
+          cliente_id,
+          `ABONO-GLOBAL`,
+          toStorageString(montoAplicadoFacturas),
+          toStorageString(saldoActual),
+          toStorageString(saldoNuevo),
+          `Abono global: ${facturasAfectadas} factura(s) afectada(s)${anticiPoSuffix}`,
+          null,
+          now,
+          empresa_id,
+          now,
+          procesado_por,
+          moneda,
+          toStorageString(montoD),
+          toStorageString(tasaD),
+        ]
+      )
 
-    await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-      toStorageString(saldoNuevo),
-      now,
-      cliente_id,
-    ])
+      await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+        toStorageString(saldoNuevo),
+        now,
+        cliente_id,
+      ])
+    }
+
+    // 5b. Bug fix (design-v2.md Pregunta 5): promover el excedente de
+    // efectivo (montoRestante, ya registrado como `pagos` anticipo en el
+    // paso 4) a credito real — SAFC en movimientos_cuenta + lote pareado en
+    // saf_creditos_lotes, origen_tipo='PAGO' / origen_id=pagoAnticipoId.
+    // ANTES este excedente se evaporaba silenciosamente (paso 5, arriba, ya
+    // no floorea); AHORA aparece como saldo a favor, consumible via los 3
+    // sitios de consumo SAF — misma UX, cero dialogo nuevo (design-v2.md §9).
+    if (pagoAnticipoId && montoRestante.gt(new Decimal('0.01'))) {
+      const saldoAntesSafc = saldoNuevo
+      const saldoNuevoSafc = saldoAntesSafc.minus(montoRestante)
+      const safcMovId = uuidv4()
+      const montoRestanteNativoSafc = moneda === 'BS' ? montoRestante.times(tasaD) : montoRestante
+      await tx.execute(
+        `INSERT INTO movimientos_cuenta
+           (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+            observacion, venta_id, fecha, created_at, created_by,
+            moneda_pago, monto_moneda, tasa_pago)
+         VALUES (?, ?, ?, 'SAFC', ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+        [
+          safcMovId, empresa_id, cliente_id,
+          'SAF-ABONO-GLOBAL-EXCEDENTE',
+          toStorageString(montoRestante),
+          toStorageString(saldoAntesSafc),
+          toStorageString(saldoNuevoSafc),
+          'Saldo a favor generado por excedente de abono global',
+          now, now, procesado_por,
+          moneda, toStorageString(montoRestanteNativoSafc), toStorageString(tasaD),
+        ]
+      )
+
+      await tx.execute(
+        `INSERT INTO saf_creditos_lotes
+           (id, empresa_id, cliente_id, movimiento_cuenta_id, origen_tipo, origen_id,
+            monto_original_usd, saldo_disponible_usd, status, moneda_origen, tasa_origen,
+            fecha, created_at, updated_at, created_by)
+         VALUES (?, ?, ?, ?, 'PAGO', ?, ?, ?, 'ACTIVO', ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(), empresa_id, cliente_id, safcMovId, pagoAnticipoId,
+          toStorageString(montoRestante), toStorageString(montoRestante),
+          moneda, toStorageString(tasaD), now, now, now, procesado_por,
+        ]
+      )
+
+      const safDisponibleDespuesAbono = calcularSafDisponibleNuevo('SAFC', safDisponibleAntesAbono, montoRestante)
+      await tx.execute('UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?', [
+        toStorageString(saldoNuevoSafc), toStorageString(safDisponibleDespuesAbono), now, cliente_id,
+      ])
+    }
 
     // 6. Crear movimiento_metodo_cobro por el total del abono
     if (montoTotalUsd.gt(0)) {
@@ -1655,6 +1771,104 @@ export async function registrarReversoAbono(params: {
   })
 }
 
+// ─── Consumo de lotes SAF (PR4, saf-snapshot-y-trazabilidad Fase 4) ───
+// Helper compartido por los 3 sitios de consumo SAF (`registrarPagoFactura`
+// rama inline, `aplicarSaldoFavor`, POS checkout SAF-como-metodo-de-pago en
+// use-ventas.ts) y por la cascada 2D de `registrarAbonoGlobal` (Fase 5,
+// donde se llama una vez POR FACTURA tocada por el pre-step SAF — el eje
+// "facturas" ya lo recorre el llamador, este helper recorre el eje "lotes").
+
+export interface ConsumirSafLotesEnTxParams {
+  empresaId: string
+  clienteId: string
+  /** Factura a la que se le esta aplicando este consumo de SAF. */
+  ventaId: string
+  /** Fila `movimientos_cuenta` tipo='SAF' que ancla este evento de consumo (coexistencia). */
+  movimientoCuentaId: string
+  montoUsd: string | number | Decimal
+  tasaPago: string | number | Decimal
+  /** Fecha de negocio del consumo (igual a la del movimiento_cuenta SAF que lo ancla). */
+  fecha: string
+  /** Timestamp tecnico para `updated_at` del lote (igual al `now` del llamador). */
+  now: string
+  usuarioId: string
+}
+
+/**
+ * Consume lotes de credito SAF en orden FIFO (mas viejo primero, por
+ * `fecha`) hasta cubrir `montoUsd`, insertando 1..N filas
+ * `saf_creditos_aplicaciones` (una por cada lote tocado). Espejo de
+ * aplicacion local del trigger Postgres `consumir_saf_lote()` (migrations/
+ * 0105): ya que SQLite no ejecuta triggers de Postgres, este helper hace la
+ * escritura optimista del remanente del lote (`UPDATE saf_creditos_lotes`)
+ * el mismo, dentro de la MISMA `tx` — por eso llamadas SUCESIVAS dentro de
+ * la misma writeTransaction (ej. multiples facturas en `aplicarSaldoFavor` o
+ * en la cascada 2D de `registrarAbonoGlobal`) ya ven el saldo decrementado
+ * por la llamada anterior. El trigger del servidor es la autoridad final al
+ * reconectar (PATCH stripea `saldo_disponible_usd`/`status`, ver
+ * connector.ts TRIGGER_MANAGED_PATCH_COLUMNS).
+ *
+ * Lanza si el total disponible en lotes activos no cubre `montoUsd`
+ * (defensa en profundidad — el gate de cada sitio de llamada ya valida
+ * contra `clientes.saf_disponible` ANTES de llegar aqui; este throw solo se
+ * alcanza si esos dos snapshots se desincronizaran, lo que indicaria un bug
+ * en otro lugar, nunca un flujo de usuario normal).
+ */
+export async function consumirSafLotesEnTx(
+  tx: Transaction,
+  params: ConsumirSafLotesEnTxParams
+): Promise<void> {
+  const { empresaId, clienteId, ventaId, movimientoCuentaId, fecha, now, usuarioId } = params
+  const tasaPagoD = new Decimal(params.tasaPago)
+  const EPSILON_LOTE = new Decimal('0.00000001')
+  let montoRestante = new Decimal(params.montoUsd)
+  if (montoRestante.lte(EPSILON_LOTE)) return
+
+  const lotesRes = await tx.execute(
+    `SELECT id, saldo_disponible_usd FROM saf_creditos_lotes
+     WHERE cliente_id = ? AND empresa_id = ? AND CAST(saldo_disponible_usd AS REAL) > 0.0000001
+     ORDER BY fecha ASC`,
+    [clienteId, empresaId]
+  )
+
+  const totalLotes = lotesRes.rows?.length ?? 0
+  for (let i = 0; i < totalLotes && montoRestante.gt(EPSILON_LOTE); i++) {
+    const lote = lotesRes.rows!.item(i) as { id: string; saldo_disponible_usd: string }
+    const saldoAntes = new Decimal(lote.saldo_disponible_usd || '0')
+    if (saldoAntes.lte(EPSILON_LOTE)) continue
+
+    const aplicar = Decimal.min(saldoAntes, montoRestante)
+    const { saldoDespues, status } = calcularSaldoLoteDespues(saldoAntes, aplicar)
+
+    await tx.execute(
+      `INSERT INTO saf_creditos_aplicaciones
+         (id, empresa_id, cliente_id, lote_id, venta_id, movimiento_cuenta_id,
+          monto_aplicado_usd, lote_saldo_antes_usd, lote_saldo_despues_usd,
+          tasa_pago, fecha, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        uuidv4(), empresaId, clienteId, lote.id, ventaId, movimientoCuentaId,
+        toStorageString(aplicar), toStorageString(saldoAntes), toStorageString(saldoDespues),
+        toStorageString(tasaPagoD), fecha, usuarioId,
+      ]
+    )
+
+    // Escritura optimista local del remanente del lote — ver docstring.
+    await tx.execute(
+      `UPDATE saf_creditos_lotes SET saldo_disponible_usd = ?, status = ?, updated_at = ? WHERE id = ?`,
+      [toStorageString(saldoDespues), status, now, lote.id]
+    )
+
+    montoRestante = montoRestante.minus(aplicar)
+  }
+
+  if (montoRestante.gt(EPSILON_LOTE)) {
+    throw new Error(
+      `Saldo de lotes SAF insuficiente para cubrir $${toStorageString(montoRestante)} — posible desincronizacion entre clientes.saf_disponible y saf_creditos_lotes`
+    )
+  }
+}
+
 // ─── Aplicar Saldo a Favor (SAF) ──────────────────────────────
 
 export interface AplicarSaldoFavorParams {
@@ -1770,6 +1984,20 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
           toStorageString(tasaD),
         ]
       )
+
+      // PR4 (saf-snapshot-y-trazabilidad Fase 4): consumir lotes FIFO para
+      // esta factura, pareado con el SAF recien creado (movId).
+      await consumirSafLotesEnTx(tx, {
+        empresaId,
+        clienteId,
+        ventaId: factura.ventaId,
+        movimientoCuentaId: movId,
+        montoUsd: montoAplicarD,
+        tasaPago: tasaD,
+        fecha: now,
+        now,
+        usuarioId: cajeroId,
+      })
 
       saldoActual = saldoDespues
     }

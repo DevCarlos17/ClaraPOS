@@ -51,18 +51,18 @@ Chain strategy: stacked-to-main
 
 ## Phase 4: Write Sites — Consumption (FIFO over active lotes by `fecha`, `idx_saf_lotes_cliente_disponible`; INSERT 1..N `saf_creditos_aplicaciones` rows)
 
-- [ ] 4.1 `aplicarSaldoFavor` (`use-cxc.ts` ~L1675)
-- [ ] 4.2 `registrarPagoFactura` inline SAF branch (`use-cxc.ts` ~L678-787)
-- [ ] 4.3 POS checkout SAF-as-payment, `invoiceAssignments` branch (`use-ventas.ts` ~L1069-1105)
-- [ ] 4.4 Test per site: multi-lote consumption sums to SAF ledger amount; overdraft raises
+- [x] 4.1 `aplicarSaldoFavor` (`use-cxc.ts` ~L1675) — via shared helper `consumirSafLotesEnTx`
+- [x] 4.2 `registrarPagoFactura` inline SAF branch (`use-cxc.ts` ~L678-787) — via shared helper
+- [x] 4.3 POS checkout SAF-como-metodo-de-pago (`safEntry` block, `use-ventas.ts` ~L1001-1047) — via shared helper. NOTE: task originally pointed at the `invoiceAssignments`/Paso A line range; per design-v2.md §6 that branch applies REAL cash via `aplicarPagoFacturaEnTx` (no lote consumed, "dinero real, no credito") — the actual 3rd SAF-consumption site (per design-v2.md §6 explicit list) is the `safEntry` block.
+- [x] 4.4 Test per site: multi-lote consumption sums to SAF ledger amount; overdraft raises — covered directly on the shared helper (`consumirSafLotesEnTx` describe block, 4 tests) + 1 integration test per call site
 
 ## Phase 5: `registrarAbonoGlobal` — 2D Cascade + Overflow Bug Fix (highest complexity)
 
-- [ ] 5.1 RED: 2 lotes × 3 facturas simultaneous, assert `SUM(aplicaciones.monto_aplicado_usd)` = total SAF ledger amount, exact per-lote/per-factura split
-- [ ] 5.2 GREEN: nest lote-FIFO inside existing factura-FIFO loop (~L960-986), INSERT `saf_creditos_aplicaciones` per lote×factura combo touched
-- [ ] 5.3 Bug fix: promote `pagoAnticipoId` overflow (~L989-1013, today `Decimal.max(0,...)` drops it) → INSERT SAFC `movimientos_cuenta` + `saf_creditos_lotes` row, `origen_tipo='PAGO'`, `origen_id=pagoAnticipoId`
-- [ ] 5.4 REFACTOR + edge cases: 0 lotes available, exact-balance lote, partial last lote
-- [ ] 5.5 `yarn test:run` green; cuadre regression unchanged (zero new rows read by cuadre)
+- [x] 5.1 RED: 2 lotes × 3 facturas simultaneous, assert `SUM(aplicaciones.monto_aplicado_usd)` = total SAF ledger amount, exact per-lote/per-factura split
+- [x] 5.2 GREEN: per-factura call to `consumirSafLotesEnTx` inside the existing SAF pre-step factura-FIFO loop (its own internal FIFO over lotes is the 2nd axis) — INSERT `saf_creditos_aplicaciones` per lote×factura combo touched
+- [x] 5.3 Bug fix: promote `pagoAnticipoId` overflow (today `Decimal.max(0,...)` drops it) → INSERT SAFC `movimientos_cuenta` + `saf_creditos_lotes` row, `origen_tipo='PAGO'`, `origen_id=pagoAnticipoId`. Also fixed the PAG movimiento_cuenta to carry only `montoAplicadoFacturas` (not the full total) via `calcularSaldoNuevoMovimientoCuenta('PAG', ...)` (no floor) — this is what makes the excedente visible instead of evaporating
+- [x] 5.4 REFACTOR + edge cases: 0 lotes available (throws, mirrors SQL guard), exact-balance lote, partial last lote, 0 facturas pendientes + full excedente (guard against `movimientos_cuenta.monto` CHECK > 0 — skips the PAG row entirely in that case)
+- [x] 5.5 `yarn test:run` green; cuadre regression unchanged (zero new rows read by cuadre)
 
 ## Phase 6: Read Path + UX-Unchanged Verification
 

@@ -155,6 +155,14 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
     /** `movimientos_cuenta` SUM(SAFC)-SUM(SAF) del cliente, leido cuando `safEntry` esta presente. Default creado=0/consumido=0. */
     safCredito?: { creado: number; consumido: number }
     /**
+     * Lotes SAF activos para `consumirSafLotesEnTx` (PR4, saf-snapshot-y-trazabilidad
+     * Fase 4) — consumidos cuando `safEntry`/SAF-como-metodo-de-pago aplica
+     * credito existente. Default: un lote unico con saldo = `safCredito`
+     * disponible (creado - consumido), suficiente para no romper fixtures
+     * pre-existentes que no les interesa el detalle de lotes.
+     */
+    safLotes?: Array<{ id: string; saldo_disponible_usd: string }>
+    /**
      * `cuentas_config.cuenta_contable_id` por `clave`, leido por ABSORBER/DIFERENCIAL_FALTANTE
      * para resolver la cuenta del gasto compensatorio (con fallback cruzado entre claves).
      * Ausente/clave sin valor = sin fila (dispara `throw new Error('sin-cuenta')`).
@@ -169,10 +177,23 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
    */
   function mockCrearVentaTx(opts: VentaTxFixtures) {
     const calls: { sql: string; params: unknown[] }[] = []
+    const { creado: safCreado = 0, consumido: safConsumido = 0 } = opts.safCredito ?? {}
+    const safLotesIniciales =
+      opts.safLotes ?? [{ id: 'lote-default', saldo_disponible_usd: String(Math.max(0, safCreado - safConsumido)) }]
+    const safLotesState = new Map(safLotesIniciales.map((l) => [l.id, l.saldo_disponible_usd]))
     vi.mocked(db, true).writeTransaction.mockImplementation(async (callback) => {
       const tx = {
         execute: vi.fn(async (sql: string, params: unknown[] = []) => {
           calls.push({ sql, params })
+          if (sql.startsWith('SELECT id, saldo_disponible_usd FROM saf_creditos_lotes')) {
+            const rows = safLotesIniciales
+              .filter((l) => Number(safLotesState.get(l.id) ?? '0') > 0.0000001)
+              .map((l) => ({ id: l.id, saldo_disponible_usd: safLotesState.get(l.id) ?? '0' }))
+            return { rows: { length: rows.length, item: (i: number) => rows[i] } }
+          }
+          if (sql.startsWith('UPDATE saf_creditos_lotes SET saldo_disponible_usd')) {
+            safLotesState.set(params[3] as string, params[0] as string)
+          }
 
           if (sql.startsWith('SELECT c.deposito_id')) {
             if (!opts.cajaDepositoRow) return { rows: { length: 0, item: () => undefined } }
@@ -865,6 +886,54 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       )
       expect(clienteUpdate).toBeDefined()
       expect(clienteUpdate!.params).toContain(toStorageString(9))
+    })
+
+    it('PR4 (saf-snapshot-y-trazabilidad): SAF como metodo de pago consume lotes FIFO — 2 filas saf_creditos_aplicaciones cuando el monto cruza 2 lotes, pareadas con el SAF recien creado', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        clienteSaldoActual: '0',
+        safCredito: { creado: 15, consumido: 0 },
+        safLotes: [
+          { id: 'lote-viejo', saldo_disponible_usd: '4.00000000' },
+          { id: 'lote-nuevo', saldo_disponible_usd: '11.00000000' },
+        ],
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          cliente_id: 'cliente-1',
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [],
+          safEntry: { clienteId: 'cliente-1', montoUsd: 6 },
+        })
+      )
+
+      const safConsumo = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAF',")
+      )
+      expect(safConsumo).toBeDefined()
+      const safMovId = safConsumo!.params[0] as string
+
+      const aplicaciones = calls.filter((c) => c.sql.startsWith('INSERT INTO saf_creditos_aplicaciones'))
+      expect(aplicaciones).toHaveLength(2)
+
+      // Columnas: id, empresa_id, cliente_id, lote_id, venta_id, movimiento_cuenta_id, monto_aplicado_usd, ...
+      expect(aplicaciones[0]!.params[3]).toBe('lote-viejo')
+      expect(aplicaciones[0]!.params[6]).toBe(toStorageString(4)) // lote-viejo agotado
+      expect(aplicaciones[1]!.params[3]).toBe('lote-nuevo')
+      expect(aplicaciones[1]!.params[6]).toBe(toStorageString(2)) // resto: 6 - 4 = 2
+
+      const sumaAplicada = aplicaciones.reduce((acc, c) => acc + Number(c.params[6]), 0)
+      expect(sumaAplicada).toBeCloseTo(6, 8)
+
+      // Ambas aplicaciones anclan al MISMO movimiento_cuenta SAF (coexistencia)
+      expect(aplicaciones[0]!.params[5]).toBe(safMovId)
+      expect(aplicaciones[1]!.params[5]).toBe(safMovId)
     })
 
     it('idempotencia de replay: el saldo_pend_usd escrito en el INSERT coincide exactamente con el resultado de `calcularCierreVentaConSaf` (mismos inputs) — un reintento de PowerSync reenviaria el mismo valor, NEW == OLD, sin disparar P0001', async () => {
