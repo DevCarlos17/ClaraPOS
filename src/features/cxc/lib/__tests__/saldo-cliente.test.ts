@@ -3,6 +3,7 @@ import {
   calcularSaldoNuevoMovimientoCuenta,
   esSaldoSafConsistente,
   calcularSafDisponibleNuevo,
+  calcularSaldoLoteDespues,
 } from '../saldo-cliente'
 
 describe('calcularSaldoNuevoMovimientoCuenta', () => {
@@ -144,5 +145,48 @@ describe('calcularSafDisponibleNuevo', () => {
     const resultado = calcularSafDisponibleNuevo('SAF', '0.70', '0.70')
 
     expect(resultado.toString()).toBe('0')
+  })
+})
+
+describe('calcularSaldoLoteDespues', () => {
+  it('consumo normal: resta el monto aplicado del saldo del lote y queda ACTIVO', () => {
+    const resultado = calcularSaldoLoteDespues(100, 30)
+
+    expect(resultado.saldoDespues.toString()).toBe('70')
+    expect(resultado.status).toBe('ACTIVO')
+  })
+
+  it('consumo exacto que agota el lote: saldo queda en 0 y status pasa a AGOTADO', () => {
+    const resultado = calcularSaldoLoteDespues(50, 50)
+
+    expect(resultado.saldoDespues.toString()).toBe('0')
+    expect(resultado.status).toBe('AGOTADO')
+  })
+
+  it('sobregiro dentro de la tolerancia de 0.005: pisa en 0 en vez de lanzar (mismo margen que el trigger consumir_saf_lote)', () => {
+    const resultado = calcularSaldoLoteDespues(70, '70.003')
+
+    expect(resultado.saldoDespues.toString()).toBe('0')
+    expect(resultado.status).toBe('AGOTADO')
+  })
+
+  it('sobregiro real (fuera de tolerancia): lanza el mismo error que el guard del trigger, NUNCA produce negativo', () => {
+    expect(() => calcularSaldoLoteDespues(70, 100)).toThrow(
+      /excede el saldo disponible del lote/
+    )
+  })
+
+  it('acepta instancias de Decimal como entrada', () => {
+    const resultado = calcularSaldoLoteDespues(new Decimal(100), new Decimal('0.70'))
+
+    expect(resultado.saldoDespues.toString()).toBe('99.3')
+    expect(resultado.status).toBe('ACTIVO')
+  })
+
+  it('acepta strings como entrada (formato de almacenamiento PowerSync)', () => {
+    const resultado = calcularSaldoLoteDespues('100.00000000', '100.00000000')
+
+    expect(resultado.saldoDespues.toString()).toBe('0')
+    expect(resultado.status).toBe('AGOTADO')
   })
 })

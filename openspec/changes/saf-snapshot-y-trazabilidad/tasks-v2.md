@@ -36,11 +36,11 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: Pure Helper + Schema/Connector Wiring (TDD)
 
-- [ ] 2.1 RED: failing tests for `calcularSaldoLoteDespues(saldoAntes, montoAplicado)` mirroring `consumir_saf_lote()` math, incl. overdraft rejection, floor-at-zero
-- [ ] 2.2 GREEN+REFACTOR: implement in `saldo-cliente.ts` (sibling helper); `yarn test:run` green
-- [ ] 2.3 `schema.ts`: add `saf_creditos_lotes` (after `vencimientos_cobrar`, `column.text` decimals) + `saf_creditos_aplicaciones` (`insertOnly: true`); register both in `AppSchema`
-- [ ] 2.4 `connector.ts`: `TRIGGER_MANAGED_PATCH_COLUMNS.saf_creditos_lotes = ['saldo_disponible_usd','status','updated_at']`; add `saf_creditos_aplicaciones` to `IMMUTABLE_TABLES`
-- [ ] 2.5 Connector test: lotes PATCH excludes trigger-managed cols; aplicaciones retry uses `ON CONFLICT DO NOTHING`
+- [x] 2.1 RED: failing tests for `calcularSaldoLoteDespues(saldoAntes, montoAplicado)` mirroring `consumir_saf_lote()` math, incl. overdraft rejection, floor-at-zero
+- [x] 2.2 GREEN+REFACTOR: implement in `saldo-cliente.ts` (sibling helper); `yarn test:run` green
+- [x] 2.3 `schema.ts`: add `saf_creditos_lotes` (after `vencimientos_cobrar`, `column.text` decimals) + `saf_creditos_aplicaciones` (`insertOnly: true`); register both in `AppSchema`
+- [x] 2.4 `connector.ts`: `TRIGGER_MANAGED_PATCH_COLUMNS.saf_creditos_lotes = ['saldo_disponible_usd','status','updated_at']`; add `saf_creditos_aplicaciones` to `IMMUTABLE_TABLES`
+- [x] 2.5 Connector test: lotes PATCH excludes trigger-managed cols; aplicaciones retry uses `ON CONFLICT DO NOTHING`
 
 ## Phase 3: Write Sites — Creation (pair each SAFC with 1 lote row, same tx; `saldo_disponible_usd=monto_original_usd`)
 

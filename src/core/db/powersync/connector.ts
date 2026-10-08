@@ -126,6 +126,12 @@ const TRIGGER_MANAGED_PATCH_COLUMNS: Record<string, string[]> = {
   // actualizar_saldo_cliente disparado por INSERT en movimientos_cuenta
   // (ver migrations/0102_extender_trigger_saf_disponible.sql)
   clientes: ['saldo_actual', 'saf_disponible'],
+  // saldo_disponible_usd/status se actualizan via trigger consumir_saf_lote
+  // disparado por INSERT en saf_creditos_aplicaciones (ver
+  // migrations/0105_saf_creditos_aplicaciones.sql). updated_at tambien lo
+  // toca el mismo trigger (solo en ese UPDATE), por eso se stripea junto con
+  // las otras dos — mismo mecanismo que clientes.saldo_actual/saf_disponible.
+  saf_creditos_lotes: ['saldo_disponible_usd', 'status', 'updated_at'],
 }
 
 // Tablas con triggers PostgreSQL que bloquean UPDATE (total o parcialmente).
@@ -155,6 +161,9 @@ const IMMUTABLE_TABLES = new Set([
   'historico_precios',            // tabla de auditoria inmutable (migracion 0054: solo INSERT, sin policy UPDATE)
   'import_log',                   // auditoria de imports — inmutable, solo INSERT via Supabase directo (bypass PowerSync)
   'import_log_det',               // detalle auditoria — inmutable, solo INSERT via Supabase directo (bypass PowerSync)
+  'saf_creditos_aplicaciones',    // 100% append-only (sin policy UPDATE/DELETE) — sin trigger bloqueante de UPDATE,
+                                   // pero un PUT reintentado debe converger via ON CONFLICT DO NOTHING, mismo
+                                   // motivo que import_log/import_log_det (ver migrations/0105, design-v2.md §4)
 ])
 
 function convertBooleans(table: string, payload: Record<string, unknown>): Record<string, unknown> {
