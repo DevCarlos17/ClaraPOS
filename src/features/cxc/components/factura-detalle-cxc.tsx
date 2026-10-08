@@ -21,6 +21,7 @@ import {
   usePagosFactura,
   useCargosEspecialesVenta,
   useVencimientosVenta,
+  useSafAplicacionesFactura,
   registrarReversoAbono,
   registrarDiferencialCxC,
   registrarReversoDiferencialCxC,
@@ -32,14 +33,6 @@ import Decimal from 'decimal.js'
 import { PagoFacturaModal } from './pago-factura-modal'
 
 // ─── Tipos internos ───────────────────────────────────────────
-
-interface SafMovimientoCxc {
-  id: string
-  referencia: string | null
-  monto: string
-  fecha: string
-  saf_origen_refs: string | null
-}
 
 interface DifeMovimientoCxc {
   id: string
@@ -191,16 +184,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   const { detalle, isLoading: loadingDetalle } = useDetalleFactura(factura?.id ?? null)
   const { pagos, isLoading: loadingPagos } = usePagosFactura(factura?.id ?? null)
 
-  const { data: safMovData } = useQuery(
-    factura
-      ? `SELECT id, referencia, monto, fecha, saf_origen_refs
-         FROM movimientos_cuenta
-         WHERE venta_id = ? AND tipo = 'SAF'
-         ORDER BY fecha ASC, created_at ASC, rowid ASC`
-      : '',
-    factura ? [factura.id] : []
-  )
-  const safMovimientos = (safMovData as SafMovimientoCxc[]) ?? []
+  const { safAplicaciones: safMovimientos } = useSafAplicacionesFactura(factura?.id ?? null)
 
   // Movimientos de diferencial cambiario (tipo PAG + ref DIFE-*)
   const { data: difeMovData } = useQuery(
