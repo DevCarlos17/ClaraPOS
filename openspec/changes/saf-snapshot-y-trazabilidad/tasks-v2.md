@@ -44,10 +44,10 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Write Sites — Creation (pair each SAFC with 1 lote row, same tx; `saldo_disponible_usd=monto_original_usd`)
 
-- [ ] 3.1 `registrarSafExcedente` (`use-cxc.ts` ~L2002-2053), `origen_tipo='VENTA'`
-- [ ] 3.2 POS Paso B remainder (`use-ventas.ts` ~L1140-1177), `origen_tipo='VENTA'`
-- [ ] 3.3 NC remainder — SALDO_FAVOR/COMPENSACION_VENTA/REFUND_TESORERIA (`use-notas-credito.ts` ~L1285), `origen_tipo='NOTA_CREDITO'`
-- [ ] 3.4 Test per site: SAFC INSERT → paired lote row, correct balance
+- [x] 3.1 `registrarSafExcedente` (`use-cxc.ts` ~L2002-2053), `origen_tipo='VENTA'`
+- [x] 3.2 POS Paso B remainder (`use-ventas.ts` ~L1140-1177), `origen_tipo='VENTA'`
+- [x] 3.3 NC remainder — SALDO_FAVOR/COMPENSACION_VENTA/REFUND_TESORERIA (`use-notas-credito.ts` ~L1285), `origen_tipo='NOTA_CREDITO'`
+- [x] 3.4 Test per site: SAFC INSERT → paired lote row, correct balance
 
 ## Phase 4: Write Sites — Consumption (FIFO over active lotes by `fecha`, `idx_saf_lotes_cliente_disponible`; INSERT 1..N `saf_creditos_aplicaciones` rows)
 
