@@ -1251,13 +1251,24 @@ describe('useSafAplicacionesFactura (saf_creditos_aplicaciones WHERE venta_id, P
     expect(sql).toContain('WHERE sca.venta_id = ?')
     expect(sql).not.toContain("tipo = 'SAF'")
     expect(sql).toContain('JOIN movimientos_cuenta mc ON mc.id = sca.movimiento_cuenta_id')
+    // PR8 (saf-display-factura): tasa_pago propia de la aplicacion (migrations/0105),
+    // usada para convertir monto_aplicado_usd -> Bs en la linea "Saldo a favor" del
+    // historial de pagos sin depender de la tasa_pago de movimientos_cuenta.
+    expect(sql).toContain('sca.tasa_pago')
     expect(params).toEqual(['venta-1'])
   })
 
-  it('1 aplicacion: mapea monto_aplicado_usd -> monto y trae referencia/saf_origen_refs via JOIN', () => {
+  it('1 aplicacion: mapea monto_aplicado_usd -> monto, trae tasa_pago propia y referencia/saf_origen_refs via JOIN', () => {
     mockedUseQuery.mockReturnValue({
       data: [
-        { id: 'sca-1', referencia: 'SAF-0001', monto: '30.00000000', fecha: '2026-02-01', saf_origen_refs: '["VTA-100"]' },
+        {
+          id: 'sca-1',
+          referencia: 'SAF-0001',
+          monto: '30.00000000',
+          tasa_pago: '40.0000',
+          fecha: '2026-02-01',
+          saf_origen_refs: '["VTA-100"]',
+        },
       ],
       isLoading: false,
     } as never)
@@ -1269,6 +1280,7 @@ describe('useSafAplicacionesFactura (saf_creditos_aplicaciones WHERE venta_id, P
       id: 'sca-1',
       referencia: 'SAF-0001',
       monto: '30.00000000',
+      tasa_pago: '40.0000',
       saf_origen_refs: '["VTA-100"]',
     })
   })
