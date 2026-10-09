@@ -127,6 +127,9 @@ export interface ReciboEvolucion {
   reversosPago: ReciboEvolucionMovimiento[]
   saldoAFavorGeneradoUsd: number | null
   saldoAFavorGeneradoBs: number | null
+  /** SAF CONSUMIDO/aplicado a ESTA factura (saf_creditos_aplicaciones, PR8 saf-display-factura) — distinto de saldoAFavorGenerado (SAF que ESTA factura generó). `null` cuando no se aplicó SAF. */
+  saldoAFavorAplicadoUsd: number | null
+  saldoAFavorAplicadoBs: number | null
 }
 
 export interface ReciboEvolucionReversoMetodoInput {
@@ -160,6 +163,8 @@ export interface ReciboEvolucionInput {
   abonos?: ReciboEvolucionMovimientoInput[]
   reversosPago?: ReciboEvolucionMovimientoInput[]
   saldoAFavorGenerado?: ReciboEvolucionMovimientoInput | null
+  /** SAF consumido/aplicado a esta factura (PR8, saf-display-factura). Ver `ReciboEvolucion.saldoAFavorAplicadoUsd`. */
+  saldoAFavorAplicado?: ReciboEvolucionMovimientoInput | null
 }
 
 export interface ReciboLineaInput {
@@ -282,14 +287,26 @@ export function buildReciboEvolucion(input?: ReciboEvolucionInput): ReciboEvoluc
   const abonos = input?.abonos ?? []
   const reversosPago = input?.reversosPago ?? []
   const saldoAFavorGenerado = input?.saldoAFavorGenerado ?? null
+  const saldoAFavorAplicado = input?.saldoAFavorAplicado ?? null
 
-  if (reversos.length === 0 && abonos.length === 0 && reversosPago.length === 0 && !saldoAFavorGenerado) {
+  if (
+    reversos.length === 0 &&
+    abonos.length === 0 &&
+    reversosPago.length === 0 &&
+    !saldoAFavorGenerado &&
+    !saldoAFavorAplicado
+  ) {
     return undefined
   }
 
   const saldoAFavorGeneradoUsd = saldoAFavorGenerado ? toD(saldoAFavorGenerado.monto).toNumber() : null
   const saldoAFavorGeneradoBs = saldoAFavorGenerado
     ? mapReciboEvolucionMovimiento(saldoAFavorGenerado).montoBs
+    : null
+
+  const saldoAFavorAplicadoUsd = saldoAFavorAplicado ? toD(saldoAFavorAplicado.monto).toNumber() : null
+  const saldoAFavorAplicadoBs = saldoAFavorAplicado
+    ? mapReciboEvolucionMovimiento(saldoAFavorAplicado).montoBs
     : null
 
   return {
@@ -310,6 +327,8 @@ export function buildReciboEvolucion(input?: ReciboEvolucionInput): ReciboEvoluc
     reversosPago: reversosPago.map(mapReciboEvolucionMovimiento),
     saldoAFavorGeneradoUsd,
     saldoAFavorGeneradoBs,
+    saldoAFavorAplicadoUsd,
+    saldoAFavorAplicadoBs,
   }
 }
 
@@ -591,6 +610,13 @@ export function construirLineasEvolucion(
     filas.push({
       label: `Abono ${formatDateTime(abono.fecha)}`,
       monto: formatMontoBimonetario(abono.montoUsd, abono.montoBs, monedaPresentacion),
+      bold: false,
+    })
+  }
+  if (evolucion.saldoAFavorAplicadoUsd != null) {
+    filas.push({
+      label: 'Saldo a favor',
+      monto: formatMontoBimonetario(evolucion.saldoAFavorAplicadoUsd, evolucion.saldoAFavorAplicadoBs ?? 0, monedaPresentacion),
       bold: false,
     })
   }

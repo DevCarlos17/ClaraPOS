@@ -3,7 +3,13 @@ import {
   buildReciboDataDesdeFacturaGuardada,
   useReciboDesdeFactura,
 } from '../recibo-desde-factura'
-import { useDetalleFactura, usePagosFactura, type EvolucionFacturaRow } from '@/features/cxc/hooks/use-cxc'
+import {
+  useDetalleFactura,
+  usePagosFactura,
+  useSafAplicacionesFactura,
+  type EvolucionFacturaRow,
+  type SafAplicacionFacturaCxc,
+} from '@/features/cxc/hooks/use-cxc'
 import { useEvolucionFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import {
@@ -31,6 +37,7 @@ vi.mock('@/features/cxc/hooks/use-cxc', () => ({
   useDetalleFactura: vi.fn(),
   usePagosFactura: vi.fn(),
   useEvolucionFactura: vi.fn(),
+  useSafAplicacionesFactura: vi.fn(),
 }))
 
 vi.mock('@/features/configuracion/hooks/use-company', async (importOriginal) => {
@@ -49,6 +56,7 @@ const mockedUseDetalleFactura = vi.mocked(useDetalleFactura)
 const mockedUsePagosFactura = vi.mocked(usePagosFactura)
 const mockedUseCompany = vi.mocked(useCompany)
 const mockedUseEvolucionFactura = vi.mocked(useEvolucionFactura)
+const mockedUseSafAplicacionesFactura = vi.mocked(useSafAplicacionesFactura)
 const mockedUseReversosFactura = vi.mocked(useReversosFactura)
 const mockedUseReembolsosTesoreriaFactura = vi.mocked(useReembolsosTesoreriaFactura)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
@@ -97,6 +105,18 @@ function baseEvolucionRow(overrides: Partial<EvolucionFacturaRow> = {}): Evoluci
     fecha: '2026-08-15T10:00:00.000-04:00',
     referencia: 'PAG-C01-000001',
     observacion: 'Pago factura C01-000001',
+    ...overrides,
+  }
+}
+
+function baseSafAplicacion(overrides: Partial<SafAplicacionFacturaCxc> = {}): SafAplicacionFacturaCxc {
+  return {
+    id: 'sca-1',
+    referencia: 'SAF-0001',
+    monto: '20.00000000',
+    tasa_pago: '40.0000',
+    fecha: '2026-08-20',
+    saf_origen_refs: null,
     ...overrides,
   }
 }
@@ -290,6 +310,8 @@ describe('buildReciboDataDesdeFacturaGuardada', () => {
       reversosPago: [],
       saldoAFavorGeneradoUsd: null,
       saldoAFavorGeneradoBs: null,
+      saldoAFavorAplicadoUsd: null,
+      saldoAFavorAplicadoBs: null,
     })
   })
 })
@@ -312,6 +334,7 @@ describe('useReciboDesdeFactura', () => {
     mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
     mockedUseEvolucionFactura.mockReturnValue(baseEvolucion())
     mockedUseReembolsosTesoreriaFactura.mockReturnValue({ reembolsos: [], isLoading: false })
+    mockedUseSafAplicacionesFactura.mockReturnValue({ safAplicaciones: [], isLoading: false })
   })
 
   it('venta === null retorna { recibo: null, isLoading: false } sin consultar company/detalle en estado loading', () => {
@@ -419,6 +442,27 @@ describe('useReciboDesdeFactura', () => {
     expect(mockedUseReembolsosTesoreriaFactura).toHaveBeenCalledWith('venta-1', 'emp-42')
   })
 
+  it('PR8 (saf-display-factura): useSafAplicacionesFactura se consulta con el ventaId (no toma empresaId, a diferencia de los otros hooks de evolucion)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+
+    renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(mockedUseSafAplicacionesFactura).toHaveBeenCalledWith('venta-1')
+  })
+
+  it('PR8: useSafAplicacionesFactura cargando produce isLoading:true', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseSafAplicacionesFactura.mockReturnValue({ safAplicaciones: [], isLoading: true })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current).toEqual({ recibo: null, isLoading: true })
+  })
+
   it('Enhancement B: useReembolsosTesoreriaFactura cargando produce isLoading:true', () => {
     mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
     mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
@@ -492,6 +536,8 @@ describe('useReciboDesdeFactura', () => {
       reversosPago: [{ fecha: '2026-08-16', montoUsd: 3, montoBs: 120 }],
       saldoAFavorGeneradoUsd: 2,
       saldoAFavorGeneradoBs: 80,
+      saldoAFavorAplicadoUsd: null,
+      saldoAFavorAplicadoBs: null,
     })
   })
 
@@ -615,5 +661,80 @@ describe('useReciboDesdeFactura', () => {
     const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
 
     expect(result.current.recibo?.evolucion?.reversos[0].metodosReembolso).toEqual([])
+  })
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PR8 (saf-display-factura): saldoAFavorAplicado — SAF CONSUMIDO/aplicado a
+  // ESTA factura (saf_creditos_aplicaciones), distinto de saldoAFavorGenerado
+  // (SAF que esta factura generó). Sin esta pieza, construirLineasEvolucion
+  // (factura-export.ts, commit 63666c7) nunca recibe datos y la linea
+  // "Saldo a favor" nunca aparece en ningun recibo.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  it('sin aplicaciones SAF, saldoAFavorAplicadoUsd/Bs quedan null (sin double-counting con saldoAFavorGenerado)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseEvolucionFactura.mockReturnValue(
+      baseEvolucion({ abonos: [baseEvolucionRow({ monto: '10.00', fecha: '2026-08-15' })] })
+    )
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd).toBeNull()
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoBs).toBeNull()
+  })
+
+  it('con 1 aplicacion SAF, mapea monto/tasa_pago propia de la aplicacion hacia saldoAFavorAplicadoUsd/Bs', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      safAplicaciones: [baseSafAplicacion({ monto: '12.50000000', tasa_pago: '50.0000', fecha: '2026-08-22' })],
+      isLoading: false,
+    })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd).toBe(12.5)
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoBs).toBe(625)
+  })
+
+  it('con 2+ aplicaciones SAF (abono-global cruzando lotes hacia la misma factura), suma el monto USD y usa la tasa de la fila mas reciente', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      safAplicaciones: [
+        baseSafAplicacion({ id: 'sca-1', monto: '20.00000000', tasa_pago: '40.0000', fecha: '2026-08-20' }),
+        baseSafAplicacion({ id: 'sca-2', monto: '15.00000000', tasa_pago: '50.0000', fecha: '2026-08-21' }),
+      ],
+      isLoading: false,
+    })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    // Suma USD: 20 + 15 = 35. Bs con la tasa mas reciente (50): 35 * 50 = 1750.
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd).toBe(35)
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoBs).toBe(1750)
+  })
+
+  it('sin double-counting: un abono en efectivo (pagos reales) y una aplicacion SAF en la misma factura producen campos SEPARADOS (abonos vs saldoAFavorAplicado), cada uno una sola vez', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseEvolucionFactura.mockReturnValue(
+      baseEvolucion({ abonos: [baseEvolucionRow({ monto: '10.00', tasa_pago: '40.0000', fecha: '2026-08-15' })] })
+    )
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      safAplicaciones: [baseSafAplicacion({ monto: '7.00000000', tasa_pago: '40.0000', fecha: '2026-08-16' })],
+      isLoading: false,
+    })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current.recibo?.evolucion?.abonos).toEqual([{ fecha: '2026-08-15', montoUsd: 10, montoBs: 400 }])
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd).toBe(7)
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoBs).toBe(280)
   })
 })

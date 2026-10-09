@@ -385,6 +385,8 @@ export interface SafAplicacionFacturaCxc {
   id: string
   referencia: string | null
   monto: string
+  /** saf_creditos_aplicaciones.tasa_pago — tasa fotografiada en el momento de ESTA aplicacion (migrations/0105), usada para convertir `monto` (USD) a Bs en la linea "Saldo a favor" del historial de pagos (PR8, saf-display-factura). */
+  tasa_pago: string
   fecha: string
   saf_origen_refs: string | null
 }
@@ -404,7 +406,7 @@ export interface SafAplicacionFacturaCxc {
 export function useSafAplicacionesFactura(ventaId: string | null) {
   const { data, isLoading } = useQuery(
     ventaId
-      ? `SELECT sca.id, mc.referencia, sca.monto_aplicado_usd as monto, sca.fecha, mc.saf_origen_refs
+      ? `SELECT sca.id, mc.referencia, sca.monto_aplicado_usd as monto, sca.tasa_pago, sca.fecha, mc.saf_origen_refs
          FROM saf_creditos_aplicaciones sca
          JOIN movimientos_cuenta mc ON mc.id = sca.movimiento_cuenta_id
          WHERE sca.venta_id = ?
