@@ -13,9 +13,11 @@ import {
   useDetalleFactura,
   usePagosFactura,
   useEvolucionFactura,
+  useSafAplicacionesFactura,
   type DetalleFacturaCxc,
   type PagoFacturaCxc,
   type EvolucionFacturaRow,
+  type SafAplicacionFacturaCxc,
 } from '@/features/cxc/hooks/use-cxc'
 import { useCompany, parseEmpresaConfig, type Company } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -97,6 +99,35 @@ function mapReembolsoMetodo(
   }
 }
 
+/**
+ * Reduce el arreglo `safAplicaciones` (0..N filas `saf_creditos_aplicaciones`
+ * de `useSafAplicacionesFactura`, PR8 saf-display-factura) a un unico
+ * `ReciboEvolucionMovimientoInput` (mismo criterio que
+ * `reducirSaldoAFavorGenerado` — ver su doc arriba, aqui aplicado al SAF
+ * CONSUMIDO/aplicado a esta factura en vez del SAF que esta factura generó).
+ * Sin filas -> `null`. Con 2+ (p.ej. un abono-global que cruza varios lotes
+ * de SAF hacia la MISMA factura), se suma el monto USD y se usa la
+ * `tasa_pago` de la fila MAS RECIENTE — la query de `useSafAplicacionesFactura`
+ * ya ordena ASC por `fecha, created_at`, asi que la ultima fila del arreglo
+ * es la mas reciente.
+ */
+function reducirSaldoAFavorAplicado(
+  rows: SafAplicacionFacturaCxc[],
+  tasaHistorica: string
+): ReciboEvolucionMovimientoInput | null {
+  if (rows.length === 0) return null
+  if (rows.length === 1) {
+    return { fecha: rows[0].fecha, monto: rows[0].monto, tasaPago: rows[0].tasa_pago ?? tasaHistorica }
+  }
+  const montoTotal = rows.reduce((acc, r) => acc.plus(r.monto), new Decimal(0))
+  const masReciente = rows[rows.length - 1]
+  return {
+    fecha: masReciente.fecha,
+    monto: montoTotal.toString(),
+    tasaPago: masReciente.tasa_pago ?? tasaHistorica,
+  }
+}
+
 /** Mismo fallback de `tasaHistorica` que `reducirSaldoAFavorGenerado` — ver su doc. */
 function mapEvolucionMovimiento(
   row: EvolucionFacturaRow,
@@ -174,12 +205,21 @@ export function useReciboDesdeFactura(
     isLoading: loadingEvolucion,
   } = useEvolucionFactura(ventaId, empresaId)
   const { reembolsos, isLoading: loadingReembolsos } = useReembolsosTesoreriaFactura(ventaId, empresaId)
+  const { safAplicaciones, isLoading: loadingSafAplicaciones } = useSafAplicacionesFactura(ventaId)
 
   if (!venta) {
     return { recibo: null, isLoading: false }
   }
 
-  if (loadingDetalle || loadingPagos || loadingCompany || loadingReversos || loadingEvolucion || loadingReembolsos) {
+  if (
+    loadingDetalle ||
+    loadingPagos ||
+    loadingCompany ||
+    loadingReversos ||
+    loadingEvolucion ||
+    loadingReembolsos ||
+    loadingSafAplicaciones
+  ) {
     return { recibo: null, isLoading: true }
   }
 
@@ -206,6 +246,10 @@ export function useReciboDesdeFactura(
     abonos: abonos.map((r) => mapEvolucionMovimiento(r, venta.tasa)),
     reversosPago: reversosPago.map((r) => mapEvolucionMovimiento(r, venta.tasa)),
     saldoAFavorGenerado: reducirSaldoAFavorGenerado(saldoAFavor, venta.tasa),
+    // PR8 (saf-display-factura): SAF CONSUMIDO/aplicado a ESTA factura
+    // (saf_creditos_aplicaciones), distinto de saldoAFavorGenerado (SAF que
+    // esta factura generó via NC/anticipo).
+    saldoAFavorAplicado: reducirSaldoAFavorAplicado(safAplicaciones, venta.tasa),
   }
 
   const recibo = buildReciboDataDesdeFacturaGuardada(
