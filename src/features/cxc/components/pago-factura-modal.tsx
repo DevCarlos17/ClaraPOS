@@ -290,8 +290,11 @@ export function PagoFacturaModal({
               nro_factura: factura?.nro_factura ?? `PREST-${vencimientoId.slice(0, 8).toUpperCase()}`,
               excedenteUsd: excedentePrestamo,
               tasa: tasaNum,
+              moneda,
+              metodo_cobro_id: metodoCobro,
               empresa_id: user.empresa_id,
               procesado_por: user.id,
+              sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
             })
             toast.success(`Préstamo saldado. Excedente de ${formatUsd(excedentePrestamo)} registrado como saldo a favor.`)
           } else if (overpayMode === 'VUELTO') {
@@ -366,8 +369,11 @@ export function PagoFacturaModal({
               nro_factura: factura.nro_factura,
               excedenteUsd,
               tasa: tasaNum,
+              moneda,
+              metodo_cobro_id: metodoCobro,
               empresa_id: user.empresa_id,
               procesado_por: user.id,
+              sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
             })
             // El excedente queda como crédito en la cuenta — sin auto-FIFO
             toast.success(`Factura pagada. Crédito registrado como saldo a favor (${formatUsd(excedenteUsd)})`)

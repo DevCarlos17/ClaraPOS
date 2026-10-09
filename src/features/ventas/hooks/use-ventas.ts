@@ -1141,12 +1141,18 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 ? usdToBs(remainingSaf, tasa)
                 : remainingSaf
 
-              // Pago sin factura (anticipo / crédito a favor)
+              // Pago sin factura (anticipo / crédito a favor). Fix 2
+              // (saf-trazabilidad-pago, PR7): se captura el id generado para
+              // anclar el lote de credito de abajo (`origen_tipo='PAGO'`) —
+              // antes el uuidv4() se generaba inline y se descartaba, y el
+              // lote apuntaba a `origen_tipo='VENTA'`/`origen_id=ventaId`,
+              // sin forma de llegar al metodo de cobro.
+              const pagoExcedenteIdSaf = uuidv4()
               await tx.execute(
                 `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre, is_reversed)
                  VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)`,
                 [
-                  uuidv4(), discrepancy.clienteId, metodoIdSaf, monedaIdSaf,
+                  pagoExcedenteIdSaf, discrepancy.clienteId, metodoIdSaf, monedaIdSaf,
                   toStorageString(tasa), toStorageString(montoRestNativo), toStorageString(remainingSaf),
                   pagoSaf?.referencia ?? null, sesion_caja_id ?? null,
                   now, empresa_id, now, usuario_id,
@@ -1185,17 +1191,19 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 ]
               )
 
-              // PR3 (saf-snapshot-y-trazabilidad, design-v2.md §3/§6): lote de
-              // credito pareado 1:1 con el SAFC recien creado. `origen_tipo`
-              // ='VENTA' porque este excedente nace del checkout POS mismo.
+              // PR7 (saf-trazabilidad-pago, reemplaza PR3): lote de credito
+              // pareado 1:1 con el SAFC recien creado. `origen_tipo='PAGO'` /
+              // `origen_id=pagoExcedenteIdSaf` — el pago anticipo recien
+              // creado arriba, que SI carga `metodo_cobro_id` (antes
+              // 'VENTA'/ventaId, ciego al metodo de cobro).
               await tx.execute(
                 `INSERT INTO saf_creditos_lotes
                    (id, empresa_id, cliente_id, movimiento_cuenta_id, origen_tipo, origen_id,
                     monto_original_usd, saldo_disponible_usd, status, moneda_origen, tasa_origen,
                     fecha, created_at, updated_at, created_by)
-                 VALUES (?, ?, ?, ?, 'VENTA', ?, ?, ?, 'ACTIVO', ?, ?, ?, ?, ?, ?)`,
+                 VALUES (?, ?, ?, ?, 'PAGO', ?, ?, ?, 'ACTIVO', ?, ?, ?, ?, ?, ?)`,
                 [
-                  uuidv4(), empresa_id, discrepancy.clienteId, movRemId, ventaId,
+                  uuidv4(), empresa_id, discrepancy.clienteId, movRemId, pagoExcedenteIdSaf,
                   toStorageString(remainingSaf), toStorageString(remainingSaf),
                   monedaSaf, toStorageString(tasa), now, now, now, usuario_id,
                 ]

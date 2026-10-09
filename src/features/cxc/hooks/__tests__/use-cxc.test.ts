@@ -77,6 +77,15 @@ describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no 
       const tx = {
         execute: vi.fn(async (sql: string, params: unknown[] = []) => {
           calls.push({ sql, params })
+          if (sql.startsWith('SELECT id FROM monedas WHERE codigo_iso = ?')) {
+            const codigo = params[0] as string
+            return {
+              rows: {
+                length: 1,
+                item: () => ({ id: codigo === 'VES' ? 'moneda-bs-id' : 'moneda-usd-id' }),
+              },
+            }
+          }
           if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?')) {
             return {
               rows: {
@@ -100,6 +109,8 @@ describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no 
       nro_factura: 'F-001',
       excedenteUsd: 25,
       tasa: 40,
+      moneda: 'USD',
+      metodo_cobro_id: 'metodo-1',
       empresa_id: 'emp-1',
       procesado_por: 'user-1',
       ...overrides,
@@ -147,7 +158,20 @@ describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no 
     expect(clienteUpdate!.params).toContain(toStorageString(35))
   })
 
-  it('PR3 (saf-snapshot-y-trazabilidad): inserta UN lote saf_creditos_lotes anclado al SAFC recien creado, origen_tipo=VENTA, saldo_disponible_usd=monto_original_usd, status=ACTIVO, misma transaccion', async () => {
+  it('PR7 (saf-trazabilidad-pago): inserta un pago anticipo (venta_id=NULL) por el excedente, con el metodo_cobro_id real', async () => {
+    const calls = mockTx({ saldoActual: '0.00000000' })
+
+    await registrarSafExcedente(baseParams({ excedenteUsd: 25, tasa: 36.5, metodo_cobro_id: 'metodo-efectivo' }))
+
+    const pagoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO pagos'))
+    expect(pagoInsert).toBeDefined()
+    expect(pagoInsert!.sql).toMatch(/VALUES \(\?, NULL,/) // venta_id = NULL (anticipo)
+    expect(pagoInsert!.params).toContain('metodo-efectivo')
+    expect(pagoInsert!.params).toContain('moneda-usd-id')
+    expect(pagoInsert!.params).toContain(toStorageString(25)) // monto_usd
+  })
+
+  it('PR7 (saf-trazabilidad-pago): el lote saf_creditos_lotes apunta origen_tipo=PAGO al pago anticipo recien creado (no VENTA), anclado al SAFC, saldo_disponible_usd=monto_original_usd, status=ACTIVO, misma transaccion', async () => {
     const calls = mockTx({ saldoActual: '0.00000000' })
 
     await registrarSafExcedente(baseParams({ excedenteUsd: 25, venta_id: 'venta-9', tasa: 36.5 }))
@@ -158,22 +182,69 @@ describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no 
     expect(safcInsert).toBeDefined()
     const safcMovId = safcInsert!.params[0] as string
 
+    const pagoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO pagos'))
+    expect(pagoInsert).toBeDefined()
+    const pagoExcedenteId = pagoInsert!.params[0] as string
+
     const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
     expect(loteInsert).toBeDefined()
     expect(loteInsert!.sql).toContain('movimiento_cuenta_id')
-    expect(loteInsert!.sql).toContain("'VENTA'")
+    expect(loteInsert!.sql).toContain("'PAGO'")
+    expect(loteInsert!.sql).not.toContain("'VENTA'")
     expect(loteInsert!.sql).toContain("'ACTIVO'")
 
     // movimiento_cuenta_id ancla el lote al SAFC recien insertado (coexistencia, design-v2.md §3)
     expect(loteInsert!.params).toContain(safcMovId)
-    // origen_id = venta_id del excedente que origino el credito
-    expect(loteInsert!.params).toContain('venta-9')
+    // origen_id = el PAGO anticipo recien creado, YA NO el venta_id directo
+    expect(loteInsert!.params).toContain(pagoExcedenteId)
+    expect(loteInsert!.params).not.toContain('venta-9')
     // monto_original_usd = saldo_disponible_usd = excedente completo (creacion, sin consumo aun)
     expect(loteInsert!.params).toContain(toStorageString(25))
     const montoOcurrencias = loteInsert!.params.filter((p) => p === toStorageString(25))
     expect(montoOcurrencias).toHaveLength(2) // monto_original_usd Y saldo_disponible_usd
     // tasa_origen fotografia la tasa provista
     expect(loteInsert!.params).toContain(toStorageString(36.5))
+  })
+
+  it('Fix B3.1a (PR7): moneda_origen del lote y moneda_pago del SAFC reflejan la moneda real del metodo de cobro (BS), no USD hardcodeado', async () => {
+    const calls = mockTx({ saldoActual: '0.00000000' })
+
+    await registrarSafExcedente(baseParams({ excedenteUsd: 25, tasa: 40, moneda: 'BS', metodo_cobro_id: 'metodo-bs' }))
+
+    const safcInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+    )
+    expect(safcInsert).toBeDefined()
+    expect(safcInsert!.sql).not.toMatch(/'USD'/)
+    expect(safcInsert!.params).toContain('BS')
+    // monto_moneda = excedente en moneda nativa (Bs) = 25 * 40 = 1000
+    expect(safcInsert!.params).toContain(toStorageString(1000))
+
+    const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
+    expect(loteInsert).toBeDefined()
+    expect(loteInsert!.sql).not.toMatch(/'USD'/)
+    expect(loteInsert!.params).toContain('BS')
+    // monto_original_usd/saldo_disponible_usd siempre en USD (el lote no tiene columna nativa)
+    expect(loteInsert!.params).toContain(toStorageString(25))
+
+    const pagoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO pagos'))
+    expect(pagoInsert).toBeDefined()
+    expect(pagoInsert!.params).toContain('moneda-bs-id')
+    expect(pagoInsert!.params).toContain(toStorageString(1000)) // monto nativo (Bs)
+    expect(pagoInsert!.params).toContain(toStorageString(25)) // monto_usd
+  })
+
+  it('crea el pago+lote incondicionalmente aunque no exista ningun otro pago previo (caso borde: SAF manual cubre 100% + excedente)', async () => {
+    // Simula el caso borde donde registrarPagoFactura recibio monto=0 y NUNCA
+    // llamo a aplicarPagoFacturaEnTx — ningun pago previo existe en esta tx.
+    // registrarSafExcedente debe seguir creando su propio pago+lote, sin
+    // depender de estado dejado por otra llamada.
+    const calls = mockTx({ saldoActual: '0.00000000' })
+
+    await registrarSafExcedente(baseParams({ excedenteUsd: 50, metodo_cobro_id: 'metodo-x' }))
+
+    expect(calls.filter((c) => c.sql.startsWith('INSERT INTO pagos'))).toHaveLength(1)
+    expect(calls.filter((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))).toHaveLength(1)
   })
 })
 

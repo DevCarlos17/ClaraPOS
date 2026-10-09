@@ -2248,9 +2248,26 @@ export interface RegistrarSafExcedenteParams {
   nro_factura: string
   excedenteUsd: number
   tasa: number
+  /**
+   * Moneda real del método de cobro que recibió el excedente. PR7
+   * (saf-trazabilidad-pago, fix B3.1a): antes esta función asumía 'USD'
+   * hardcodeado tanto en `movimientos_cuenta.moneda_pago` como en
+   * `saf_creditos_lotes.moneda_origen`, perdiendo la moneda real cuando el
+   * excedente se pagaba en Bs.
+   */
+  moneda: 'USD' | 'BS'
+  /**
+   * Método de cobro que recibió el excedente. PR7: el excedente es dinero
+   * real que entró por este método — se registra como `pagos` anticipo para
+   * que el lote (`saf_creditos_lotes`) pueda apuntar `origen_tipo='PAGO'` y
+   * así resolver `metodo_cobro_id` vía lote→pago→metodo_cobro (antes
+   * `origen_tipo='VENTA'`, sin forma de llegar al método de cobro).
+   */
+  metodo_cobro_id: string
   empresa_id: string
   procesado_por: string
   safOrigenRefs?: string[]
+  sesion_caja_id?: string | null
 }
 
 /**
@@ -2260,14 +2277,44 @@ export interface RegistrarSafExcedenteParams {
  * saldo exacto. Usa 'SAFC' (no 'SAF') para que la lectura derivada
  * SUM(SAFC)-SUM(SAF) en useClientesConDeuda/useSaldoAFavor cuente esto como
  * creación de crédito, no como consumo — ver design.md Decision 1/2.
+ *
+ * PR7 (saf-trazabilidad-pago): además crea un `pagos` anticipo (venta_id=NULL)
+ * por el monto del excedente, con el `metodo_cobro_id` real que lo recibió —
+ * mismo patrón ya usado por `registrarAbonoGlobal` (Flow 2) y el Paso B de
+ * POS (Flow 3). El lote de crédito queda anclado a ESE pago
+ * (`origen_tipo='PAGO'`), no a la venta, cerrando la trazabilidad
+ * lote→pago→método de cobro. Esta creación de `pagos` es INCONDICIONAL
+ * (depende solo de `excedenteUsd > 0`, nunca de si `registrarPagoFactura`
+ * generó o no su propio `pagos` por la deuda exacta) — cubre el caso borde
+ * donde el SAF manual cubre el 100% de la deuda y `registrarPagoFactura`
+ * recibe `monto=0`, saltándose `aplicarPagoFacturaEnTx` por completo.
  */
 export async function registrarSafExcedente(params: RegistrarSafExcedenteParams): Promise<void> {
-  const { cliente_id, venta_id, nro_factura, excedenteUsd, tasa, empresa_id, procesado_por, safOrigenRefs } = params
+  const {
+    cliente_id, venta_id, nro_factura, excedenteUsd, tasa, moneda, metodo_cobro_id,
+    empresa_id, procesado_por, safOrigenRefs, sesion_caja_id,
+  } = params
 
   if (!Number.isFinite(excedenteUsd) || excedenteUsd <= 0.001) return
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
+    const excedenteD = new Decimal(excedenteUsd)
+    const tasaD = new Decimal(tasa)
+    // Monto nativo del excedente — Bs si el método cobró en Bs, USD si no.
+    // Fix B3.1a: antes se asumía USD siempre para este monto nativo.
+    const excedenteNativo = moneda === 'BS' ? usdToBs(excedenteD, tasaD) : excedenteD
+
+    // 0. Resolver moneda_id para el pago anticipo del excedente.
+    const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
+    const monedaResult = await tx.execute(
+      'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
+      [monedaCode]
+    )
+    if (!monedaResult.rows?.length) {
+      throw new Error(`No se encontro la moneda ${monedaCode} en el catalogo`)
+    }
+    const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
     // Leer saldo actual del cliente
     const clienteResult = await tx.execute(
@@ -2275,8 +2322,6 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
       [cliente_id]
     )
     if (!clienteResult.rows?.length) throw new Error('Cliente no encontrado')
-    const excedenteD = new Decimal(excedenteUsd)
-    const tasaD = new Decimal(tasa)
     const clienteRow = clienteResult.rows.item(0) as { saldo_actual: string; saf_disponible: string }
     const saldoActual = new Decimal(clienteRow.saldo_actual || '0')
     const safDisponibleAnterior = new Decimal(clienteRow.saf_disponible || '0')
@@ -2284,13 +2329,29 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
     // El excedente que el cliente pagó de más queda como crédito (saldo negativo)
     const saldoNuevo = saldoActual.minus(excedenteD)
 
+    // PR7: pago anticipo (venta_id=NULL) por el excedente — dinero real que
+    // entró por `metodo_cobro_id`. Ancla del lote de crédito (abajo).
+    const pagoExcedenteId = uuidv4()
+    await tx.execute(
+      `INSERT INTO pagos
+         (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd,
+          referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+      [
+        pagoExcedenteId, cliente_id, metodo_cobro_id, monedaId,
+        toStorageString(tasaD), toStorageString(excedenteNativo), toStorageString(excedenteD),
+        `SAF-CXC-${nro_factura} (anticipo)`, sesion_caja_id ?? null,
+        now, empresa_id, now, procesado_por,
+      ]
+    )
+
     const safcMovId = uuidv4()
     await tx.execute(
       `INSERT INTO movimientos_cuenta
          (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
           observacion, venta_id, fecha, empresa_id, created_at, created_by,
           moneda_pago, monto_moneda, tasa_pago, saf_origen_refs)
-       VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)`,
+       VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         safcMovId, cliente_id,
         `SAF-CXC-${nro_factura}`,
@@ -2298,28 +2359,30 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
         toStorageString(saldoActual), toStorageString(saldoNuevo),
         `Saldo a favor generado en pago de factura ${nro_factura}`,
         venta_id, now, empresa_id, now, procesado_por,
-        toStorageString(excedenteD), toStorageString(tasaD),
+        moneda, toStorageString(excedenteNativo), toStorageString(tasaD),
         safOrigenRefs && safOrigenRefs.length > 0
           ? JSON.stringify(safOrigenRefs)
           : JSON.stringify([nro_factura]),
       ]
     )
 
-    // PR3 (saf-snapshot-y-trazabilidad, design-v2.md §3/§6): lote de credito
-    // pareado 1:1 con el SAFC recien creado (`movimiento_cuenta_id` ancla la
+    // PR7 (saf-trazabilidad-pago, reemplaza PR3): lote de credito pareado
+    // 1:1 con el SAFC recien creado (`movimiento_cuenta_id` ancla la
     // coexistencia). `saldo_disponible_usd = monto_original_usd` porque el
-    // lote nace sin consumo todavia (consumo vive en PR4). `origen_tipo` =
-    // 'VENTA' porque el excedente viene de un pago a una factura especifica.
+    // lote nace sin consumo todavia. `origen_tipo='PAGO'` / `origen_id` =
+    // el pago anticipo recien creado arriba (antes 'VENTA'/venta_id, sin
+    // forma de llegar al metodo de cobro). `moneda_origen` = la moneda real
+    // (fix B3.1a, antes hardcodeado 'USD').
     await tx.execute(
       `INSERT INTO saf_creditos_lotes
          (id, empresa_id, cliente_id, movimiento_cuenta_id, origen_tipo, origen_id,
           monto_original_usd, saldo_disponible_usd, status, moneda_origen, tasa_origen,
           fecha, created_at, updated_at, created_by)
-       VALUES (?, ?, ?, ?, 'VENTA', ?, ?, ?, 'ACTIVO', 'USD', ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, 'PAGO', ?, ?, ?, 'ACTIVO', ?, ?, ?, ?, ?, ?)`,
       [
-        uuidv4(), empresa_id, cliente_id, safcMovId, venta_id,
+        uuidv4(), empresa_id, cliente_id, safcMovId, pagoExcedenteId,
         toStorageString(excedenteD), toStorageString(excedenteD),
-        toStorageString(tasaD), now, now, now, procesado_por,
+        moneda, toStorageString(tasaD), now, now, now, procesado_por,
       ]
     )
 

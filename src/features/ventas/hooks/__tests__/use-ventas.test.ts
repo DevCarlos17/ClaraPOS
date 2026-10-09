@@ -575,7 +575,7 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       expect(clienteUpdate!.params).toContain(toStorageString(5))
     })
 
-    it('PR3 (saf-snapshot-y-trazabilidad): inserta UN lote saf_creditos_lotes anclado al SAFC de Paso B, origen_tipo=VENTA, saldo_disponible_usd=monto_original_usd=remainingSaf, status=ACTIVO', async () => {
+    it('PR7 (saf-trazabilidad-pago, reemplaza PR3): inserta un pago anticipo (venta_id=NULL, metodo_cobro_id real) y el lote saf_creditos_lotes apunta origen_tipo=PAGO a ESE pago (no a la venta), anclado al SAFC, saldo_disponible_usd=monto_original_usd=remainingSaf, status=ACTIVO', async () => {
       const calls = mockCrearVentaTx({
         cajaDepositoRow: { deposito_id: 'dep-caja-A' },
         principalDepositoId: 'dep-principal',
@@ -605,13 +605,24 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       expect(safcInsert).toBeDefined()
       const safcMovId = safcInsert!.params[0] as string
 
+      const pagoInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO pagos'))
+      // El pago anticipo del excedente SAF tiene venta_id=NULL literal en el SQL
+      // (a diferencia del pago principal de la venta, que liga venta_id real)
+      const pagoAnticipo = pagoInserts.find((c) => /VALUES \(\?, NULL,/.test(c.sql))
+      expect(pagoAnticipo).toBeDefined()
+      expect(pagoAnticipo!.params).toContain('metodo-1') // metodo_cobro_id real del excedente
+      const pagoAnticipoId = pagoAnticipo!.params[0] as string
+
       const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
       expect(loteInsert).toBeDefined()
-      expect(loteInsert!.sql).toContain("'VENTA'")
+      expect(loteInsert!.sql).toContain("'PAGO'")
+      expect(loteInsert!.sql).not.toContain("'VENTA'")
       expect(loteInsert!.sql).toContain("'ACTIVO'")
 
       // movimiento_cuenta_id ancla el lote al SAFC recien insertado (coexistencia)
       expect(loteInsert!.params).toContain(safcMovId)
+      // origen_id = el pago anticipo recien creado, YA NO la venta directamente
+      expect(loteInsert!.params).toContain(pagoAnticipoId)
       // monto_original_usd = saldo_disponible_usd = remainingSaf ($5)
       const montoOcurrencias = loteInsert!.params.filter((p) => p === toStorageString(5))
       expect(montoOcurrencias).toHaveLength(2)
