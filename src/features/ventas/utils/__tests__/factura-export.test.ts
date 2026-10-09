@@ -1273,7 +1273,45 @@ describe('buildReciboEvolucion (PR4)', () => {
       reversosPago: [{ fecha: '2026-08-20', montoUsd: 3, montoBs: 120 }],
       saldoAFavorGeneradoUsd: 2,
       saldoAFavorGeneradoBs: 80,
+      saldoAFavorAplicadoUsd: null,
+      saldoAFavorAplicadoBs: null,
     })
+  })
+
+  // ─────────────────────────────────────────────────────────────────────
+  // saldoAFavorAplicado (PR8, saf-display-factura) — SAF CONSUMIDO/aplicado
+  // a esta factura, leido desde saf_creditos_aplicaciones (distinto de
+  // saldoAFavorGenerado, que es SAF GENERADO por esta factura). Misma
+  // formula usdToBs que el resto de la seccion.
+  // ─────────────────────────────────────────────────────────────────────
+
+  it('saldoAFavorAplicado presente produce saldoAFavorAplicadoUsd/Bs via la misma formula usdToBs', () => {
+    const resultado = buildReciboEvolucion({
+      saldoAFavorAplicado: { fecha: '2026-08-22', monto: 12.5, tasaPago: 40 },
+    })
+
+    expect(resultado?.saldoAFavorAplicadoUsd).toBe(12.5)
+    expect(resultado?.saldoAFavorAplicadoBs).toBe(500)
+  })
+
+  it('saldoAFavorAplicado por si solo (sin reversos/abonos/reversosPago/saldoAFavorGenerado) NO retorna undefined (guard incluye este campo)', () => {
+    const resultado = buildReciboEvolucion({
+      saldoAFavorAplicado: { fecha: '2026-08-22', monto: 5, tasaPago: 40 },
+    })
+
+    expect(resultado).toBeDefined()
+    expect(resultado?.saldoAFavorAplicadoUsd).toBe(5)
+  })
+
+  it('sin double-counting: abonos (pago en efectivo) + saldoAFavorAplicado (SAF) presentes a la vez, cada uno aparece una sola vez y por separado', () => {
+    const resultado = buildReciboEvolucion({
+      abonos: [{ fecha: '2026-08-19', monto: 10, tasaPago: 40 }],
+      saldoAFavorAplicado: { fecha: '2026-08-20', monto: 7, tasaPago: 40 },
+    })
+
+    expect(resultado?.abonos).toEqual([{ fecha: '2026-08-19', montoUsd: 10, montoBs: 400 }])
+    expect(resultado?.saldoAFavorAplicadoUsd).toBe(7)
+    expect(resultado?.saldoAFavorAplicadoBs).toBe(280)
   })
 })
 
@@ -1493,6 +1531,51 @@ describe('Evolucion en construirLineasRecibo (texto/PNG, via buildReciboTextoPla
     expect(texto).toContain(`Abono ${formatDateTime('2026-08-15')}: ${formatMontoBimonetario(3, 120, 'BS')}`)
     expect(texto).toContain('Bs. 120,00 ($3.00)')
   })
+
+  // ─────────────────────────────────────────────────────────────────────
+  // "Saldo a favor" (PR8, saf-display-factura) — linea de pago simple para
+  // SAF consumido/aplicado a ESTA factura, en la MISMA seccion Evolucion
+  // (misma fuente para POS/Facturas emitidas/Gestion Clientes/Consultas +
+  // PDF/texto/PNG, via construirLineasEvolucion).
+  // ─────────────────────────────────────────────────────────────────────
+
+  it('con saldoAFavorAplicado poblado, renderiza la linea "Saldo a favor" con el monto bimonetario', () => {
+    const recibo = reciboConPagosYCierre({
+      evolucion: { saldoAFavorAplicado: { fecha: '2026-08-20', monto: 6, tasaPago: 40 } },
+    })
+    const texto = buildReciboTextoPlano(recibo)
+
+    expect(texto).toContain(`Saldo a favor: ${formatMontoBimonetario(6, 240, 'USD')}`)
+  })
+
+  it('"Saldo a favor" (aplicado) y "Genero saldo a favor" (generado) coexisten como lineas DISTINTAS cuando ambas estan pobladas (no se pisan ni se fusionan)', () => {
+    const recibo = reciboConPagosYCierre({
+      evolucion: {
+        saldoAFavorAplicado: { fecha: '2026-08-20', monto: 6, tasaPago: 40 },
+        saldoAFavorGenerado: { fecha: '2026-08-21', monto: 9, tasaPago: 40 },
+      },
+    })
+    const texto = buildReciboTextoPlano(recibo)
+
+    expect(texto).toContain(`Saldo a favor: ${formatMontoBimonetario(6, 240, 'USD')}`)
+    expect(texto).toContain(`Genero saldo a favor: ${formatMontoBimonetario(9, 360, 'USD')}`)
+  })
+
+  it('sin double-counting: un abono (efectivo) y un saldoAFavorAplicado (SAF) en la misma factura producen DOS lineas separadas, cada una una sola vez', () => {
+    const recibo = reciboConPagosYCierre({
+      evolucion: {
+        abonos: [{ fecha: '2026-08-15', monto: 10, tasaPago: 40 }],
+        saldoAFavorAplicado: { fecha: '2026-08-16', monto: 6, tasaPago: 40 },
+      },
+    })
+    const texto = buildReciboTextoPlano(recibo)
+    const lineas = texto.split('\n')
+
+    const lineasAbono = lineas.filter((l) => l.startsWith('Abono'))
+    const lineasSaldoAFavor = lineas.filter((l) => l === `Saldo a favor: ${formatMontoBimonetario(6, 240, 'USD')}`)
+    expect(lineasAbono).toHaveLength(1)
+    expect(lineasSaldoAFavor).toHaveLength(1)
+  })
 })
 
 describe('Evolucion en buildReciboPdfBlob (PDF) (PR5)', () => {
@@ -1560,6 +1643,21 @@ describe('Evolucion en buildReciboPdfBlob (PDF) (PR5)', () => {
     const idxEvolucion = pdfTextCalls.findIndex((call) => call[0] === 'Evolucion')
     const idxMetodosPago = pdfTextCalls.findIndex((call) => call[0] === 'Metodos de pago')
     expect(idxEvolucion).toBeGreaterThan(idxMetodosPago)
+  })
+
+  it('con saldoAFavorAplicado poblado, la tabla "Evolucion" incluye la fila "Saldo a favor" (PR8, saf-display-factura)', () => {
+    const mockedAutoTable = vi.mocked(autoTable)
+    mockedAutoTable.mockClear()
+
+    const recibo = reciboConPagosYCierre({
+      evolucion: { saldoAFavorAplicado: { fecha: '2026-08-20', monto: 6, tasaPago: 40 } },
+    })
+
+    buildReciboPdfBlob(recibo)
+
+    const evolucionCall = mockedAutoTable.mock.calls[3]
+    const evolucionBody = (evolucionCall[1] as { body: string[][] }).body
+    expect(evolucionBody).toEqual([['Saldo a favor', formatMontoBimonetario(6, 240, 'USD')]])
   })
 })
 
