@@ -641,7 +641,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
               </h4>
               {loadingPagos ? (
                 <div className="h-16 bg-muted/50 rounded animate-pulse" />
-              ) : pagos.length === 0 ? (
+              ) : pagos.length === 0 && safMovimientos.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-2">Sin pagos registrados</p>
               ) : (
                 <div className="overflow-auto rounded-md border max-h-48">
