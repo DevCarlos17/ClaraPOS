@@ -34,6 +34,11 @@
 # Tabla system_settings (config de precision decimal; PK es `key`, se aliasa a id):
 #   ALTER PUBLICATION powersync ADD TABLE "public"."system_settings";
 #
+# Tablas SAF open-item (saf-snapshot-y-trazabilidad; ya agregadas por migraciones
+# 0104/0105, listadas aqui para referencia):
+#   ALTER PUBLICATION powersync ADD TABLE "public"."saf_creditos_lotes";
+#   ALTER PUBLICATION powersync ADD TABLE "public"."saf_creditos_aplicaciones";
+#
 # Para verificar que tablas ya estan en la publicacion:
 #   SELECT tablename FROM pg_publication_tables WHERE pubname = 'powersync';
 # =============================================
@@ -101,6 +106,11 @@ bucket_definitions:
       - SELECT * FROM clientes WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM movimientos_cuenta WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM vencimientos_cobrar WHERE empresa_id = bucket.empresa_id
+      # SAF open-item (saf-snapshot-y-trazabilidad): libro de lotes de credito +
+      # asignaciones. Sin estas lineas, saf_creditos_lotes no baja al SQLite local
+      # y consumirSafLotesEnTx no encuentra lotes (falso "saldo insuficiente").
+      - SELECT * FROM saf_creditos_lotes WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM saf_creditos_aplicaciones WHERE empresa_id = bucket.empresa_id
 
       # --- VENTAS ---
       - SELECT * FROM ventas WHERE empresa_id = bucket.empresa_id
