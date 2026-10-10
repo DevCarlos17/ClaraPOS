@@ -28,6 +28,7 @@ import Decimal from 'decimal.js'
 import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { db } from '@/core/db/powersync/db'
 import { localNow } from '@/lib/dates'
+import { hayFormaDeCobroValida, calcularTotalAplicado } from '../lib/pago-gating'
 
 type OverpayMode = 'VUELTO' | 'SAF' | 'PROPINA' | null
 
@@ -241,8 +242,10 @@ export function PagoFacturaModal({
   const destinoPrestamoInvalido = destino === 'PRESTAMO' && !vencimientoId
   // SAF covers full saldo and no method needed
   const safCubreTodo = usarSaf && montoSafNum >= saldoEfectivo - 0.001
+  // Fix A (PR11): habilitar tambien cuando el SAF es la UNICA via de pago, aunque
+  // no cubra el 100% del saldo (ver pago-gating.ts para el contrato completo).
   const canSubmit =
-    (safCubreTodo || (!!metodoCobro && montoNum > 0)) &&
+    hayFormaDeCobroValida(usarSaf, montoSafNum, !!metodoCobro, montoNum) &&
     !loading &&
     tasaNum > 0 && !destinoPrestamoInvalido && overpayResuelto &&
     (!usarSaf || montoSafNum > 0)
@@ -975,7 +978,7 @@ export function PagoFacturaModal({
               Cancelar
             </Button>
             <Button type="submit" disabled={!canSubmit}>
-              {loading ? 'Registrando...' : `Pagar ${formatUsd(montoUsd)}`}
+              {loading ? 'Registrando...' : `Pagar ${formatUsd(calcularTotalAplicado(montoUsd, montoSafNum))}`}
             </Button>
           </div>
         </form>
