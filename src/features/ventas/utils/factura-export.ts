@@ -459,9 +459,14 @@ const SEPARADOR = generarSeparador()
  * (M), se muestra SOLO esa moneda (sin equivalente). Si no coincide, la moneda nativa del
  * pago se mantiene como primaria y se agrega el equivalente de la otra moneda entre
  * parentesis (comportamiento historico para el caso de no-coincidencia).
+ *
+ * `linea.forzarBimonetario` ignora la comparacion de monedas y SIEMPRE muestra ambas —
+ * exclusivo de lineas sinteticas cuya `moneda` es un label interno fijo (no una eleccion
+ * real del usuario), p.ej. SAF-emision (`mapSafEmisionAPagos`). Ver engram #5237: sin este
+ * flag, esa linea colapsaba a USD-only cuando `monedaPresentacion === 'USD'` (su default).
  */
 export function formatMontoPago(linea: ReciboPagoLinea, monedaPresentacion: MonedaPresentacion): string {
-  if (linea.moneda === monedaPresentacion) {
+  if (linea.moneda === monedaPresentacion && !linea.forzarBimonetario) {
     return linea.moneda === 'USD' ? formatUsd(linea.montoUsd) : formatBs(linea.montoBs)
   }
   return linea.moneda === 'USD'

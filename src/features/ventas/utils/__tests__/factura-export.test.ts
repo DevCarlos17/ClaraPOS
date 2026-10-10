@@ -817,6 +817,21 @@ describe('formatMontoPago (moneda del pago coincide con M -> solo M; si no coinc
     const linea = pagoFixture({ moneda: 'BS', montoNativo: 300, montoBs: 300, montoUsd: 0.6 })
     expect(formatMontoPago(linea, 'USD')).toBe('Bs. 300,00 ($0.60)')
   })
+
+  it("forzarBimonetario:true + moneda='USD' + M='USD' (coinciden): NO colapsa a USD-only, muestra Bs tambien (linea SAF-emision, engram #5237)", () => {
+    const linea = pagoFixture({ moneda: 'USD', montoNativo: 1, montoUsd: 1, montoBs: 500, forzarBimonetario: true })
+    expect(formatMontoPago(linea, 'USD')).toBe('$1.00 (Bs. 500,00)')
+  })
+
+  it("forzarBimonetario:true + moneda='USD' + M='BS': sigue bimonetario (mismo resultado que el caso no-coincidente, sin regresion)", () => {
+    const linea = pagoFixture({ moneda: 'USD', montoNativo: 1, montoUsd: 1, montoBs: 500, forzarBimonetario: true })
+    expect(formatMontoPago(linea, 'BS')).toBe('$1.00 (Bs. 500,00)')
+  })
+
+  it("forzarBimonetario ausente (undefined) + moneda='USD' + M='USD': comportamiento historico intacto, SOLO USD (no regresion)", () => {
+    const linea = pagoFixture({ moneda: 'USD', montoNativo: 1, montoUsd: 1, montoBs: 500 })
+    expect(formatMontoPago(linea, 'USD')).toBe('$1.00')
+  })
 })
 
 describe('sumarAbonos', () => {

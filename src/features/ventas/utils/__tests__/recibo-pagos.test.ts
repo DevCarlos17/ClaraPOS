@@ -72,6 +72,25 @@ describe('agruparPagosPorMetodo', () => {
     const sumaBs = lineas.reduce((acc, l) => acc + l.montoBs, 0)
     expect(sumaBs).toBe(1000)
   })
+
+  it('pago con forzarBimonetario:true (linea sentinel SAF-emision, engram #5237): la linea agrupada hereda forzarBimonetario=true', () => {
+    const pagos = [
+      pago({ metodo_cobro_id: '__SAF_EMISION__', metodo_nombre: 'Saldo a favor', moneda: 'USD', monto: 1, forzarBimonetario: true }),
+    ]
+
+    const lineas = agruparPagosPorMetodo(pagos, 500)
+
+    expect(lineas).toHaveLength(1)
+    expect(lineas[0].forzarBimonetario).toBe(true)
+  })
+
+  it('pago sin forzarBimonetario (metodo real, caso normal): la linea agrupada NO trae el flag (undefined, no regresion)', () => {
+    const pagos = [pago({ metodo_cobro_id: 'efectivo-usd', metodo_nombre: 'Efectivo Dólares', moneda: 'USD', monto: 1 })]
+
+    const lineas = agruparPagosPorMetodo(pagos, 500)
+
+    expect(lineas[0].forzarBimonetario).toBeUndefined()
+  })
 })
 
 // ─── construirCierreRecibo ──────────────────────────────────────

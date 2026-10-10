@@ -16,6 +16,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { todayStr } from '@/lib/dates'
 import { NativeSelect } from '@/components/ui/native-select'
+import { hayFormaDeCobroValida } from '../lib/pago-gating'
 
 type ExcessMode = 'ANTICIPO' | 'VUELTO' | 'PROPINA'
 
@@ -130,8 +131,10 @@ export function AbonoGlobalModal({
   const excedenteUsd = estaOverpago ? Number((montoUsd - saldoConSaf).toFixed(2)) : 0
 
   const safCubreTodo = usarSaf && montoSafNum >= saldoActual - 0.001
+  // Fix A (PR11): habilitar tambien cuando el SAF es la UNICA via de pago, aunque
+  // no cubra el 100% de la deuda (ver pago-gating.ts para el contrato completo).
   const canSubmit =
-    (safCubreTodo || (!!metodoPagoId && monto > 0)) &&
+    hayFormaDeCobroValida(usarSaf, montoSafNum, !!metodoPagoId, monto) &&
     tasaEfectiva > 0 &&
     !submitting &&
     (!usarSaf || montoSafNum > 0)
