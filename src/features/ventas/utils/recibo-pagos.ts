@@ -10,6 +10,13 @@ export interface ReciboPagoInput {
   metodo_nombre: string
   moneda: 'USD' | 'BS'
   monto: number
+  /**
+   * Fuerza el render bimonetario (ambas monedas) en `formatMontoPago`, sin importar
+   * `monedaPresentacion`. Uso exclusivo de lineas sinteticas cuya `moneda` es un label
+   * interno fijo (no una eleccion real del usuario) — p.ej. SAF-emision
+   * (`mapSafEmisionAPagos`, `moneda: 'USD'` hardcoded). Ver engram #5237.
+   */
+  forzarBimonetario?: boolean
 }
 
 export interface ReciboPagoLinea {
@@ -19,6 +26,8 @@ export interface ReciboPagoLinea {
   montoNativo: number
   montoBs: number
   montoUsd: number
+  /** Ver `ReciboPagoInput.forzarBimonetario`. */
+  forzarBimonetario?: boolean
 }
 
 export type ReciboCierreTipo = 'VUELTO' | 'SAF' | 'PROPINA' | 'DIFERENCIAL_SOBRANTE' | 'CREDITO'
@@ -76,7 +85,10 @@ const CIERRE_TIPOS_EXCEDENTE: ReadonlySet<string> = new Set(['VUELTO', 'SAF', 'P
  * muestre el equivalente relevante segun la moneda nativa del método.
  */
 export function agruparPagosPorMetodo(pagos: ReciboPagoInput[], tasa: DecimalInput): ReciboPagoLinea[] {
-  const acumulado = new Map<string, { metodoNombre: string; moneda: 'USD' | 'BS'; monto: Decimal }>()
+  const acumulado = new Map<
+    string,
+    { metodoNombre: string; moneda: 'USD' | 'BS'; monto: Decimal; forzarBimonetario: boolean }
+  >()
 
   for (const pago of pagos) {
     const existente = acumulado.get(pago.metodo_cobro_id)
@@ -85,10 +97,11 @@ export function agruparPagosPorMetodo(pagos: ReciboPagoInput[], tasa: DecimalInp
       metodoNombre: pago.metodo_nombre,
       moneda: pago.moneda,
       monto,
+      forzarBimonetario: existente?.forzarBimonetario || !!pago.forzarBimonetario,
     })
   }
 
-  return Array.from(acumulado.entries()).map(([metodoCobroId, { metodoNombre, moneda, monto }]) => {
+  return Array.from(acumulado.entries()).map(([metodoCobroId, { metodoNombre, moneda, monto, forzarBimonetario }]) => {
     const montoBs = moneda === 'USD' ? usdToBs(monto, tasa) : monto
     const montoUsd = moneda === 'USD' ? monto : bsToUsd(monto, tasa)
 
@@ -99,6 +112,7 @@ export function agruparPagosPorMetodo(pagos: ReciboPagoInput[], tasa: DecimalInp
       montoNativo: monto.toNumber(),
       montoBs: montoBs.toNumber(),
       montoUsd: montoUsd.toNumber(),
+      ...(forzarBimonetario ? { forzarBimonetario: true } : {}),
     }
   })
 }

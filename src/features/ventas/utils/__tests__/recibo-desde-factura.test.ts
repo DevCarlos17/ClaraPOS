@@ -761,7 +761,7 @@ describe('useReciboDesdeFactura', () => {
 
     expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd ?? null).toBeNull()
     expect(result.current.recibo?.pagos).toEqual([
-      expect.objectContaining({ metodoNombre: 'Saldo a favor', montoUsd: 15 }),
+      expect.objectContaining({ metodoNombre: 'Saldo a favor', montoUsd: 15, forzarBimonetario: true }),
     ])
   })
 

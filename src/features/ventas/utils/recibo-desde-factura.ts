@@ -184,11 +184,16 @@ function particionarSafAplicaciones(
  * el dato de origen.
  */
 function mapSafEmisionAPagos(rows: SafAplicacionFacturaCxc[]): ReciboPagoInput[] {
+  // forzarBimonetario: true -- moneda:'USD' aqui es un label interno fijo del sentinel
+  // SAF-emision, NO una eleccion real de moneda del usuario (a diferencia de un metodo
+  // de cobro real). Sin este flag, formatMontoPago colapsa la linea a solo-USD cuando
+  // monedaPresentacion default es 'USD', ocultando el equivalente en Bs (engram #5237).
   return rows.map((r) => ({
     metodo_cobro_id: SAF_EMISION_METODO_ID,
     metodo_nombre: SAF_EMISION_METODO_NOMBRE,
     moneda: 'USD',
     monto: Number(r.monto),
+    forzarBimonetario: true,
   }))
 }
 
