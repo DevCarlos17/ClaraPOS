@@ -873,9 +873,15 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       const clienteSafRow = clienteSafRes.rows.item(0) as { saldo_actual: string; saf_disponible: string }
       const saldoActualSaf = new Decimal(clienteSafRow.saldo_actual || '0')
       const safDisponibleAntes = new Decimal(clienteSafRow.saf_disponible || '0')
-      if (saldoActualSaf.gte(new Decimal('-0.001'))) throw new Error('El cliente no tiene saldo a favor disponible')
-      if (montoSaf.gt(saldoActualSaf.abs().plus(new Decimal('0.01')))) {
-        throw new Error(`El monto SAF excede el saldo disponible ($${toStorageString(saldoActualSaf.abs())})`)
+      // El GATE valida contra `saf_disponible` (snapshot puro de credito SAF,
+      // mantenido por trigger), NO contra `saldo_actual` (neteado: deuda +
+      // credito mezclados). Un cliente con deuda Y credito puede tener
+      // saldo_actual >= 0 (o un valor neteado distinto al credito real) y
+      // aun asi tener saf_disponible > 0 — bug PR13, mismo patron ya
+      // correcto en registrarPagoFactura (ver arriba, ~L754-757).
+      if (safDisponibleAntes.lte('0.001')) throw new Error('El cliente no tiene saldo a favor disponible')
+      if (montoSaf.gt(safDisponibleAntes.plus(new Decimal('0.01')))) {
+        throw new Error(`El monto SAF excede el saldo disponible ($${toStorageString(safDisponibleAntes)})`)
       }
 
       const saldoAntesSaf = saldoActualSaf
@@ -1395,16 +1401,18 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
     // 3a. SAF pre-step: aplicar crédito del cliente al préstamo
     if (montoSafNum.gt(0)) {
       const clienteSafRes = await tx.execute(
-        'SELECT saldo_actual FROM clientes WHERE id = ? LIMIT 1',
+        'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1',
         [venc.cliente_id]
       )
       if (!clienteSafRes.rows?.length) throw new Error('Cliente no encontrado')
-      const saldoClienteSaf = new Decimal(
-        (clienteSafRes.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
-      )
-      if (saldoClienteSaf.gte(new Decimal('-0.001'))) throw new Error('El cliente no tiene saldo a favor disponible')
-      if (montoSafNum.gt(saldoClienteSaf.abs().plus(new Decimal('0.01')))) {
-        throw new Error(`El monto SAF excede el saldo disponible ($${toStorageString(saldoClienteSaf.abs())})`)
+      const clienteSafRow = clienteSafRes.rows.item(0) as { saldo_actual: string; saf_disponible: string }
+      const saldoClienteSaf = new Decimal(clienteSafRow.saldo_actual || '0')
+      // El GATE valida contra `saf_disponible` (snapshot puro), NO contra
+      // `saldo_actual` (neteado) — mismo bug/fix PR13 que registrarAbonoGlobal.
+      const safDisponibleAntes = new Decimal(clienteSafRow.saf_disponible || '0')
+      if (safDisponibleAntes.lte('0.001')) throw new Error('El cliente no tiene saldo a favor disponible')
+      if (montoSafNum.gt(safDisponibleAntes.plus(new Decimal('0.01')))) {
+        throw new Error(`El monto SAF excede el saldo disponible ($${toStorageString(safDisponibleAntes)})`)
       }
 
       const saldoClienteDespuesSaf = saldoClienteSaf.plus(montoSafNum)
