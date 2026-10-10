@@ -28,6 +28,7 @@ import {
   useReversosFactura,
   useReembolsosTesoreriaFactura,
   type FacturaParaAnular,
+  type ReversoFacturaRow,
   type ReembolsoTesoreriaFacturaRow,
 } from '../hooks/use-notas-credito'
 
@@ -200,6 +201,119 @@ function mapEvolucionMovimiento(
 }
 
 /**
+ * Particiona `pagos` (filas `pagos` de un `venta_id`) segun el momento en
+ * que el pago se aplico a ESTA factura — MISMO discriminador de
+ * `particionarSafAplicaciones` arriba (PR9), extendido a pagos reales
+ * (efectivo, transferencia, punto, etc. — PR10, engram #5228/#5222):
+ *
+ * - EMISION: `pg.fecha === venta.fecha` — el pago se registro en el MISMO
+ *   `writeTransaction`/`now` en que esa factura se creo en POS
+ *   (`use-ventas.ts` crearVenta, INSERT directo a `pagos` sin pasar por
+ *   `aplicarPagoFacturaEnTx`, linea ~857-876, mismo `now` que `ventas.fecha`).
+ * - POST-EMISION: cualquier otra fecha — CxC `registrarPagoFactura`/
+ *   `registrarAbonoGlobal` (via `aplicarPagoFacturaEnTx` o INSERT directo
+ *   dentro del FIFO) paga una factura que YA EXISTIA, o POS asigna el
+ *   excedente SAF a una factura antigua (`isPosAllocation`, tambien via
+ *   `aplicarPagoFacturaEnTx`). `ventas.fecha` nunca se actualiza tras el
+ *   INSERT (regla #2 CLAUDE.md), asi que la comparacion es estable.
+ *
+ * EMISION se muestra en MÉTODOS DE PAGO (via `agruparPagosPorMetodo`,
+ * comportamiento preexistente). POST-EMISION se EXCLUYE de MÉTODOS DE
+ * PAGO — a proposito NO se re-agrega como linea nueva en EVOLUCIÓN aqui:
+ * para el camino mas comun de abono a UNA factura especifica
+ * (`registrarPagoFactura`, o la asignacion de excedente POS a una factura
+ * antigua) ya existe una fila PAREADA 1:1 en `movimientos_cuenta` (MISMO
+ * `venta_id`+`fecha`, ver `aplicarPagoFacturaEnTx` use-cxc.ts:528-587) que
+ * `useEvolucionFactura` YA surte a `evolucion.abonos` — volver a agregar
+ * una segunda linea aqui duplicaria el monto mostrado (double-count),
+ * exactamente el bug opuesto al que se esta arreglando.
+ *
+ * LIMITACION CONOCIDA (preexistente a este fix, fuera de su alcance):
+ * `registrarAbonoGlobal` (abono FIFO que cruza MULTIPLES facturas,
+ * use-cxc.ts ~1006-1162) inserta 1 fila `pagos` POR factura tocada (con su
+ * `venta_id` real) pero UNA UNICA fila agregada `movimientos_cuenta` con
+ * `venta_id = NULL` (no hay forma de atribuirla a una factura especifica)
+ * — para ESE camino puntual, un pago post-emision queda excluido de
+ * MÉTODOS DE PAGO (correcto) pero sin replacement visible en EVOLUCIÓN
+ * para esta factura. Antes de este fix ese mismo pago SI se mostraba,
+ * erroneamente, en MÉTODOS DE PAGO — este fix no lo empeora, solo deja de
+ * arreglarlo por completo (ver reporte de PR10).
+ */
+function particionarPagosPorEmision(
+  pagos: PagoFacturaCxc[],
+  fechaVenta: string
+): { emision: PagoFacturaCxc[]; postEmision: PagoFacturaCxc[] } {
+  const emision: PagoFacturaCxc[] = []
+  const postEmision: PagoFacturaCxc[] = []
+  for (const row of pagos) {
+    if (row.fecha === fechaVenta) emision.push(row)
+    else postEmision.push(row)
+  }
+  return { emision, postEmision }
+}
+
+/**
+ * Bundle de datos crudos de evolucion + pagos necesarios para construir
+ * `evolucion`/`pagosExtra`/pagos-de-metodos de una factura (PR8/PR9 SAF +
+ * PR10 cash). Mismo shape que las queries de evolucion que ya consume
+ * `useReciboDesdeFactura` — extraido a una funcion PURA para que los
+ * consumidores FROZEN (p.ej. `nota-credito-pos-modal.tsx`, que mantiene sus
+ * propios hooks por diseno — ver doc de `useReciboDesdeFactura` abajo)
+ * puedan reusar la MISMA logica de particion/construccion sin duplicarla a
+ * mano (como ocurria antes de PR10 con solo 4/7 parametros, engram #5228).
+ */
+export interface DatosEvolucionFactura {
+  reversos: ReversoFacturaRow[]
+  reembolsos: ReembolsoTesoreriaFacturaRow[]
+  abonos: EvolucionFacturaRow[]
+  reversosPago: EvolucionFacturaRow[]
+  saldoAFavor: EvolucionFacturaRow[]
+  safAplicaciones: SafAplicacionFacturaCxc[]
+  pagos: PagoFacturaCxc[]
+}
+
+/**
+ * Pura. Particiona SAF (PR9) y pagos (PR10) por emision-vs-post-emision y
+ * construye `evolucion` (seccion EVOLUCIÓN) + `pagosExtra` (SAF-a-la-
+ * emision, sintetico) + `pagosMetodos` (pagos reales SOLO de la emision,
+ * listos para `agruparPagosPorMetodo`). Usado por `useReciboDesdeFactura` y
+ * por los consumidores FROZEN que arman `ReciboData` a mano.
+ */
+export function construirEvolucionYPagosFactura(
+  venta: { fecha: string; tasa: string },
+  datos: DatosEvolucionFactura
+): { pagosMetodos: PagoFacturaCxc[]; pagosExtra: ReciboPagoInput[]; evolucion: ReciboEvolucionInput } {
+  const { emision: safEmision, postEmision: safPostEmision } = particionarSafAplicaciones(
+    datos.safAplicaciones,
+    venta.fecha
+  )
+  const { emision: pagosMetodos } = particionarPagosPorEmision(datos.pagos, venta.fecha)
+
+  const evolucion: ReciboEvolucionInput = {
+    reversos: agruparReversosPorNc(datos.reversos).map((r) => ({
+      nroNcr: r.nroNcr,
+      tipo: r.tipo,
+      fecha: r.fecha,
+      totalUsd: r.montoUsd,
+      totalBs: r.montoBs,
+      metodosReembolso: datos.reembolsos
+        .filter((e) => e.notaCreditoId === r.notaCreditoId)
+        .map((e) => mapReembolsoMetodo(e, venta.tasa)),
+    })),
+    abonos: datos.abonos.map((r) => mapEvolucionMovimiento(r, venta.tasa)),
+    reversosPago: datos.reversosPago.map((r) => mapEvolucionMovimiento(r, venta.tasa)),
+    saldoAFavorGenerado: reducirSaldoAFavorGenerado(datos.saldoAFavor, venta.tasa),
+    saldoAFavorAplicado: reducirSaldoAFavorAplicado(safPostEmision, venta.tasa),
+  }
+
+  return {
+    pagosMetodos,
+    pagosExtra: mapSafEmisionAPagos(safEmision),
+    evolucion,
+  }
+}
+
+/**
  * Extraccion de la fila de mapeo saved-invoice -> `ReciboData`, duplicada
  * byte-a-byte en `nota-credito-pos-modal.tsx` y `crear-ncr-modal.tsx` antes de
  * este change (Design §Decision 1/2). Pura, sin efectos: mismo `ReciboData`
@@ -301,53 +415,26 @@ export function useReciboDesdeFactura(
     ? parseEmpresaConfig(company?.config).moneda_presentacion_documentos
     : undefined
 
-  // PR9 (saf-seccion-correcta): el SAF que pago ESTA factura EN SU PROPIA
-  // EMISION va a MÉTODOS DE PAGO (via pagosExtra); el que la pago DESPUES
-  // (CxC/abono-global) va a EVOLUCIÓN (via saldoAFavorAplicado). Ver doc de
-  // `particionarSafAplicaciones` arriba — nunca ambas secciones a la vez
-  // para la MISMA fila.
-  const { emision: safEmision, postEmision: safPostEmision } = particionarSafAplicaciones(
-    safAplicaciones,
-    venta.fecha
+  // PR9 (SAF) + PR10 (cash): particiona SAF y pagos por emision-vs-post-
+  // emision y construye evolucion/pagosExtra/pagosMetodos — ver doc de
+  // `construirEvolucionYPagosFactura` arriba. Nunca ambas secciones a la
+  // vez para la MISMA fila/pago.
+  const { pagosMetodos, pagosExtra, evolucion } = construirEvolucionYPagosFactura(
+    { fecha: venta.fecha, tasa: venta.tasa },
+    { reversos, reembolsos, abonos, reversosPago, saldoAFavor, safAplicaciones, pagos }
   )
-
-  const evolucion: ReciboEvolucionInput = {
-    reversos: agruparReversosPorNc(reversos).map((r) => ({
-      nroNcr: r.nroNcr,
-      tipo: r.tipo,
-      fecha: r.fecha,
-      totalUsd: r.montoUsd,
-      totalBs: r.montoBs,
-      // Enhancement B (nc-refund-tesoreria): metodos de tesoreria usados
-      // para reembolsar ESTA NC especifica (cruzado por notaCreditoId).
-      metodosReembolso: reembolsos
-        .filter((e) => e.notaCreditoId === r.notaCreditoId)
-        .map((e) => mapReembolsoMetodo(e, venta.tasa)),
-    })),
-    // SIEMPRE la tasa historica de la factura (venta.tasa) como fallback —
-    // nunca la tasa vigente del sistema (mismo criterio que `tasa` en
-    // buildReciboDataDesdeFacturaGuardada`, linea ~84 arriba).
-    abonos: abonos.map((r) => mapEvolucionMovimiento(r, venta.tasa)),
-    reversosPago: reversosPago.map((r) => mapEvolucionMovimiento(r, venta.tasa)),
-    saldoAFavorGenerado: reducirSaldoAFavorGenerado(saldoAFavor, venta.tasa),
-    // PR8/PR9: SAF CONSUMIDO/aplicado a ESTA factura DESPUES de su emision
-    // (saf_creditos_aplicaciones con fecha > venta.fecha), distinto de
-    // saldoAFavorGenerado (SAF que esta factura generó via NC/anticipo) y
-    // del SAF-a-la-emision (que ahora va a MÉTODOS DE PAGO, no aqui).
-    saldoAFavorAplicado: reducirSaldoAFavorAplicado(safPostEmision, venta.tasa),
-  }
 
   const recibo = buildReciboDataDesdeFacturaGuardada(
     venta,
     detalle,
-    pagos,
+    pagosMetodos,
     company,
     {
       esReimpresion: opts?.esReimpresion,
       monedaPresentacion,
     },
     evolucion,
-    mapSafEmisionAPagos(safEmision)
+    pagosExtra
   )
 
   return { recibo, isLoading: false }

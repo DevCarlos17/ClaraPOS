@@ -825,4 +825,173 @@ describe('useReciboDesdeFactura', () => {
     // Post-emision -> EVOLUCIÓN, exactamente 6 (nunca 4+6=10)
     expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd).toBe(6)
   })
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PR10 (saf-particion-efectivo): MISMO discriminador de PR9 (fecha ===
+  // venta.fecha) aplicado a `pagos` reales (efectivo/transferencia/punto) —
+  // antes de este fix, `pagos` se dumpeaba COMPLETO en MÉTODOS DE PAGO sin
+  // filtrar por fecha, causando que un abono CxC apareciera en AMBAS
+  // secciones (engram #5228/#5222).
+  // ─────────────────────────────────────────────────────────────────────────
+
+  it('PR10: pago en EMISION (misma fecha exacta que venta.fecha) aparece en recibo.pagos (MÉTODOS DE PAGO)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    const factura = baseFactura()
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [basePago({ fecha: factura.fecha, monto_usd: '30.00' })],
+      isLoading: false,
+    })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(factura))
+
+    expect(result.current.recibo?.pagos).toEqual([
+      expect.objectContaining({ metodoNombre: 'Efectivo USD', montoUsd: 30 }),
+    ])
+    expect(result.current.recibo?.evolucion).toBeUndefined()
+  })
+
+  it('PR10: pago POST-EMISION (CxC, fecha > venta.fecha) NUNCA aparece en recibo.pagos (MÉTODOS DE PAGO)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    const factura = baseFactura() // fecha: '2026-08-13T10:30:00.000-04:00'
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [basePago({ fecha: '2026-08-20', monto_usd: '18.00', monto: '18.00' })],
+      isLoading: false,
+    })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(factura))
+
+    expect(result.current.recibo?.pagos).toEqual([])
+  })
+
+  it('PR10: el pago post-emision aparece en evolucion.abonos (via useEvolucionFactura, mismo movimiento pareado por aplicarPagoFacturaEnTx) y NO se duplica en recibo.pagos — sin double display', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    const factura = baseFactura()
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [basePago({ fecha: '2026-08-20', monto_usd: '18.00', monto: '18.00' })],
+      isLoading: false,
+    })
+    // mismo evento: aplicarPagoFacturaEnTx escribe pagos+movimientos_cuenta
+    // con EL MISMO venta_id+fecha dentro de la MISMA writeTransaction.
+    mockedUseEvolucionFactura.mockReturnValue(
+      baseEvolucion({
+        abonos: [baseEvolucionRow({ tipo: 'PAG', monto: '18.00', tasa_pago: '40.0000', fecha: '2026-08-20' })],
+      })
+    )
+
+    const { result } = renderHook(() => useReciboDesdeFactura(factura))
+
+    expect(result.current.recibo?.pagos).toEqual([])
+    expect(result.current.recibo?.evolucion?.abonos).toEqual([
+      { fecha: '2026-08-20', montoUsd: 18, montoBs: 720 },
+    ])
+  })
+
+  it('PR10: mixto — pago de EMISION + pago POST-EMISION (CxC) en la misma factura — cada uno en SU seccion, una sola vez', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    const factura = baseFactura()
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [
+        basePago({ id: 'pago-emi', fecha: factura.fecha, monto_usd: '30.00' }),
+        basePago({ id: 'pago-post', fecha: '2026-08-20', monto_usd: '18.00', monto: '18.00' }),
+      ],
+      isLoading: false,
+    })
+    mockedUseEvolucionFactura.mockReturnValue(
+      baseEvolucion({
+        abonos: [baseEvolucionRow({ tipo: 'PAG', monto: '18.00', tasa_pago: '40.0000', fecha: '2026-08-20' })],
+      })
+    )
+
+    const { result } = renderHook(() => useReciboDesdeFactura(factura))
+
+    // MÉTODOS DE PAGO: solo el de la emision, exactamente una vez (30, nunca 48)
+    expect(result.current.recibo?.pagos).toEqual([
+      expect.objectContaining({ metodoNombre: 'Efectivo USD', montoUsd: 30 }),
+    ])
+    // EVOLUCIÓN: solo el post-emision, exactamente una vez
+    expect(result.current.recibo?.evolucion?.abonos).toEqual([
+      { fecha: '2026-08-20', montoUsd: 18, montoBs: 720 },
+    ])
+  })
+
+  it('PR10: combinado con SAF — SAF+efectivo de EMISION van ambos a MÉTODOS; SAF+efectivo POST-EMISION van ambos a EVOLUCIÓN', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    const factura = baseFactura()
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [
+        basePago({ id: 'pago-emi', fecha: factura.fecha, monto_usd: '30.00' }),
+        basePago({ id: 'pago-post', fecha: '2026-08-20', monto_usd: '18.00', monto: '18.00' }),
+      ],
+      isLoading: false,
+    })
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      safAplicaciones: [
+        baseSafAplicacion({ id: 'sca-emi', monto: '5.00000000', tasa_pago: '40.0000', fecha: factura.fecha }),
+        baseSafAplicacion({ id: 'sca-post', monto: '9.00000000', tasa_pago: '40.0000', fecha: '2026-09-01' }),
+      ],
+      isLoading: false,
+    })
+    mockedUseEvolucionFactura.mockReturnValue(
+      baseEvolucion({
+        abonos: [baseEvolucionRow({ tipo: 'PAG', monto: '18.00', tasa_pago: '40.0000', fecha: '2026-08-20' })],
+      })
+    )
+
+    const { result } = renderHook(() => useReciboDesdeFactura(factura))
+
+    // MÉTODOS DE PAGO: efectivo(30) + SAF(5) de la EMISION, exactamente 2 lineas
+    expect(result.current.recibo?.pagos).toHaveLength(2)
+    expect(result.current.recibo?.pagos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ metodoNombre: 'Efectivo USD', montoUsd: 30 }),
+        expect.objectContaining({ metodoNombre: 'Saldo a favor', montoUsd: 5 }),
+      ])
+    )
+    // EVOLUCIÓN: efectivo(18) + SAF(9) POST-EMISION
+    expect(result.current.recibo?.evolucion?.abonos).toEqual([
+      { fecha: '2026-08-20', montoUsd: 18, montoBs: 720 },
+    ])
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd).toBe(9)
+  })
+
+  it('PR10: no double-count, no dropped payment — la suma de MÉTODOS DE PAGO + EVOLUCIÓN es igual al total realmente pagado', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    const factura = baseFactura()
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [
+        basePago({ id: 'pago-emi', fecha: factura.fecha, monto_usd: '30.00' }),
+        basePago({ id: 'pago-post', fecha: '2026-08-20', monto_usd: '18.00', monto: '18.00' }),
+      ],
+      isLoading: false,
+    })
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      safAplicaciones: [
+        baseSafAplicacion({ id: 'sca-emi', monto: '5.00000000', tasa_pago: '40.0000', fecha: factura.fecha }),
+        baseSafAplicacion({ id: 'sca-post', monto: '9.00000000', tasa_pago: '40.0000', fecha: '2026-09-01' }),
+      ],
+      isLoading: false,
+    })
+    mockedUseEvolucionFactura.mockReturnValue(
+      baseEvolucion({
+        abonos: [baseEvolucionRow({ tipo: 'PAG', monto: '18.00', tasa_pago: '40.0000', fecha: '2026-08-20' })],
+      })
+    )
+    // Total real pagado: 30 (efectivo emision) + 5 (SAF emision) + 18 (efectivo post) + 9 (SAF post) = 62
+    const totalPagadoUsd = 62
+
+    const { result } = renderHook(() => useReciboDesdeFactura(factura))
+
+    const sumaMetodosUsd = (result.current.recibo?.pagos ?? []).reduce((acc, p) => acc + p.montoUsd, 0)
+    const sumaEvolucionUsd =
+      (result.current.recibo?.evolucion?.abonos ?? []).reduce((acc, a) => acc + a.montoUsd, 0) +
+      (result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd ?? 0)
+
+    expect(sumaMetodosUsd + sumaEvolucionUsd).toBe(totalPagadoUsd)
+  })
 })
