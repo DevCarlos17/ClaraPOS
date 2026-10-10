@@ -1,5 +1,5 @@
 // Mockeamos `@/core/db/powersync/db` porque `registrarSafExcedente`,
-// `aplicarSaldoFavor` y `registrarPagoFactura` usan `db.writeTransaction` a
+// `registrarAbonoGlobal` y `registrarPagoFactura` usan `db.writeTransaction` a
 // nivel de modulo — sin este mock, importar `use-cxc.ts` construye una
 // PowerSyncDatabase real y revienta con "Worker is not defined" en el
 // entorno de test. Mismo patron que use-ventas.test.ts / use-ajustes.test.ts.
@@ -26,8 +26,8 @@ vi.mock('@/features/contabilidad/lib/generar-asientos', () => ({
 // `useDetalleFactura` usa `useQuery` de `@powersync/react` — mismo patron que
 // use-facturas-sesion-activa.test.ts / use-deuda-cliente.test.ts. Ninguna de
 // las funciones ya testeadas en este archivo (registrarSafExcedente,
-// aplicarSaldoFavor, registrarPagoFactura) llama useQuery, asi que mockear el
-// modulo completo aqui es seguro para el resto de la suite.
+// registrarAbonoGlobal, registrarPagoFactura) llama useQuery, asi que mockear
+// el modulo completo aqui es seguro para el resto de la suite.
 vi.mock('@powersync/react', () => ({ useQuery: vi.fn() }))
 
 import type { Transaction } from '@powersync/common'
@@ -37,7 +37,6 @@ import { db } from '@/core/db/powersync/db'
 import { toStorageString } from '@/lib/currency'
 import {
   registrarSafExcedente,
-  aplicarSaldoFavor,
   registrarPagoFactura,
   registrarAbonoGlobal,
   registrarReversoAbono,
@@ -48,7 +47,6 @@ import {
   useSafAplicacionesFactura,
   useClientesConDeuda,
   type RegistrarSafExcedenteParams,
-  type AplicarSaldoFavorParams,
   type PagoFacturaParams,
   type AbonoGlobalParams,
   type ConsumirSafLotesEnTxParams,
@@ -249,172 +247,9 @@ describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no 
 })
 
 // ─────────────────────────────────────────────────────────────────────────
-// aplicarSaldoFavor — gate re-sourced a clientes.saf_disponible (snapshot,
-// ya no escanea movimientos_cuenta), NO saldo_actual neteado
-// ─────────────────────────────────────────────────────────────────────────
-
-describe('aplicarSaldoFavor — gate re-sourced a clientes.saf_disponible (snapshot), no clientes.saldo_actual', () => {
-  function mockTx(opts: {
-    saldoActual: string
-    safDisponible: string
-    facturaSaldoPend: Record<string, string>
-    /**
-     * Lotes SAF activos disponibles para `consumirSafLotesEnTx` (PR4). Default:
-     * un lote unico con saldo suficiente para cubrir `safDisponible` — cubre
-     * todos los tests PRE-EXISTENTES de este describe (que no les interesa el
-     * detalle de lotes, solo que la llamada no lance por falta de cobertura).
-     */
-    lotes?: Array<{ id: string; saldo_disponible_usd: string }>
-  }) {
-    const calls: Call[] = []
-    const lotesIniciales = opts.lotes ?? [{ id: 'lote-default', saldo_disponible_usd: opts.safDisponible }]
-    const lotesState = new Map(lotesIniciales.map((l) => [l.id, l.saldo_disponible_usd]))
-    mockedDb.writeTransaction.mockImplementation(async (callback) => {
-      const tx = {
-        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
-          calls.push({ sql, params })
-          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? AND empresa_id = ?')) {
-            return {
-              rows: {
-                length: 1,
-                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible }),
-              },
-            }
-          }
-          if (sql.startsWith('SELECT saldo_pend_usd FROM ventas WHERE id = ? AND empresa_id = ?')) {
-            const ventaId = params[0] as string
-            const saldo = opts.facturaSaldoPend[ventaId]
-            return saldo !== undefined
-              ? { rows: { length: 1, item: () => ({ saldo_pend_usd: saldo }) } }
-              : { rows: { length: 0, item: () => undefined } }
-          }
-          if (sql.startsWith('SELECT id, saldo_disponible_usd FROM saf_creditos_lotes')) {
-            const rows = lotesIniciales
-              .filter((l) => Number(lotesState.get(l.id) ?? '0') > 0.0000001)
-              .map((l) => ({ id: l.id, saldo_disponible_usd: lotesState.get(l.id) ?? '0' }))
-            return { rows: { length: rows.length, item: (i: number) => rows[i] } }
-          }
-          if (sql.startsWith('UPDATE saf_creditos_lotes SET saldo_disponible_usd')) {
-            lotesState.set(params[3] as string, params[0] as string)
-          }
-          return { rows: { length: 0, item: () => undefined } }
-        }),
-      } as unknown as Transaction
-      return callback(tx)
-    })
-    return calls
-  }
-
-  function baseParams(overrides: Partial<AplicarSaldoFavorParams> = {}): AplicarSaldoFavorParams {
-    return {
-      clienteId: 'cliente-1',
-      empresaId: 'emp-1',
-      cajeroId: 'user-1',
-      tasa: 40,
-      facturas: [{ ventaId: 'venta-1', nroFactura: 'F-001', montoAplicarUsd: 50 }],
-      totalAplicadoUsd: 50,
-      ...overrides,
-    }
-  }
-
-  it('el gate lee saf_disponible, NO clientes.saldo_actual: procede aunque saldo_actual sea 0 (netaria "sin credito") mientras saf_disponible sea suficiente', async () => {
-    const calls = mockTx({
-      saldoActual: '0.00000000', // netted: parece "sin deuda ni credito"
-      safDisponible: '100.00000000',
-      facturaSaldoPend: { 'venta-1': '50.00000000' },
-    })
-
-    await expect(aplicarSaldoFavor(baseParams({ totalAplicadoUsd: 50 }))).resolves.not.toThrow()
-
-    const safInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAF'"))
-    expect(safInsert).toBeDefined()
-    expect(safInsert!.sql).not.toContain("'SAFC'")
-
-    const ventaUpdate = calls.find((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
-    expect(ventaUpdate).toBeDefined()
-    expect(ventaUpdate!.params).toEqual([toStorageString(0), 'venta-1']) // 50 - 50 = 0
-
-    // El gate ya NO escanea movimientos_cuenta (SUM(SAFC)/SUM(SAF)) — lee el snapshot directo
-    const scanCalls = calls.filter((c) => c.sql.includes('as creado') && c.sql.includes('as consumido'))
-    expect(scanCalls).toHaveLength(0)
-  })
-
-  it('regresion: rechaza cuando el monto excede saf_disponible real, AUNQUE clientes.saldo_actual sugiera mucho mas credito disponible (no se debe volver a leer saldo_actual como gate)', async () => {
-    mockTx({
-      saldoActual: '-500.00000000', // netted MUY negativo: un gate viejo basado en esto dejaria pasar cualquier monto
-      safDisponible: '10.00000000', // disponible real
-      facturaSaldoPend: { 'venta-1': '50.00000000' },
-    })
-
-    await expect(
-      aplicarSaldoFavor(baseParams({ totalAplicadoUsd: 50 }))
-    ).rejects.toThrow(/excede el crédito disponible/i)
-  })
-
-  it('rechaza cuando no hay credito disponible (saf_disponible <= 0), sin importar cuantas facturas se seleccionen', async () => {
-    mockTx({
-      saldoActual: '0.00000000',
-      safDisponible: '0',
-      facturaSaldoPend: { 'venta-1': '50.00000000' },
-    })
-
-    await expect(
-      aplicarSaldoFavor(baseParams({ totalAplicadoUsd: 10 }))
-    ).rejects.toThrow(/no tiene saldo a favor disponible/i)
-  })
-
-  it('escritura optimista pareada: el UPDATE clientes final incluye saf_disponible = anterior - totalAplicado (SAF resta)', async () => {
-    const calls = mockTx({
-      saldoActual: '0.00000000',
-      safDisponible: '100.00000000',
-      facturaSaldoPend: { 'venta-1': '50.00000000' },
-    })
-
-    await aplicarSaldoFavor(baseParams({ totalAplicadoUsd: 50 }))
-
-    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
-    expect(clienteUpdate).toBeDefined()
-    expect(clienteUpdate!.sql).toContain('saf_disponible')
-    // 100 (anterior) - 50 (aplicado) = 50
-    expect(clienteUpdate!.params).toContain(toStorageString(50))
-  })
-
-  it('PR4 (saf-snapshot-y-trazabilidad): 2 facturas aplicadas comparten el pool de lotes FIFO — la 2a factura ve el saldo del lote YA decrementado por la 1a (dentro de la misma writeTransaction)', async () => {
-    const calls = mockTx({
-      saldoActual: '0.00000000',
-      safDisponible: '100.00000000',
-      facturaSaldoPend: { 'venta-1': '30.00000000', 'venta-2': '20.00000000' },
-      lotes: [{ id: 'lote-unico', saldo_disponible_usd: '100.00000000' }],
-    })
-
-    await aplicarSaldoFavor(
-      baseParams({
-        facturas: [
-          { ventaId: 'venta-1', nroFactura: 'F-001', montoAplicarUsd: 30 },
-          { ventaId: 'venta-2', nroFactura: 'F-002', montoAplicarUsd: 20 },
-        ],
-        totalAplicadoUsd: 50,
-      })
-    )
-
-    const aplicaciones = calls.filter((c) => c.sql.startsWith('INSERT INTO saf_creditos_aplicaciones'))
-    expect(aplicaciones).toHaveLength(2)
-    expect(aplicaciones[0]!.params[4]).toBe('venta-1')
-    expect(aplicaciones[0]!.params[6]).toBe(toStorageString(30))
-    expect(aplicaciones[0]!.params[7]).toBe(toStorageString(100)) // lote_saldo_antes
-    expect(aplicaciones[0]!.params[8]).toBe(toStorageString(70)) // lote_saldo_despues
-
-    expect(aplicaciones[1]!.params[4]).toBe('venta-2')
-    expect(aplicaciones[1]!.params[6]).toBe(toStorageString(20))
-    expect(aplicaciones[1]!.params[7]).toBe(toStorageString(70)) // ve el remanente de la 1a llamada
-    expect(aplicaciones[1]!.params[8]).toBe(toStorageString(50))
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────
 // registrarPagoFactura (rama SAF inline) — mismo re-source que
-// aplicarSaldoFavor pero como gate embebido dentro del pago de una factura
-// especifica (WARNING 2)
+// registrarAbonoGlobal pero como gate embebido dentro del pago de una
+// factura especifica (WARNING 2)
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.saf_disponible (snapshot, ya no escanea movimientos_cuenta)', () => {
@@ -785,6 +620,27 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
 
     const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
     expect(loteInsert).toBeDefined()
+  })
+
+  // Coverage migrada desde el describe eliminado de `aplicarSaldoFavor`
+  // (saf-consolidar-abono-global, PR12): la aplicacion SAF-only ahora vive
+  // exclusivamente en `registrarAbonoGlobal` via `usarSaf`/`montoSaf` — el
+  // gate de credito disponible de este pre-step debe seguir rechazando los
+  // mismos 2 casos borde que el modal dedicado ya eliminado cubria.
+  it('gate SAF: rechaza cuando montoSaf excede el credito disponible real (saldo_actual negativo = credito), sin importar cuan grande sea el monto solicitado', async () => {
+    mockTx({ saldoActual: '-10.00000000', safDisponible: '10.00000000' })
+
+    await expect(
+      registrarAbonoGlobal(baseParams({ montoSaf: 50 }))
+    ).rejects.toThrow(/excede el saldo disponible/i)
+  })
+
+  it('gate SAF: rechaza cuando el cliente no tiene saldo a favor disponible (saldo_actual >= 0, sin credito neto), sin importar el monto SAF solicitado', async () => {
+    mockTx({ saldoActual: '0.00000000', safDisponible: '0.00000000' })
+
+    await expect(
+      registrarAbonoGlobal(baseParams({ montoSaf: 10 }))
+    ).rejects.toThrow(/no tiene saldo a favor disponible/i)
   })
 })
 

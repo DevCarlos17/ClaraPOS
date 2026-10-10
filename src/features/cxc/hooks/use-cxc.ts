@@ -1808,9 +1808,9 @@ export async function registrarReversoAbono(params: {
 }
 
 // ─── Consumo de lotes SAF (PR4, saf-snapshot-y-trazabilidad Fase 4) ───
-// Helper compartido por los 3 sitios de consumo SAF (`registrarPagoFactura`
-// rama inline, `aplicarSaldoFavor`, POS checkout SAF-como-metodo-de-pago en
-// use-ventas.ts) y por la cascada 2D de `registrarAbonoGlobal` (Fase 5,
+// Helper compartido por los sitios de consumo SAF (`registrarPagoFactura`
+// rama inline, POS checkout SAF-como-metodo-de-pago en use-ventas.ts) y por
+// la cascada 2D de `registrarAbonoGlobal` (Fase 5,
 // donde se llama una vez POR FACTURA tocada por el pre-step SAF — el eje
 // "facturas" ya lo recorre el llamador, este helper recorre el eje "lotes").
 
@@ -1838,8 +1838,8 @@ export interface ConsumirSafLotesEnTxParams {
  * 0105): ya que SQLite no ejecuta triggers de Postgres, este helper hace la
  * escritura optimista del remanente del lote (`UPDATE saf_creditos_lotes`)
  * el mismo, dentro de la MISMA `tx` — por eso llamadas SUCESIVAS dentro de
- * la misma writeTransaction (ej. multiples facturas en `aplicarSaldoFavor` o
- * en la cascada 2D de `registrarAbonoGlobal`) ya ven el saldo decrementado
+ * la misma writeTransaction (ej. la cascada 2D de `registrarAbonoGlobal`,
+ * multiples facturas x multiples lotes) ya ven el saldo decrementado
  * por la llamada anterior. El trigger del servidor es la autoridad final al
  * reconectar (PATCH stripea `saldo_disponible_usd`/`status`, ver
  * connector.ts TRIGGER_MANAGED_PATCH_COLUMNS).
@@ -1903,151 +1903,6 @@ export async function consumirSafLotesEnTx(
       `Saldo de lotes SAF insuficiente para cubrir $${toStorageString(montoRestante)} — posible desincronizacion entre clientes.saf_disponible y saf_creditos_lotes`
     )
   }
-}
-
-// ─── Aplicar Saldo a Favor (SAF) ──────────────────────────────
-
-export interface AplicarSaldoFavorParams {
-  clienteId: string
-  empresaId: string
-  cajeroId: string
-  tasa: number
-  facturas: Array<{ ventaId: string; nroFactura: string; montoAplicarUsd: number }>
-  totalAplicadoUsd: number
-}
-
-/**
- * Aplica el saldo a favor de un cliente (saldo_actual negativo) a sus facturas pendientes.
- * Crea un movimiento_cuenta tipo 'SAF' por cada factura afectada.
- * Reduce ventas.saldo_pend_usd y actualiza clientes.saldo_actual.
- * Todo en una sola transacción atómica.
- */
-export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promise<void> {
-  const { clienteId, empresaId, cajeroId, tasa, facturas, totalAplicadoUsd } = params
-
-  if (!Number.isFinite(totalAplicadoUsd) || totalAplicadoUsd <= 0) throw new Error('El monto a aplicar debe ser mayor a 0')
-  if (facturas.length === 0) throw new Error('Debe seleccionar al menos una factura')
-  if (!Number.isFinite(tasa) || tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
-
-  await db.writeTransaction(async (tx) => {
-    const now = localNow()
-
-    // 1. Validar que el cliente tenga crédito SAF disponible.
-    // saldo_actual sigue siendo la fuente del ledger crudo (para
-    // saldo_anterior/saldo_nuevo mas abajo). El GATE de validacion lee
-    // clientes.saf_disponible directamente (snapshot mantenido por trigger,
-    // ver migrations/0102) — ya NO escanea movimientos_cuenta en cada
-    // llamada (saf-snapshot-y-trazabilidad, reemplaza el SUM(SAFC)-SUM(SAF)
-    // de cxc-saldo-favor-modelo Decision 1/3 por la misma fuente confiable,
-    // ahora O(1); misma SELECT ya usada para la escritura optimista pareada
-    // de abajo — cero round trips extra).
-    const clienteResult = await tx.execute(
-      'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? AND empresa_id = ?',
-      [clienteId, empresaId]
-    )
-    if (!clienteResult.rows?.length) {
-      throw new Error('Cliente no encontrado')
-    }
-    const clienteInitRow = clienteResult.rows.item(0) as { saldo_actual: string; saf_disponible: string }
-    const saldoActualInit = new Decimal(clienteInitRow.saldo_actual || '0')
-    const safDisponibleAntes = new Decimal(clienteInitRow.saf_disponible || '0')
-    const tasaD = new Decimal(tasa)
-    const totalAplicadoD = new Decimal(totalAplicadoUsd)
-
-    if (safDisponibleAntes.lte('0.001')) {
-      throw new Error('El cliente no tiene saldo a favor disponible')
-    }
-
-    // 2. Validar que el total a aplicar no exceda el crédito disponible
-    if (totalAplicadoD.gt(safDisponibleAntes.plus(new Decimal('0.01')))) {
-      throw new Error(
-        `El monto a aplicar ($${toStorageString(totalAplicadoD)}) excede el crédito disponible ($${toStorageString(safDisponibleAntes)})`
-      )
-    }
-
-    // 3. Procesar cada factura
-    let saldoActual = saldoActualInit
-
-    for (const factura of facturas) {
-      if (factura.montoAplicarUsd <= 0) continue
-
-      const montoAplicarD = new Decimal(factura.montoAplicarUsd)
-
-      // a. Leer saldo pendiente actual de la factura
-      const ventaResult = await tx.execute(
-        'SELECT saldo_pend_usd FROM ventas WHERE id = ? AND empresa_id = ?',
-        [factura.ventaId, empresaId]
-      )
-      if (!ventaResult.rows?.length) {
-        throw new Error(`Factura #${factura.nroFactura} no encontrada`)
-      }
-      const saldoPendUsd = new Decimal(
-        (ventaResult.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd || '0'
-      )
-
-      // b. Calcular nuevo pendiente
-      const nuevoPendiente = Decimal.max(new Decimal(0), saldoPendUsd.minus(montoAplicarD))
-
-      // c. Reducir saldo pendiente de la factura
-      await tx.execute(
-        'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
-        [toStorageString(nuevoPendiente), factura.ventaId]
-      )
-
-      // d. Insertar movimiento_cuenta tipo SAF
-      const saldoAntes = saldoActual
-      const saldoDespues = saldoActual.plus(montoAplicarD)
-
-      const movId = uuidv4()
-      await tx.execute(
-        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
-         VALUES (?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          movId,
-          clienteId,
-          `SAF-CXC-${factura.nroFactura}`,
-          toStorageString(montoAplicarD),
-          toStorageString(saldoAntes),
-          toStorageString(saldoDespues),
-          `Saldo a favor aplicado a factura ${factura.nroFactura}`,
-          factura.ventaId,
-          now,
-          empresaId,
-          now,
-          cajeroId,
-          'USD',
-          toStorageString(montoAplicarD),
-          toStorageString(tasaD),
-        ]
-      )
-
-      // PR4 (saf-snapshot-y-trazabilidad Fase 4): consumir lotes FIFO para
-      // esta factura, pareado con el SAF recien creado (movId).
-      await consumirSafLotesEnTx(tx, {
-        empresaId,
-        clienteId,
-        ventaId: factura.ventaId,
-        movimientoCuentaId: movId,
-        montoUsd: montoAplicarD,
-        tasaPago: tasaD,
-        fecha: now,
-        now,
-        usuarioId: cajeroId,
-      })
-
-      saldoActual = saldoDespues
-    }
-
-    // 4. Actualizar saldo del cliente. Escritura optimista pareada de
-    // saf_disponible (SAF resta, total consumido en este call) — mismo
-    // writeTransaction, el trigger del servidor (migration 0102) es la
-    // autoridad final al reconectar.
-    const safDisponibleDespues = calcularSafDisponibleNuevo('SAF', safDisponibleAntes, totalAplicadoD)
-    await tx.execute(
-      'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?',
-      [toStorageString(saldoActual), toStorageString(safDisponibleDespues), now, clienteId]
-    )
-  })
 }
 
 // ─── Préstamo standalone (sin venta) ──────────────────────────
