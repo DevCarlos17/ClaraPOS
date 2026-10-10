@@ -12,7 +12,6 @@ vi.mock('../../hooks/use-cxc', async () => {
 })
 vi.mock('@/features/configuracion/hooks/use-tasas', () => ({ useTasaActual: vi.fn() }))
 vi.mock('../abono-global-modal', () => ({ AbonoGlobalModal: () => null }))
-vi.mock('../aplicar-saf-modal', () => ({ AplicarSafModal: () => null }))
 vi.mock('../factura-detalle-cxc', () => ({ FacturaDetalleCxc: () => null }))
 vi.mock('../cxc-cliente-reporte', () => ({ CxcClienteReporte: () => null }))
 
@@ -126,5 +125,26 @@ describe('CxcClienteDetalle - row a card en mobile (S2)', () => {
 
     const toolbar = screen.getByTestId('cxc-detalle-cerrar').closest('.flex.items-center.justify-between')
     expect(toolbar?.className).toContain('flex-wrap')
+  })
+})
+
+describe('CxcClienteDetalle - consolidacion SAF en Abono Global (saf-consolidar-abono-global)', () => {
+  it('boton "Abono Global" esta SIEMPRE habilitado cuando el cliente tiene saldo a favor (ya no se deshabilita por tieneSafCxc) — la aplicacion de SAF ahora vive dentro del propio modal de Abono Global', () => {
+    mockedUseFacturasPendientes.mockReturnValue({ facturas: [factura()], isLoading: false })
+    mockedUseQuery.mockReturnValue({ data: [{ disponible: 50 }] } as unknown as ReturnType<typeof useQuery>)
+
+    render(<CxcClienteDetalle cliente={cliente()} onClose={vi.fn()} />)
+
+    const boton = screen.getByRole('button', { name: /abono global/i })
+    expect(boton).not.toBeDisabled()
+  })
+
+  it('no renderiza ningun boton "Aplicar SAF" independiente (modal dedicado eliminado)', () => {
+    mockedUseFacturasPendientes.mockReturnValue({ facturas: [factura()], isLoading: false })
+    mockedUseQuery.mockReturnValue({ data: [{ disponible: 50 }] } as unknown as ReturnType<typeof useQuery>)
+
+    render(<CxcClienteDetalle cliente={cliente()} onClose={vi.fn()} />)
+
+    expect(screen.queryByRole('button', { name: /aplicar saf/i })).not.toBeInTheDocument()
   })
 })

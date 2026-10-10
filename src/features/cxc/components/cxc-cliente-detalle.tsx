@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@powersync/react'
-import { X, CurrencyDollar, CaretUp, CaretDown, ArrowDown } from '@phosphor-icons/react'
+import { X, CurrencyDollar, CaretUp, CaretDown } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { DeudaCard } from '@/components/shared/deuda-card'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -8,7 +8,6 @@ import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { useFacturasPendientes, type ClienteConDeuda, type VentaPendiente } from '../hooks/use-cxc'
 import { AbonoGlobalModal } from './abono-global-modal'
-import { AplicarSafModal } from './aplicar-saf-modal'
 import { FacturaDetalleCxc } from './factura-detalle-cxc'
 import { CxcClienteReporte } from './cxc-cliente-reporte'
 
@@ -55,7 +54,6 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
 
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<VentaPendiente | null>(null)
   const [abonoGlobalOpen, setAbonoGlobalOpen] = useState(false)
-  const [aplicarSafOpen, setAplicarSafOpen] = useState(false)
   const [detalleOpen, setDetalleOpen] = useState(false)
   const [sortField, setSortField] = useState<SortField>('fecha')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -126,21 +124,9 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
                   </>
                 )}
               </div>
-              {tieneSafCxc && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="border-green-600 text-green-700 hover:bg-green-50"
-                  onClick={() => setAplicarSafOpen(true)}
-                >
-                  <ArrowDown size={14} className="mr-1" />
-                  Aplicar SAF
-                </Button>
-              )}
               <Button
                 size="sm"
                 onClick={() => setAbonoGlobalOpen(true)}
-                disabled={tieneSafCxc}
                 className={!tieneDeudaCxc && !tieneSafCxc && !isLoading
                   ? 'bg-green-600 hover:bg-green-700 text-white border-green-600'
                   : undefined}
@@ -341,13 +327,6 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
         isOpen={detalleOpen}
         onClose={() => setDetalleOpen(false)}
         factura={facturaSeleccionada}
-      />
-
-      <AplicarSafModal
-        isOpen={aplicarSafOpen}
-        onClose={() => setAplicarSafOpen(false)}
-        cliente={cliente}
-        onSuccess={() => setAplicarSafOpen(false)}
       />
     </>
   )
