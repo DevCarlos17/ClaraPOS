@@ -39,6 +39,7 @@ import {
   registrarSafExcedente,
   registrarPagoFactura,
   registrarAbonoGlobal,
+  registrarAbonoPrestamo,
   registrarReversoAbono,
   consumirSafLotesEnTx,
   useDetalleFactura,
@@ -49,6 +50,7 @@ import {
   type RegistrarSafExcedenteParams,
   type PagoFacturaParams,
   type AbonoGlobalParams,
+  type AbonoPrestamoParams,
   type ConsumirSafLotesEnTxParams,
 } from '../use-cxc'
 
@@ -398,9 +400,9 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.s
 // ─────────────────────────────────────────────────────────────────────────
 // registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
 // saf_disponible (Fase 4, saf-snapshot-y-trazabilidad). El gate de este
-// sitio usa clientes.saldo_actual directamente (no la derivada SUM(SAFC)-
-// SUM(SAF)) — eso es comportamiento PRE-EXISTENTE fuera de alcance de este
-// cambio; esta suite solo cubre el pareo optimista nuevo.
+// sitio fue corregido en PR13 (saf-gate-disponible): antes validaba contra
+// clientes.saldo_actual (neteado deuda+credito), ahora valida contra
+// clientes.saf_disponible (snapshot puro), igual que registrarPagoFactura.
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de saf_disponible', () => {
@@ -640,6 +642,120 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
 
     await expect(
       registrarAbonoGlobal(baseParams({ montoSaf: 10 }))
+    ).rejects.toThrow(/no tiene saldo a favor disponible/i)
+  })
+
+  // PR13 (fix saf-gate-disponible): bug exacto reportado — cliente con
+  // $1.30 de SAF real (saf_disponible) Y $1.30 de deuda, cuyo saldo_actual
+  // NETEADO (mezcla deuda/credito de otras facturas) da -1.00, NO -1.30. El
+  // gate roto leia `saldoActualSaf.abs()` (1.00) en vez de `saf_disponible`
+  // (1.30) para la comparacion de exceso, rechazando una aplicacion 100%
+  // valida con "El monto SAF excede el saldo disponible ($1.00)".
+  it('PR13 bug fix: permite aplicar el SAF completo cuando saf_disponible (1.30) difiere de |saldo_actual netead| (1.00) — antes rechazaba con el monto neteado', async () => {
+    mockTx({ saldoActual: '-1.00000000', safDisponible: '1.30000000' })
+
+    await expect(
+      registrarAbonoGlobal(baseParams({ montoSaf: 1.3 }))
+    ).resolves.not.toThrow()
+  })
+
+  it('PR13 bug fix: sigue rechazando cuando el monto excede saf_disponible real, y el mensaje de error muestra saf_disponible (1.30), NO |saldo_actual| neteado (1.00)', async () => {
+    mockTx({ saldoActual: '-1.00000000', safDisponible: '1.30000000' })
+
+    await expect(
+      registrarAbonoGlobal(baseParams({ montoSaf: 1.35 }))
+    ).rejects.toThrow(/excede el saldo disponible \(\$1\.30000000\)/)
+  })
+
+  it('PR13 bug fix: rechaza "no tiene saldo a favor" cuando saf_disponible es 0, aun si saldo_actual neteado sugiere credito (-5.00) por mezcla con otras facturas', async () => {
+    mockTx({ saldoActual: '-5.00000000', safDisponible: '0.00000000' })
+
+    await expect(
+      registrarAbonoGlobal(baseParams({ montoSaf: 2 }))
+    ).rejects.toThrow(/no tiene saldo a favor disponible/i)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// registrarAbonoPrestamo (SAF pre-step) — PR13 (fix saf-gate-disponible):
+// este sitio tenia el MISMO bug que registrarAbonoGlobal (y ni siquiera leia
+// saf_disponible): el gate validaba contra clientes.saldo_actual neteado.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('registrarAbonoPrestamo (SAF pre-step) — gate corregido a saf_disponible (PR13)', () => {
+  function mockTx(opts: { saldoActual: string; safDisponible: string; saldoPendienteVenc?: string }) {
+    const calls: Call[] = []
+    mockedDb.writeTransaction.mockImplementation(async (callback) => {
+      const tx = {
+        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params })
+          if (sql.startsWith('SELECT id, saldo_pendiente_usd, monto_pagado_usd, status, venta_id, cliente_id')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  id: 'venc-1',
+                  saldo_pendiente_usd: opts.saldoPendienteVenc ?? '100.00000000',
+                  monto_pagado_usd: '0.00000000',
+                  status: 'PENDIENTE',
+                  venta_id: null,
+                  cliente_id: 'cliente-1',
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible }),
+              },
+            }
+          }
+          return { rows: { length: 0, item: () => undefined } }
+        }),
+      } as unknown as Transaction
+      return callback(tx)
+    })
+    return calls
+  }
+
+  function baseParams(overrides: Partial<AbonoPrestamoParams> = {}): AbonoPrestamoParams {
+    return {
+      vencimiento_id: 'venc-1',
+      metodo_cobro_id: 'metodo-1',
+      moneda: 'USD',
+      tasa: 40,
+      monto: 0,
+      empresa_id: 'emp-1',
+      procesado_por: 'user-1',
+      procesado_por_nombre: 'Cajero Test',
+      aplicarSaf: true,
+      ...overrides,
+    }
+  }
+
+  it('PR13 bug fix: permite aplicar el SAF completo cuando saf_disponible (1.30) difiere de |saldo_actual| neteado (1.00) — antes rechazaba con el monto neteado', async () => {
+    mockTx({ saldoActual: '-1.00000000', safDisponible: '1.30000000', saldoPendienteVenc: '1.30000000' })
+
+    await expect(
+      registrarAbonoPrestamo(baseParams({ montoSaf: 1.3 }))
+    ).resolves.not.toThrow()
+  })
+
+  it('PR13 bug fix: sigue rechazando cuando el monto excede saf_disponible real, mostrando saf_disponible (1.30) en el error, no |saldo_actual| neteado (1.00)', async () => {
+    mockTx({ saldoActual: '-1.00000000', safDisponible: '1.30000000', saldoPendienteVenc: '50.00000000' })
+
+    await expect(
+      registrarAbonoPrestamo(baseParams({ montoSaf: 1.35 }))
+    ).rejects.toThrow(/excede el saldo disponible \(\$1\.30000000\)/)
+  })
+
+  it('PR13 bug fix: rechaza "no tiene saldo a favor" cuando saf_disponible es 0, aun si saldo_actual neteado sugiere credito', async () => {
+    mockTx({ saldoActual: '-5.00000000', safDisponible: '0.00000000', saldoPendienteVenc: '50.00000000' })
+
+    await expect(
+      registrarAbonoPrestamo(baseParams({ montoSaf: 2 }))
     ).rejects.toThrow(/no tiene saldo a favor disponible/i)
   })
 })
