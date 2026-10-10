@@ -737,4 +737,92 @@ describe('useReciboDesdeFactura', () => {
     expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd).toBe(7)
     expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoBs).toBe(280)
   })
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PR9 (saf-seccion-correcta): routing MÉTODOS DE PAGO vs EVOLUCIÓN segun si
+  // el SAF pago la factura EN SU EMISION (sca.fecha === venta.fecha, misma
+  // writeTransaction/`now` que creo la venta en POS) o DESPUES (CxC
+  // registrarPagoFactura/registrarAbonoGlobal, sca.fecha > venta.fecha).
+  // Fixes PR8, que ponia TODO SAF en evolucion.saldoAFavorAplicado sin
+  // distinguir el origen.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  it('PR9: SAF a la EMISION (misma fecha exacta que venta.fecha) aparece en recibo.pagos (MÉTODOS DE PAGO), NO en evolucion.saldoAFavorAplicado', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    const factura = baseFactura()
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      safAplicaciones: [baseSafAplicacion({ monto: '15.00000000', tasa_pago: '40.0000', fecha: factura.fecha })],
+      isLoading: false,
+    })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(factura))
+
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd ?? null).toBeNull()
+    expect(result.current.recibo?.pagos).toEqual([
+      expect.objectContaining({ metodoNombre: 'Saldo a favor', montoUsd: 15 }),
+    ])
+  })
+
+  it('PR9: SAF POST-EMISION (fecha > venta.fecha) aparece en evolucion.saldoAFavorAplicado, NO en recibo.pagos', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    const factura = baseFactura() // fecha: '2026-08-13T10:30:00.000-04:00'
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      safAplicaciones: [baseSafAplicacion({ monto: '9.00000000', tasa_pago: '40.0000', fecha: '2026-08-20' })],
+      isLoading: false,
+    })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(factura))
+
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd).toBe(9)
+    expect(result.current.recibo?.pagos).toEqual([])
+  })
+
+  it('PR9: pago mixto cash+SAF a la EMISION — ambos aparecen en recibo.pagos (MÉTODOS DE PAGO), sin double-counting', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    const factura = baseFactura()
+    mockedUsePagosFactura.mockReturnValue({ pagos: [basePago({ monto: '10.00', monto_usd: '10.00' })], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      safAplicaciones: [baseSafAplicacion({ monto: '5.00000000', tasa_pago: '40.0000', fecha: factura.fecha })],
+      isLoading: false,
+    })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(factura))
+
+    expect(result.current.recibo?.pagos).toHaveLength(2)
+    expect(result.current.recibo?.pagos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ metodoNombre: 'Efectivo USD', montoUsd: 10 }),
+        expect.objectContaining({ metodoNombre: 'Saldo a favor', montoUsd: 5 }),
+      ])
+    )
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd ?? null).toBeNull()
+  })
+
+  it('PR9: SAF a la emision + SAF post-emision simultaneos en la misma factura — cada uno en UNA SOLA seccion, sin sumarse entre si (no double-count)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    const factura = baseFactura()
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      safAplicaciones: [
+        baseSafAplicacion({ id: 'sca-emi', monto: '4.00000000', tasa_pago: '40.0000', fecha: factura.fecha }),
+        baseSafAplicacion({ id: 'sca-post', monto: '6.00000000', tasa_pago: '40.0000', fecha: '2026-09-01' }),
+      ],
+      isLoading: false,
+    })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(factura))
+
+    // Emision -> MÉTODOS DE PAGO, exactamente 4 (nunca 4+6=10)
+    expect(result.current.recibo?.pagos).toEqual([
+      expect.objectContaining({ metodoNombre: 'Saldo a favor', montoUsd: 4 }),
+    ])
+    // Post-emision -> EVOLUCIÓN, exactamente 6 (nunca 4+6=10)
+    expect(result.current.recibo?.evolucion?.saldoAFavorAplicadoUsd).toBe(6)
+  })
 })
