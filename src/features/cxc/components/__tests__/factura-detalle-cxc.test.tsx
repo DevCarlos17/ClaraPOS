@@ -173,3 +173,40 @@ describe('FacturaDetalleCxc — gate "Sin pagos registrados" (Fix B, saf-snapsho
     expect(screen.queryByText('Sin pagos registrados')).toBeNull()
   })
 })
+
+describe('FacturaDetalleCxc — split emision vs post-emision (PR9, saf-seccion-correcta)', () => {
+  it('SAF a la EMISION se agrupa junto a "pagos" (antes); SAF post-emision se agrupa junto a "Evolucion" (despues) — sin importar el orden del array fuente', () => {
+    const factura = baseFactura()
+    mockedUsePagosFactura.mockReturnValue({ pagos: [basePago()], isLoading: false })
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      // Post-emision LISTADO PRIMERO en el array fuente, emision SEGUNDO —
+      // si el componente simplemente hiciera `.map()` sin partir el arreglo,
+      // el orden en el DOM seria [SAF-POST, SAF-EMI] (preserva el orden del
+      // array). El split correcto debe producir [SAF-EMI, SAF-POST].
+      safAplicaciones: [
+        baseSafAplicacion({ id: 'sca-post', referencia: 'SAF-POST', fecha: '2026-09-01' }),
+        baseSafAplicacion({ id: 'sca-emi', referencia: 'SAF-EMI', fecha: factura.fecha }),
+      ],
+      isLoading: false,
+    })
+
+    render(<FacturaDetalleCxc isOpen factura={factura} onClose={vi.fn()} />)
+
+    const referencias = screen.getAllByText(/^SAF-(POST|EMI)$/).map((el) => el.textContent)
+    expect(referencias).toEqual(['SAF-EMI', 'SAF-POST'])
+  })
+
+  it('con SOLO SAF a la emision, la fila aparece (misma fila visual "Saldo a favor" que antes — paridad con PR8)', () => {
+    const factura = baseFactura()
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      safAplicaciones: [baseSafAplicacion({ referencia: 'SAF-EMI-UNICO', fecha: factura.fecha })],
+      isLoading: false,
+    })
+
+    render(<FacturaDetalleCxc isOpen factura={factura} onClose={vi.fn()} />)
+
+    expect(screen.getByText('Saldo a favor')).toBeInTheDocument()
+    expect(screen.getByText('SAF-EMI-UNICO')).toBeInTheDocument()
+  })
+})

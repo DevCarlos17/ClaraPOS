@@ -28,6 +28,7 @@ import {
   type VentaPendiente,
   type PagoFacturaCxc,
   type VencimientoVenta,
+  type SafAplicacionFacturaCxc,
 } from '../hooks/use-cxc'
 import Decimal from 'decimal.js'
 import { PagoFacturaModal } from './pago-factura-modal'
@@ -167,6 +168,49 @@ function VencimientoStatusBadge({ v }: { v: VencimientoVenta }) {
   )
 }
 
+/**
+ * Una fila `saf_creditos_aplicaciones` del historial de pagos. Extraida como
+ * componente reusable (PR9, saf-seccion-correcta) porque la MISMA fila visual
+ * se renderiza en 2 grupos distintos del tbody segun el discriminador
+ * emision/post-emision (ver `safEmision`/`safPostEmision` en el componente
+ * principal) — nunca se duplica el marcado JSX entre ambos grupos.
+ */
+function FilaSaf({ mov }: { mov: SafAplicacionFacturaCxc }) {
+  return (
+    <tr key={mov.id} className="border-t border-border bg-green-50/30 dark:bg-green-950/20">
+      <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
+        {mov.fecha?.slice(0, 10)}
+      </td>
+      <td className="px-3 py-1.5 space-y-0.5">
+        <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400">
+          Saldo a favor
+        </span>
+        {mov.saf_origen_refs && (() => {
+          try {
+            const refs = JSON.parse(mov.saf_origen_refs) as string[]
+            return refs.length > 0 ? (
+              <div className="text-[10px] text-muted-foreground leading-tight">
+                Originado por: {refs.join(', ')}
+              </div>
+            ) : null
+          } catch { return null }
+        })()}
+      </td>
+      <td className="px-3 py-1.5 font-mono text-muted-foreground">
+        {mov.referencia || '—'}
+      </td>
+      <td className="px-3 py-1.5 text-right">
+        <span className="font-medium tabular-nums text-green-600">
+          {formatUsd(parseFloat(mov.monto))}
+        </span>
+      </td>
+      <td className="px-3 py-1.5 text-center">
+        <span className="text-[10px] text-muted-foreground italic">SAF</span>
+      </td>
+    </tr>
+  )
+}
+
 // ─── Props ────────────────────────────────────────────────────
 
 interface FacturaDetalleCxcProps {
@@ -246,6 +290,14 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   const totalPagado = pagos
     .filter((p) => !p.is_reversed)
     .reduce((sum, p) => sum + parseFloat(p.monto_usd), 0)
+
+  // PR9 (saf-seccion-correcta): mismo discriminador que `recibo-desde-factura.ts`
+  // (particionarSafAplicaciones) — SAF que pago la factura EN SU PROPIA EMISION
+  // (misma fecha exacta que `factura.fecha`) se agrupa junto a "pagos" (Metodos
+  // de pago); el resto (post-emision, CxC/abono-global) se agrupa junto a
+  // "Evolucion" (diferencial cambiario y demas movimientos posteriores).
+  const safEmision = safMovimientos.filter((m) => m.fecha === factura.fecha)
+  const safPostEmision = safMovimientos.filter((m) => m.fecha !== factura.fecha)
 
   const esAnulada = extra?.status === 'ANULADA' || extra?.status === 'REVERSADA'
 
@@ -701,6 +753,9 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
                           </tr>
                         )
                       })}
+                      {safEmision.map((mov) => (
+                        <FilaSaf key={mov.id} mov={mov} />
+                      ))}
                       {difeMovimientos.map((mov) => {
                         const tasaMov = parseFloat(mov.tasa_pago ?? factura.tasa) || 1
                         const montoUsdDife = parseFloat(mov.monto)
@@ -748,38 +803,8 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
                           </tr>
                         )
                       })}
-                      {safMovimientos.map((mov) => (
-                        <tr key={mov.id} className="border-t border-border bg-green-50/30 dark:bg-green-950/20">
-                          <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
-                            {mov.fecha?.slice(0, 10)}
-                          </td>
-                          <td className="px-3 py-1.5 space-y-0.5">
-                            <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400">
-                              Saldo a favor
-                            </span>
-                            {mov.saf_origen_refs && (() => {
-                              try {
-                                const refs = JSON.parse(mov.saf_origen_refs) as string[]
-                                return refs.length > 0 ? (
-                                  <div className="text-[10px] text-muted-foreground leading-tight">
-                                    Originado por: {refs.join(', ')}
-                                  </div>
-                                ) : null
-                              } catch { return null }
-                            })()}
-                          </td>
-                          <td className="px-3 py-1.5 font-mono text-muted-foreground">
-                            {mov.referencia || '—'}
-                          </td>
-                          <td className="px-3 py-1.5 text-right">
-                            <span className="font-medium tabular-nums text-green-600">
-                              {formatUsd(parseFloat(mov.monto))}
-                            </span>
-                          </td>
-                          <td className="px-3 py-1.5 text-center">
-                            <span className="text-[10px] text-muted-foreground italic">SAF</span>
-                          </td>
-                        </tr>
+                      {safPostEmision.map((mov) => (
+                        <FilaSaf key={mov.id} mov={mov} />
                       ))}
                     </tbody>
                     {totalPagado > 0.005 && (
