@@ -1,9 +1,14 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NotaCreditoPosModal } from '../nota-credito-pos-modal'
-import { crearNotaCredito, useReversosFactura } from '../../hooks/use-notas-credito'
+import { crearNotaCredito, useReversosFactura, useReembolsosTesoreriaFactura } from '../../hooks/use-notas-credito'
 import { useFacturasSesionActiva, useBadgesReversoSesion } from '../../hooks/use-facturas-sesion-activa'
-import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
+import {
+  useDetalleFactura,
+  usePagosFactura,
+  useEvolucionFactura,
+  useSafAplicacionesFactura,
+} from '@/features/cxc/hooks/use-cxc'
 import { useGastoAbsorcionFactura } from '@/features/contabilidad/hooks/use-gastos'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -137,7 +142,11 @@ vi.mock('../refund-tesoreria-form', () => ({
   ),
 }))
 
-vi.mock('@/features/ventas/hooks/use-notas-credito', () => ({ crearNotaCredito: vi.fn(), useReversosFactura: vi.fn() }))
+vi.mock('@/features/ventas/hooks/use-notas-credito', () => ({
+  crearNotaCredito: vi.fn(),
+  useReversosFactura: vi.fn(),
+  useReembolsosTesoreriaFactura: vi.fn(),
+}))
 vi.mock('@/features/ventas/hooks/use-facturas-sesion-activa', () => ({
   useFacturasSesionActiva: vi.fn(),
   useBadgesReversoSesion: vi.fn(),
@@ -145,6 +154,8 @@ vi.mock('@/features/ventas/hooks/use-facturas-sesion-activa', () => ({
 vi.mock('@/features/cxc/hooks/use-cxc', () => ({
   useDetalleFactura: vi.fn(),
   usePagosFactura: vi.fn(),
+  useEvolucionFactura: vi.fn(),
+  useSafAplicacionesFactura: vi.fn(),
 }))
 vi.mock('@/features/contabilidad/hooks/use-gastos', () => ({ useGastoAbsorcionFactura: vi.fn() }))
 vi.mock('@/features/configuracion/hooks/use-company', () => ({ useCompany: vi.fn() }))
@@ -158,10 +169,13 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.f
 
 const mockedCrearNotaCredito = vi.mocked(crearNotaCredito)
 const mockedUseReversosFactura = vi.mocked(useReversosFactura)
+const mockedUseReembolsosTesoreriaFactura = vi.mocked(useReembolsosTesoreriaFactura)
 const mockedUseFacturasSesionActiva = vi.mocked(useFacturasSesionActiva)
 const mockedUseBadgesReversoSesion = vi.mocked(useBadgesReversoSesion)
 const mockedUseDetalleFactura = vi.mocked(useDetalleFactura)
 const mockedUsePagosFactura = vi.mocked(usePagosFactura)
+const mockedUseEvolucionFactura = vi.mocked(useEvolucionFactura)
+const mockedUseSafAplicacionesFactura = vi.mocked(useSafAplicacionesFactura)
 const mockedUseGastoAbsorcionFactura = vi.mocked(useGastoAbsorcionFactura)
 const mockedUseCompany = vi.mocked(useCompany)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
@@ -257,6 +271,9 @@ function setup(opts: { hasPermission: boolean }) {
   mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
   mockedUseGastoAbsorcionFactura.mockReturnValue({ gasto: null, isLoading: false })
   mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
+  mockedUseReembolsosTesoreriaFactura.mockReturnValue({ reembolsos: [], isLoading: false })
+  mockedUseEvolucionFactura.mockReturnValue({ abonos: [], reversosPago: [], saldoAFavor: [], isLoading: false })
+  mockedUseSafAplicacionesFactura.mockReturnValue({ safAplicaciones: [], isLoading: false })
   mockedUseCompany.mockReturnValue({
     company: { id: 'emp-1', nombre: 'ClaraPOS Estetica C.A.', rif: 'J-12345678-9', direccion: null } as never,
     isLoading: false,
@@ -1172,7 +1189,7 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     expect(screen.getByRole('spinbutton')).toHaveValue(2)
   })
 
-  it('F1 QA fix: el panel muestra el historial de NC(s) aplicadas junto al detalle original de la factura', async () => {
+  it('F1 QA fix / PR10 (saf-particion-efectivo): el panel muestra el historial de NC(s) aplicadas via la seccion Evolucion (antes "Notas de credito aplicadas", reemplazada desde que este panel pasa `evolucion` como los demas surfaces — Fix B)', async () => {
     setup({ hasPermission: true })
     mockedUseReversosFactura.mockReturnValue({
       reversos: [
@@ -1184,8 +1201,49 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
 
     await seleccionarPrimeraFactura()
 
-    expect(screen.getByText(/Notas de credito aplicadas/i)).toBeInTheDocument()
-    expect(screen.getByText('NCR-000005')).toBeInTheDocument()
+    expect(screen.getByText('Evolucion')).toBeInTheDocument()
+    expect(screen.getByText(/NCR-000005/)).toBeInTheDocument()
+    expect(screen.getByText(/Reverso Parcial/)).toBeInTheDocument()
+    expect(screen.queryByText(/Notas de credito aplicadas/i)).not.toBeInTheDocument()
+  })
+
+  it('PR10 (saf-particion-efectivo, Fix B): el panel por defecto ahora muestra SAF-a-la-emision en Metodos de pago y un abono CxC post-emision en Evolucion — antes de este fix ninguno de los 2 se mostraba (solo 4/7 parametros)', async () => {
+    setup({ hasPermission: true })
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [
+        pagoFacturaFixture({ id: 'pago-emi', fecha: '2026-01-01T00:00:00Z', monto_usd: '10.00', monto: '10.00' }),
+        pagoFacturaFixture({ id: 'pago-post', fecha: '2026-02-01T00:00:00Z', monto_usd: '7.00', monto: '7.00' }),
+      ],
+      isLoading: false,
+    })
+    mockedUseSafAplicacionesFactura.mockReturnValue({
+      safAplicaciones: [
+        { id: 'sca-1', referencia: 'SAF-0001', monto: '3.00000000', tasa_pago: '40.0000', fecha: '2026-01-01T00:00:00Z', saf_origen_refs: null },
+      ],
+      isLoading: false,
+    })
+    mockedUseEvolucionFactura.mockReturnValue({
+      abonos: [
+        { tipo: 'PAG', monto: '7.00', tasa_pago: '40.0000', fecha: '2026-02-01T00:00:00Z', referencia: 'PAG-C01-000001', observacion: 'Pago factura' },
+      ],
+      reversosPago: [],
+      saldoAFavor: [],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    // MÉTODOS DE PAGO: efectivo de la emision (10) + SAF de la emision (3) — el
+    // efectivo post-emision (7, CxC) NUNCA aparece aqui.
+    const metodosSection = screen.getByText('Metodos de pago').closest('div') as HTMLElement
+    expect(within(metodosSection).getByText('Efectivo USD')).toBeInTheDocument()
+    expect(within(metodosSection).getByText('Saldo a favor')).toBeInTheDocument()
+
+    // EVOLUCIÓN: el abono CxC post-emision (7) aparece aqui — ANTES de este
+    // fix esta seccion ni siquiera existia en el panel por defecto.
+    const evolucionSection = screen.getByText('Evolucion').closest('div') as HTMLElement
+    expect(within(evolucionSection).getByText(/Abono/)).toBeInTheDocument()
   })
 
   it('factura con tiene_reverso_parcial=1 pero status activo sigue siendo clickable (puede recibir otra NC parcial); tampoco preselecciona PARCIAL automaticamente (Item 5, ajustes-qa-nota-credito-pos-modal: ningun tipo se preselecciona, ni siquiera con reverso parcial previo)', async () => {

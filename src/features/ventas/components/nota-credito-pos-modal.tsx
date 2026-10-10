@@ -5,6 +5,7 @@ import { formatDateTime } from '@/lib/format'
 import {
   crearNotaCredito,
   useReversosFactura,
+  useReembolsosTesoreriaFactura,
   type FacturaParaAnular,
   type LineaNcSeleccionada,
   type EgresoTesoreriaLinea,
@@ -30,14 +31,22 @@ import {
   type OrigenReverso,
 } from '../utils/notas-credito-ui'
 import { type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export'
-import { buildReciboDataDesdeFacturaGuardada } from '../utils/recibo-desde-factura'
+import {
+  buildReciboDataDesdeFacturaGuardada,
+  construirEvolucionYPagosFactura,
+} from '../utils/recibo-desde-factura'
 import { FacturaDetallePanel } from './factura-detalle-panel'
 import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
 import { ConsultaFacturaModal } from './consulta-factura-modal'
 import { TipoNcSelector } from './tipo-nc-selector'
 import { OrigenReversoSelector } from './origen-reverso-selector'
 import { RefundTesoreriaForm } from './refund-tesoreria-form'
-import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
+import {
+  useDetalleFactura,
+  usePagosFactura,
+  useEvolucionFactura,
+  useSafAplicacionesFactura,
+} from '@/features/cxc/hooks/use-cxc'
 import { useGastoAbsorcionFactura } from '@/features/contabilidad/hooks/use-gastos'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -288,6 +297,20 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const { pagos: pagosFactura } = usePagosFactura(facturaId)
   const { company } = useCompany()
 
+  // PR10 (saf-particion-efectivo, engram #5228): este panel es un
+  // consumidor FROZEN (mantiene sus propios hooks por diseno, nunca migra a
+  // `useReciboDesdeFactura` — ver doc de ese hook) que antes de este fix
+  // llamaba `buildReciboDataDesdeFacturaGuardada` con solo 4/7 parametros,
+  // sin `evolucion`/`pagosExtra` — el panel por defecto ("Facturas Emitidas
+  // - Sesion Actual") nunca mostraba SAF ni evolucion, mientras que
+  // "Reimprimir" (que SI usa `ConsultaFacturaModal`/`useReciboDesdeFactura`)
+  // los mostraba correctamente. Se agregan aqui los mismos 3 hooks de
+  // evolucion que `useReciboDesdeFactura` ya consulta, y se reusa
+  // `construirEvolucionYPagosFactura` (misma logica pura, sin duplicarla).
+  const { abonos, reversosPago, saldoAFavor } = useEvolucionFactura(facturaId, user?.empresa_id ?? '')
+  const { reembolsos } = useReembolsosTesoreriaFactura(facturaId, user?.empresa_id ?? '')
+  const { safAplicaciones } = useSafAplicacionesFactura(facturaId)
+
   // nc-reembolso-real-reverso-gasto (Slice B, Design §Interfaces): gasto de
   // absorcion de diferencial asociado a la factura, si existe — alimenta el
   // desglose "Pagado/Asumido" del panel Y el tope de `vistaReversoNc` de
@@ -334,8 +357,20 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
 
   const recibo: ReciboData | null = useMemo(() => {
     if (!factura) return null
-    return buildReciboDataDesdeFacturaGuardada(factura, detalle, pagosFactura, company)
-  }, [factura, detalle, pagosFactura, company])
+    const { pagosMetodos, pagosExtra, evolucion } = construirEvolucionYPagosFactura(
+      { fecha: factura.fecha, tasa: factura.tasa },
+      { reversos, reembolsos, abonos, reversosPago, saldoAFavor, safAplicaciones, pagos: pagosFactura }
+    )
+    return buildReciboDataDesdeFacturaGuardada(
+      factura,
+      detalle,
+      pagosMetodos,
+      company,
+      undefined,
+      evolucion,
+      pagosExtra
+    )
+  }, [factura, detalle, pagosFactura, company, reversos, reembolsos, abonos, reversosPago, saldoAFavor, safAplicaciones])
 
   // Vista pre-calculada del reverso (nc-factura-credito-ux, Design
   // §Interfaces) — reemplaza el antiguo `montoDisponibleParaRefund` (Slice
