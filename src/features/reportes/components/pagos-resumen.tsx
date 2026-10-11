@@ -5,6 +5,8 @@ import {
   useCxcDelDia,
   useTotalesFiscales,
   useSafDiario,
+  useAnticiposDelDia,
+  useCobrosViaPOS,
   useDiferencialCambiarioDelDia,
   useAbsorcionDelDia,
   type CuadreFilters,
@@ -34,8 +36,14 @@ export function PagosResumen({
 }: PagosResumenProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(filters)
-  const { isLoading: loadingTotales } = useTotalesFiscales(filters)
+  const { totales, isLoading: loadingTotales } = useTotalesFiscales(filters)
   const { totalUsd: safTotalUsd, isLoading: loadingSaf } = useSafDiario(filters)
+  const { anticipoUsd, isLoading: loadingAnticipos } = useAnticiposDelDia(filters)
+  const {
+    totalCobrosUsd: cobrosAnterioresUsd,
+    totalCobrosBsEquiv: cobrosAnterioresBs,
+    isLoading: loadingCobrosAnteriores,
+  } = useCobrosViaPOS(filters)
   const {
     netoBs: diferencialNetoBs,
     netoUsd: diferencialNetoUsd,
@@ -52,10 +60,17 @@ export function PagosResumen({
   // Excluir metodos EFECTIVO con saldo $0 (fondo inicial sin ventas en efectivo)
   const metodosMostrar = metodos.filter((m) => m.totalUsd > 0.001 || m.totalOriginal > 0.001)
 
-  const totalCobradoUsd = metodosMostrar.reduce((sum, m) => sum + m.totalUsd, 0)
-  const totalCobradoBs = metodosMostrar.reduce((sum, m) => {
+  const cashBrutoUsd = metodosMostrar.reduce((sum, m) => sum + m.totalUsd, 0)
+  const cashBrutoBs = metodosMostrar.reduce((sum, m) => {
     return sum + (m.moneda === 'BS' ? m.totalOriginal : m.totalBs)
   }, 0)
+
+  // Cobros anteriores (CxC de sesion previa): ya estan incluidos en cashBruto por construccion
+  // de usePagosPorMetodo (no filtra por created_at == venta.created_at). Hay que restarlos para
+  // que TOTAL COBRADO no sobre-cuente efectivo que ya fue facturado en otra sesion.
+  const hayCobrosAnteriores = cobrosAnterioresUsd > 0.001
+  const cashNetoUsd = cashBrutoUsd - cobrosAnterioresUsd
+  const cashNetoBs = cashBrutoBs - cobrosAnterioresBs
 
   const haySaf = safTotalUsd > 0.001
   const safBs = tasaDelDia > 0 ? usdToBs(safTotalUsd, tasaDelDia).toNumber() : 0
@@ -64,7 +79,34 @@ export function PagosResumen({
   const diferencialNetoUsdCalc = tasaDelDia > 0 ? diferencialNetoBs / tasaDelDia : diferencialNetoUsd
   const absorcionUsdCalc = tasaDelDia > 0 ? absorcionBs / tasaDelDia : absorcionUsd
 
-  const isLoadingAll = isLoading || loadingCxc || loadingTotales || loadingSaf || loadingDiferencial || loadingAbsorcion
+  // TOTAL COBRADO = cash neto (sin cobros anteriores) + SAF consumido + diferencial + absorcion
+  const totalCobradoUsd =
+    cashNetoUsd + safTotalUsd + (hayDiferencial ? diferencialNetoUsdCalc : 0) + (hayAbsorcion ? absorcionUsdCalc : 0)
+  const totalCobradoBs =
+    cashNetoBs + safBs + (hayDiferencial ? diferencialNetoBs : 0) + (hayAbsorcion ? absorcionBs : 0)
+
+  // Saldo a favor generado (excedente del cliente, pasa a credito futuro): informativo, NUNCA
+  // se suma ni se resta de ningun total — no liquida ninguna factura de esta sesion.
+  const haySafGenerado = anticipoUsd > 0.001
+  const safGeneradoBs = tasaDelDia > 0 ? usdToBs(anticipoUsd, tasaDelDia).toNumber() : 0
+
+  // Saldo a favor liquidado (lo cobrado) + lo que quedo pendiente a credito
+  const saldoFacturasUsd = totalCobradoUsd + cxcTotalUsd
+  const saldoFacturasBs = totalCobradoBs + cxcTotalBs
+
+  // Total facturado real — fuente fiscal (ventas puras + IGTF), independiente de como se pago
+  const totalFacturadoUsd = (totales?.totalVentasUsd ?? 0) + (totales?.totalIgtfUsd ?? 0)
+  const totalFacturadoBs = (totales?.totalVentasBs ?? 0) + (totales?.totalIgtfBs ?? 0)
+
+  const isLoadingAll =
+    isLoading ||
+    loadingCxc ||
+    loadingTotales ||
+    loadingSaf ||
+    loadingAnticipos ||
+    loadingCobrosAnteriores ||
+    loadingDiferencial ||
+    loadingAbsorcion
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
@@ -76,7 +118,13 @@ export function PagosResumen({
             <div key={i} className="h-10 bg-muted rounded animate-pulse" />
           ))}
         </div>
-      ) : metodosMostrar.length === 0 && cxcTotalUsd <= 0 && !haySaf && !hayDiferencial && !hayAbsorcion ? (
+      ) : metodosMostrar.length === 0 &&
+        cxcTotalUsd <= 0 &&
+        !haySaf &&
+        !hayDiferencial &&
+        !hayAbsorcion &&
+        !haySafGenerado &&
+        !hayCobrosAnteriores ? (
         <div className="text-center py-8 text-muted-foreground">
           <p className="text-sm">Sin cobros en esta fecha</p>
         </div>
@@ -125,6 +173,28 @@ export function PagosResumen({
             )
           })}
 
+          {/* Cobros anteriores (CxC) — efectivo cobrado hoy de una factura de otra sesion.
+              Se resta porque ya fue sumado dentro de metodosMostrar (usePagosPorMetodo no
+              excluye cobros de CxC vieja) y no es parte del facturado de ESTA sesion. */}
+          {hayCobrosAnteriores && (
+            <div
+              data-testid="cobros-anteriores"
+              className="w-full flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/40 px-3 py-2.5 text-left"
+            >
+              <div className="flex items-center gap-2">
+                <CreditCard size={16} className="text-slate-500" />
+                <div>
+                  <p className="text-sm font-medium text-slate-700">Cobros anteriores (CxC)</p>
+                  <p className="text-xs text-slate-500">Facturado en una sesion anterior</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">{`-${formatBs(cobrosAnterioresBs)}`}</span>
+                <span className="text-sm font-bold text-slate-600">{`-${formatUsd(cobrosAnterioresUsd)}`}</span>
+              </div>
+            </div>
+          )}
+
           {/* Saldo a favor aplicado como pago directo en POS */}
           {haySaf && (
             <button
@@ -148,39 +218,6 @@ export function PagosResumen({
               </div>
             </button>
           )}
-
-          {/* Credit (CxC) row — shown when there are pending credit invoices */}
-          {cxcTotalUsd > 0.005 && (
-            <button
-              type="button"
-              disabled={!onCreditoClick}
-              onClick={onCreditoClick}
-              className={`w-full flex items-center justify-between rounded-lg border border-red-200 bg-red-50/40 px-3 py-2.5 text-left ${onCreditoClick ? 'hover:bg-red-50 hover:shadow-sm transition-all cursor-pointer' : ''}`}
-            >
-              <div className="flex items-center gap-2">
-                <CreditCard size={16} className="text-red-500" />
-                <div>
-                  <p className="text-sm font-medium text-red-700">A credito (CxC)</p>
-                  <p className="text-xs text-red-500">Pendiente de cobro</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-red-400">{formatUsd(cxcTotalUsd)}</span>
-                <span className="text-sm font-bold text-red-600">{formatBs(cxcTotalBs)}</span>
-              </div>
-            </button>
-          )}
-
-          {/* Total cobrado — subtotal después de todos los métodos */}
-          <div className="pt-2 mt-1 border-t">
-            <div className="flex justify-between items-center text-sm font-bold">
-              <span>Total cobrado</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-normal text-muted-foreground">{formatUsd(totalCobradoUsd)}</span>
-                <span className="text-base">{formatBs(totalCobradoBs)}</span>
-              </div>
-            </div>
-          </div>
 
           {/* Diferencial cambiario — solo si hay registros */}
           {hayDiferencial && (
@@ -234,25 +271,82 @@ export function PagosResumen({
             </button>
           )}
 
-          {/* Total facturado — al final, suma cobrado + CxC + diferencial + absorcion */}
-          <div className="border-t pt-2">
+          {/* TOTAL COBRADO — cash neto + SAF consumido + diferencial + absorcion */}
+          <div data-testid="total-cobrado" className="pt-2 mt-1 border-t">
+            <div className="flex justify-between items-center text-sm font-bold">
+              <span>TOTAL COBRADO</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-normal text-muted-foreground">{formatUsd(totalCobradoUsd)}</span>
+                <span className="text-base">{formatBs(totalCobradoBs)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Saldo a favor generado — informativo. Excedente del cliente que pasa a credito
+              futuro; NO liquida ninguna factura de esta sesion, por lo tanto nunca se suma ni
+              se resta de TOTAL COBRADO, Saldó facturas o Total facturado. */}
+          {haySafGenerado && (
+            <div
+              data-testid="saf-generado"
+              className="w-full flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/40 px-3 py-2.5 text-left"
+            >
+              <div className="flex items-center gap-2">
+                <Coins size={16} className="text-emerald-500" />
+                <div>
+                  <p className="text-sm font-medium text-emerald-700">Saldo a favor generado</p>
+                  <p className="text-xs text-emerald-500">Nuevo credito a favor del cliente</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {safGeneradoBs > 0 && (
+                  <span className="text-xs text-emerald-400">{formatBs(safGeneradoBs)}</span>
+                )}
+                <span className="text-sm font-bold text-emerald-700">{formatUsd(anticipoUsd)}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Credit (CxC) row — shown when there are pending credit invoices */}
+          {cxcTotalUsd > 0.005 && (
+            <button
+              type="button"
+              disabled={!onCreditoClick}
+              onClick={onCreditoClick}
+              className={`w-full flex items-center justify-between rounded-lg border border-red-200 bg-red-50/40 px-3 py-2.5 text-left ${onCreditoClick ? 'hover:bg-red-50 hover:shadow-sm transition-all cursor-pointer' : ''}`}
+            >
+              <div className="flex items-center gap-2">
+                <CreditCard size={16} className="text-red-500" />
+                <div>
+                  <p className="text-sm font-medium text-red-700">A credito (CxC)</p>
+                  <p className="text-xs text-red-500">Pendiente de cobro</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-red-400">{formatUsd(cxcTotalUsd)}</span>
+                <span className="text-sm font-bold text-red-600">{formatBs(cxcTotalBs)}</span>
+              </div>
+            </button>
+          )}
+
+          {/* Saldó facturas — TOTAL COBRADO + CxC pendiente. Identidad objetivo: igual a
+              Total facturado cuando no hay fuga no cubierta (ver Open Questions en #5318). */}
+          <div data-testid="saldo-facturas" className="pt-2 border-t">
+            <div className="flex justify-between items-center text-sm font-bold">
+              <span>Saldó facturas</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-normal text-muted-foreground">{formatUsd(saldoFacturasUsd)}</span>
+                <span className="text-base">{formatBs(saldoFacturasBs)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Total facturado — fuente fiscal real (useTotalesFiscales), ya fetcheado arriba */}
+          <div data-testid="total-facturado" className="border-t pt-2">
             <div className="flex justify-between items-center text-sm text-muted-foreground">
               <span>Total facturado</span>
               <div className="flex items-center gap-2">
-                <span className="text-xs">
-                  {formatUsd(
-                    totalCobradoUsd + cxcTotalUsd
-                    + (hayDiferencial ? diferencialNetoUsdCalc : 0)
-                    + (hayAbsorcion ? absorcionUsdCalc : 0)
-                  )}
-                </span>
-                <span className="font-semibold">
-                  {formatBs(
-                    totalCobradoBs + cxcTotalBs
-                    + (hayDiferencial ? diferencialNetoBs : 0)
-                    + (hayAbsorcion ? absorcionBs : 0)
-                  )}
-                </span>
+                <span className="text-xs">{formatUsd(totalFacturadoUsd)}</span>
+                <span className="font-semibold">{formatBs(totalFacturadoBs)}</span>
               </div>
             </div>
           </div>
