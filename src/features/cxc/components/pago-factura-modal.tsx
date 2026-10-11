@@ -126,7 +126,14 @@ export function PagoFacturaModal({
   )
   const tienePrestamoActivo = prestamosActivos.length > 0
 
-  // Auto-cargar tasa interna de la DB cada vez que cambia la fecha
+  // Auto-cargar tasa interna de la DB cada vez que cambia la fecha.
+  // Fallback a la tasa vigente (`tasaValor`) cuando no hay tasa registrada
+  // para la fecha — mismo criterio que `abono-global-modal.tsx:129`
+  // (`tasaEfectiva = tasaFecha || tasaValor`). SAF se consume siempre a la
+  // tasa vigente (regla bimonetaria, CLAUDE.md #1); sin este fallback
+  // `tasaStr` quedaba en '' y `tasaNum` en 0, lo cual congelaba el
+  // recalculo de `SafMontoDualInput` (guard `tasa<=0` en
+  // `saf-monto-dual-input.tsx:66/73`) — bug QA, ver engram #5292.
   useEffect(() => {
     if (!user?.empresa_id || !fechaPago) return
     db.execute(
@@ -136,12 +143,13 @@ export function PagoFacturaModal({
       const row = res.rows?.item(0) as { valor: string } | undefined
       const val = row ? parseFloat(row.valor) : 0
       setTasaInternaNum(val)
-      setTasaStr(val > 0 ? val.toFixed(4) : '')
+      const efectiva = val > 0 ? val : tasaValor
+      setTasaStr(efectiva > 0 ? efectiva.toFixed(4) : '')
     }).catch(() => {
       setTasaInternaNum(0)
-      setTasaStr('')
+      setTasaStr(tasaValor > 0 ? tasaValor.toFixed(4) : '')
     })
-  }, [fechaPago, user?.empresa_id])
+  }, [fechaPago, user?.empresa_id, tasaValor])
 
   // Resetear form al abrir
   useEffect(() => {
@@ -489,7 +497,7 @@ export function PagoFacturaModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(v) => { if (!v) handleClose() }}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Registrar Pago CxC</DialogTitle>
         </DialogHeader>
@@ -733,13 +741,23 @@ export function PagoFacturaModal({
             )}
           </div>
 
-          {/* Aviso cuando no hay tasa para la fecha */}
+          {/* Aviso cuando no hay tasa para la fecha — informativo cuando existe
+              tasa vigente de fallback (ya precargada en el campo de abajo),
+              bloqueante solo si tampoco hay vigente registrada */}
           {tasaInternaNum === 0 && fechaPago && (
-            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 space-y-1">
-              <p className="text-xs text-amber-700 font-medium">
-                No hay tasa registrada para esta fecha. Ingrese la tasa manualmente.
-              </p>
-            </div>
+            tasaValor > 0 ? (
+              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 space-y-1">
+                <p className="text-xs text-blue-700 font-medium">
+                  No hay tasa registrada para esta fecha. Se usará la tasa actual ({tasaValor.toFixed(2)}).
+                </p>
+              </div>
+            ) : (
+              <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 space-y-1">
+                <p className="text-xs text-amber-700 font-medium">
+                  No hay tasa registrada para esta fecha. Ingrese la tasa manualmente.
+                </p>
+              </div>
+            )
           )}
 
           {/* Tasa de cobro (editable) */}

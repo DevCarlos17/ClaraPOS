@@ -344,13 +344,22 @@ export function CobroModal({
       )
     }
     if (estaOverpago) {
-      if (discrepancyMode === 'VUELTO') return pagos.length > 0 && splitVueltoValid
+      // AND `safEstado === 'ok'` en LAS 4 RAMAS (gap encontrado en
+      // sdd/saf-excedente-gestion/analisis, engram #5293): a diferencia de
+      // la rama de pago-exacto (arriba), estas ramas de overpago NO
+      // verificaban `safEstado` — un SAF que excede el disponible o el
+      // total podia combinarse con CUALQUIER pago en efectivo + un modo de
+      // discrepancia para bypassear el gate rojo de `SafMontoDualInput` y
+      // habilitar "Procesar" con un monto SAF invalido. `safEstado` es 'ok'
+      // por defecto cuando SAF no esta seleccionado, por lo que este AND es
+      // un no-op para el flujo normal de overpago sin SAF.
+      if (discrepancyMode === 'VUELTO') return pagos.length > 0 && splitVueltoValid && safEstado === 'ok'
       if (discrepancyMode === 'SAF') {
         if (!safSubMode) return false
-        return pagos.length > 0 && !!clienteId
+        return pagos.length > 0 && !!clienteId && safEstado === 'ok'
       }
-      if (discrepancyMode === 'PROPINA') return pagos.length > 0
-      if (discrepancyMode === 'DIFERENCIAL_SOBRANTE') return pagos.length > 0
+      if (discrepancyMode === 'PROPINA') return pagos.length > 0 && safEstado === 'ok'
+      if (discrepancyMode === 'DIFERENCIAL_SOBRANTE') return pagos.length > 0 && safEstado === 'ok'
       return false
     }
     // Faltante: los 3 modos siempre disponibles
@@ -819,6 +828,13 @@ export function CobroModal({
                     } else {
                       setSafMontoUsdStr('')
                       setSafMontoBsStr('')
+                      // Resetear safEstado al desmarcar: SafMontoDualInput
+                      // desmonta sin limpiar su ultimo estado via
+                      // onEstadoChange, dejando un 'excedeTotal'/
+                      // 'excedeDisponible' obsoleto que bloquearia un
+                      // sobrepago en efectivo legitimo y sin relacion con
+                      // SAF (regresion engram #5294).
+                      setSafEstado('ok')
                     }
                   }}
                   className="rounded border-blue-300"
@@ -913,8 +929,11 @@ export function CobroModal({
               </div>
             )}
 
-            {/* Overpago manual: VUELTO / SAF / PROPINA */}
-            {estaOverpago && discrepancyMode !== 'DIFERENCIAL_SOBRANTE' && (
+            {/* Overpago manual: VUELTO / SAF / PROPINA — oculto cuando el
+                excedente proviene de un SAF invalido (excede disponible o
+                total): el aviso de `SafMontoDualInput` ya es la unica guia
+                visible, estos controles no deben ofrecerse (engram #5293) */}
+            {estaOverpago && discrepancyMode !== 'DIFERENCIAL_SOBRANTE' && safEstado === 'ok' && (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">
                   Excedente: {formatBs(vueltoMontoBs)} / {formatUsd(montoDiscrepanciaUsd.abs())}
@@ -1154,8 +1173,11 @@ export function CobroModal({
           </div>
         )}
 
-        {/* Panel de vuelto por moneda — visible cuando hay overpago y modo VUELTO */}
-        {estaOverpago && discrepancyMode === 'VUELTO' && vueltoMontoBs.gt(new Decimal('0.01')) && (
+        {/* Panel de vuelto por moneda — visible cuando hay overpago y modo VUELTO.
+            `safEstado === 'ok'` por el mismo motivo que el panel de arriba
+            (engram #5293): no revelar un desglose de vuelto derivado de un
+            SAF invalido. */}
+        {estaOverpago && discrepancyMode === 'VUELTO' && safEstado === 'ok' && vueltoMontoBs.gt(new Decimal('0.01')) && (
           <div className="px-5 py-2 border-t shrink-0 bg-amber-50/50">
             <p className="text-xs font-medium text-amber-800 mb-1.5">Desglose de vuelto</p>
             {(() => {

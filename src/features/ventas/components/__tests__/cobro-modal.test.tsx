@@ -7,6 +7,7 @@ import { useDeudaFacturasCliente } from '@/features/cxc/hooks/use-deuda-cliente'
 import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { useIgtfConfig } from '@/features/configuracion/hooks/use-igtf-config'
 import type { CobroModalProps } from '../cobro-modal'
+import type { PaymentMethod } from '@/features/configuracion/hooks/use-payment-methods'
 
 /**
  * PR-A2 (sdd/saf-snapshot-y-trazabilidad/tasks-b22-dual-input, #5270):
@@ -69,6 +70,32 @@ function baseProps(overrides: Partial<CobroModalProps> = {}): CobroModalProps {
 
 async function activarSaf(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByLabelText(/Saldo a favor/i))
+}
+
+function makeMetodoEfectivo(overrides: Partial<PaymentMethod> = {}): PaymentMethod {
+  return {
+    id: 'metodo-efectivo',
+    nombre: 'Efectivo',
+    tipo: 'EFECTIVO',
+    moneda_id: 'moneda-usd',
+    moneda: 'USD',
+    banco_empresa_id: null,
+    banco_nombre: null,
+    caja_fuerte_id: null,
+    caja_nombre: null,
+    requiere_referencia: 0,
+    saldo_actual: '0',
+    is_active: 1,
+    empresa_id: 'empresa-1',
+    created_at: '2026-01-01T00:00:00Z',
+    deposito_directo: 0,
+    comision_pct: '0',
+    usa_pos: 1,
+    usa_cxc: 0,
+    usa_cxp: 0,
+    consolidar_lotes: 0,
+    ...overrides,
+  }
 }
 
 describe('CobroModal — SAF dual input (PR-A2, sdd/saf-snapshot-y-trazabilidad)', () => {
@@ -142,5 +169,74 @@ describe('CobroModal — SAF dual input (PR-A2, sdd/saf-snapshot-y-trazabilidad)
 
     const safUsdInput = screen.getByLabelText(/Monto SAF \(USD\)/i)
     expect(safUsdInput).toHaveValue('50')
+  })
+
+  it('SAF que excede el total a pagar (dentro del disponible) bloquea Procesar y NO muestra los controles de excedente (Dar vuelto/Saldo a favor/Propina) — cierra gap safEstado en ramas overpago (engram #5293)', async () => {
+    // Total factura $1.30 (tasa 40 => Bs 52). SAF disponible $1.70 (no excede
+    // disponible) pero se tipea $1.50 (SI excede el total de $1.30) — el
+    // mismo monto en Bs (60) ya supera el total (52) y dispara `estaOverpago`
+    // SIN que el cajero haya agregado ningun pago en efectivo todavia.
+    mockedUseSaldoAFavor.mockReturnValue({ disponible: 1.7, tieneSaf: true })
+    const metodoEfectivo = makeMetodoEfectivo()
+    const user = userEvent.setup()
+    render(<CobroModal {...baseProps({ totalBrutoUsd: 1.3, metodos: [metodoEfectivo] })} />)
+
+    await activarSaf(user)
+    const safUsdInput = screen.getByLabelText(/Monto SAF \(USD\)/i)
+    await user.clear(safUsdInput)
+    await user.type(safUsdInput, '1.50')
+
+    // El warning propio de SafMontoDualInput (evaluarSafMonto) esta visible
+    expect(screen.getByText(/excede el total a pagar/i)).toBeInTheDocument()
+
+    // BUG LATENTE (#5293): si ADEMAS el cajero agrega un pago en efectivo,
+    // `puedeProcesar` en la rama `estaOverpago && discrepancyMode==='VUELTO'`
+    // (auto-seleccionado por el efecto de discrepancia) NO verificaba
+    // `safEstado`, habilitando "Procesar" pese al SAF invalido.
+    await user.selectOptions(screen.getByRole('combobox'), metodoEfectivo.id)
+    const montoInput = screen.getByPlaceholderText(/Monto \(USD\)/i)
+    await user.type(montoInput, '5{Enter}')
+
+    // Los controles de excedente (Dar vuelto / Saldo a favor / Propina) NO
+    // deben renderizarse cuando el excedente proviene de un SAF invalido.
+    expect(screen.queryByRole('button', { name: /Dar vuelto/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Saldo a favor$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Propina$/i })).not.toBeInTheDocument()
+
+    // Procesar debe quedar bloqueado
+    expect(screen.getByRole('button', { name: /Procesar/i })).toBeDisabled()
+  })
+
+  it('destildar SAF luego de un monto invalido resetea safEstado y no bloquea un sobrepago en efectivo genuino (regresion engram #5294)', async () => {
+    // Mismo escenario que el test anterior ($1.30 total, SAF disponible
+    // $1.70, SAF tipeado $1.50 que excede el total) pero el cajero
+    // DESTILDA "Saldo a favor" antes de agregar el pago en efectivo. El
+    // excedente resultante es un sobrepago en efectivo 100% genuino, sin
+    // relacion alguna con SAF — no debe quedar bloqueado por un
+    // `safEstado` obsoleto que nunca se reseteo al desmarcar el checkbox.
+    mockedUseSaldoAFavor.mockReturnValue({ disponible: 1.7, tieneSaf: true })
+    const metodoEfectivo = makeMetodoEfectivo()
+    const user = userEvent.setup()
+    render(<CobroModal {...baseProps({ totalBrutoUsd: 1.3, metodos: [metodoEfectivo] })} />)
+
+    await activarSaf(user)
+    const safUsdInput = screen.getByLabelText(/Monto SAF \(USD\)/i)
+    await user.clear(safUsdInput)
+    await user.type(safUsdInput, '1.50')
+    expect(screen.getByText(/excede el total a pagar/i)).toBeInTheDocument()
+
+    // Destildar SAF — el cajero decide no usarlo.
+    await user.click(screen.getByLabelText(/Saldo a favor/i))
+    expect(screen.queryByLabelText(/Monto SAF \(USD\)/i)).not.toBeInTheDocument()
+
+    // Pago en efectivo que genuinamente sobrepaga el total (sin SAF).
+    await user.selectOptions(screen.getByRole('combobox'), metodoEfectivo.id)
+    const montoInput = screen.getByPlaceholderText(/Monto \(USD\)/i)
+    await user.type(montoInput, '5{Enter}')
+
+    // Los controles de excedente deben aparecer (sobrepago legitimo) y
+    // Procesar debe quedar habilitado con el modo auto-seleccionado (VUELTO).
+    expect(screen.getByRole('button', { name: /Dar vuelto/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Procesar/i })).not.toBeDisabled()
   })
 })

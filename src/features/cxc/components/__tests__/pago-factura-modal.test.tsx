@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PagoFacturaModal } from '../pago-factura-modal'
 import type { VentaPendiente } from '../../hooks/use-cxc'
@@ -6,6 +6,7 @@ import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useMetodosCxC } from '@/features/configuracion/hooks/use-payment-methods'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { db } from '@/core/db/powersync/db'
 
 /**
  * PR-C (sdd/saf-snapshot-y-trazabilidad/tasks-b22-dual-input, #5270):
@@ -164,5 +165,37 @@ describe('PagoFacturaModal — SAF dual input (PR-C, sdd/saf-snapshot-y-trazabil
 
     const safUsdInput = screen.getByLabelText(/Monto SAF \(USD\)/i)
     expect(safUsdInput).toHaveValue('50')
+  })
+
+  it('cuando NO hay tasa registrada para la fecha pero existe tasa vigente, el campo "Tasa de cobro" hace fallback a la vigente (no se congela en 0) y el recalculo SAF USD→Bs funciona — bugfix engram #5292', async () => {
+    mockedUseSaldoAFavor.mockReturnValue({ disponible: 200, tieneSaf: true })
+    mockedUseTasaActual.mockReturnValue({ tasaValor: 40, isLoading: false } as ReturnType<typeof useTasaActual>)
+    // Sobreescribe el mock compartido del archivo (que devuelve `{ valor: '40' }`
+    // para TODA query) solo para esta prueba: la 1ra llamada (sesiones_caja) y la
+    // 2da (tasas_cambio) devuelven AMBAS sin fila — reproduce "sin sesion activa" +
+    // "sin tasa registrada para la fecha", el escenario exacto de QA staging.
+    const sinFila = { rows: { _array: [], length: 0, item: () => undefined }, rowsAffected: 0 }
+    vi.mocked(db.execute)
+      .mockImplementationOnce(() => Promise.resolve(sinFila))
+      .mockImplementationOnce(() => Promise.resolve(sinFila))
+
+    const user = userEvent.setup()
+    render(<PagoFacturaModal {...baseProps({ factura: makeFactura(100) })} />)
+
+    const tasaInput = screen.getByPlaceholderText('0.0000')
+    // Antes del fix, tasaStr queda en '' (tasaNum=0) porque no hay tasa de
+    // fecha registrada y no se hace fallback a la vigente — el guard de
+    // `saf-monto-dual-input.tsx:66/73` congela el recalculo con tasa<=0.
+    await waitFor(() => expect(tasaInput).toHaveValue(40))
+
+    await activarSaf(user)
+    const safUsdInput = screen.getByLabelText(/Monto SAF \(USD\)/i)
+    await user.clear(safUsdInput)
+    await user.type(safUsdInput, '50')
+
+    const safBsInput = screen.getByLabelText(/Monto SAF \(Bs\)/i)
+    // 50 USD a la tasa vigente (40) = 2000.00 Bs — con el bug queda "0.00"
+    // porque el componente recibe tasa=0.
+    expect(safBsInput).toHaveValue('2000.00')
   })
 })
