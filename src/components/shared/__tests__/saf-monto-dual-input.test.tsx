@@ -18,9 +18,14 @@ function Harness(props: {
   totalUsd: string
   tasa: string
   onEstadoChange?: (estado: SafMontoEstado) => void
+  onUsdChange?: (val: string) => void
 }) {
   const [usd, setUsd] = useState('')
   const [bs, setBs] = useState('')
+  const handleUsdChange = (val: string) => {
+    props.onUsdChange?.(val)
+    setUsd(val)
+  }
   return (
     <SafMontoDualInput
       montoUsdStr={usd}
@@ -28,7 +33,7 @@ function Harness(props: {
       disponibleUsd={props.disponibleUsd}
       totalUsd={props.totalUsd}
       tasa={props.tasa}
-      onUsdChange={setUsd}
+      onUsdChange={handleUsdChange}
       onBsChange={setBs}
       onEstadoChange={props.onEstadoChange}
     />
@@ -120,5 +125,45 @@ describe('SafMontoDualInput (PR-A1, reemplaza el clamp de capSafMontoUsd en los 
     await user.type(screen.getByLabelText(/Monto SAF \(Bs\)/i), '754')
 
     expect(screen.getByLabelText(/Monto SAF \(USD\)/i)).toHaveValue('1.508')
+  })
+
+  it('cambiar la prop tasa recalcula el Bs companero sin tocar el USD canonico (bugfix engram #5296, bug B)', async () => {
+    const user = userEvent.setup()
+    const onUsdChange = vi.fn()
+    const { rerender } = render(
+      <Harness disponibleUsd="100.00" totalUsd="100.00" tasa="500" onUsdChange={onUsdChange} />
+    )
+
+    await user.type(screen.getByLabelText(/Monto SAF \(USD\)/i), '10')
+    expect(screen.getByLabelText(/Monto SAF \(Bs\)/i)).toHaveValue('5000.00')
+
+    onUsdChange.mockClear()
+    // El padre cambia la tasa (ej. modal recarga tasa vigente) — el USD
+    // tecleado por el usuario NUNCA debe moverse, solo el companero Bs.
+    rerender(<Harness disponibleUsd="100.00" totalUsd="100.00" tasa="600" onUsdChange={onUsdChange} />)
+
+    expect(screen.getByLabelText(/Monto SAF \(Bs\)/i)).toHaveValue('6000.00')
+    expect(screen.getByLabelText(/Monto SAF \(USD\)/i)).toHaveValue('10')
+    expect(onUsdChange).not.toHaveBeenCalled()
+  })
+
+  it('cambiar la tasa a 0 (guard) no recalcula el Bs companero ni toca el USD (bugfix engram #5296, bug B — triangulacion)', async () => {
+    const user = userEvent.setup()
+    const onUsdChange = vi.fn()
+    const { rerender } = render(
+      <Harness disponibleUsd="100.00" totalUsd="100.00" tasa="500" onUsdChange={onUsdChange} />
+    )
+
+    await user.type(screen.getByLabelText(/Monto SAF \(USD\)/i), '10')
+    expect(screen.getByLabelText(/Monto SAF \(Bs\)/i)).toHaveValue('5000.00')
+
+    onUsdChange.mockClear()
+    rerender(<Harness disponibleUsd="100.00" totalUsd="100.00" tasa="0" onUsdChange={onUsdChange} />)
+
+    // Guard: tasa<=0 no debe producir NaN/0 escrito sobre el Bs ya
+    // calculado, ni mover el USD canonico.
+    expect(screen.getByLabelText(/Monto SAF \(Bs\)/i)).toHaveValue('5000.00')
+    expect(screen.getByLabelText(/Monto SAF \(USD\)/i)).toHaveValue('10')
+    expect(onUsdChange).not.toHaveBeenCalled()
   })
 })

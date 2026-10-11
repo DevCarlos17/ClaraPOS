@@ -134,8 +134,13 @@ export function PagoFacturaModal({
   // `tasaStr` quedaba en '' y `tasaNum` en 0, lo cual congelaba el
   // recalculo de `SafMontoDualInput` (guard `tasa<=0` en
   // `saf-monto-dual-input.tsx:66/73`) — bug QA, ver engram #5292.
+  // `isOpen` esta en el guard+deps (mirror del efecto de sesion-activa en
+  // `:101-118`) porque `handleClose()` resetea `tasaStr` a '' Y `fechaPago`
+  // al valor de hoy; en un reopen el mismo dia `fechaPago` no CAMBIA de
+  // valor, asi que sin `isOpen` en deps el efecto no se re-ejecuta y
+  // `tasaStr` queda vacio tras reabrir — bug QA, ver engram #5296 (bug A).
   useEffect(() => {
-    if (!user?.empresa_id || !fechaPago) return
+    if (!isOpen || !user?.empresa_id || !fechaPago) return
     db.execute(
       'SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND DATE(fecha) <= ? ORDER BY fecha DESC, created_at DESC LIMIT 1',
       [user.empresa_id, fechaPago]
@@ -149,7 +154,7 @@ export function PagoFacturaModal({
       setTasaInternaNum(0)
       setTasaStr(tasaValor > 0 ? tasaValor.toFixed(4) : '')
     })
-  }, [fechaPago, user?.empresa_id, tasaValor])
+  }, [isOpen, fechaPago, user?.empresa_id, tasaValor])
 
   // Resetear form al abrir
   useEffect(() => {
