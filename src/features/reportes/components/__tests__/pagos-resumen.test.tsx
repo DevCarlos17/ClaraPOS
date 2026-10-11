@@ -302,4 +302,73 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     expect(totalFacturado.getByText(formatUsd(400))).toBeInTheDocument()
     expect(totalFacturado.getByText(formatBs(400 * TASA))).toBeInTheDocument()
   })
+
+  // Cobertura de brecha detectada en review (PASS WITH WARNINGS): los 5 escenarios A-E
+  // solo aseveraban VISIBILIDAD de la fila "Diferencial cambiario"/"Negocio asume", nunca
+  // el valor NUMERICO de TOTAL COBRADO / Saldo facturas cuando esos conceptos suman dinero
+  // real a la fórmula (design #5318: `TOTAL_COBRADO = cashNeto + safConsumido + diferencial
+  // + absorcion`). Escenario F cubre diferencial, Escenario G cubre absorcion (caminos
+  // independientes — hooks distintos, flags distintos). `setup()` fija netoBs=1000 cuando
+  // hayDiferencial=true y totalBs=500 cuando hayAbsorcion=true; el componente NO usa el
+  // campo *Usd del hook directamente para el total — recalcula desde Bs/tasaDelDia
+  // (`diferencialNetoUsdCalc = diferencialNetoBs / tasaDelDia`, idem absorcion). Los
+  // valores esperados abajo replican esa misma formula con la misma aritmetica de punto
+  // flotante y el mismo orden de sumandos que el componente, para garantizar coincidencia
+  // bit-a-bit en el string formateado (`formatUsd` redondea a 2 decimales al final).
+  it('Escenario F — cash + diferencial cambiario activo: TOTAL COBRADO y Saldo facturas incluyen el aporte del diferencial (diferencialNetoBs / tasaDelDia)', () => {
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 300, totalOriginal: 300, totalBs: 300 * TASA },
+      ],
+      hayDiferencial: true, // setup() fija netoBs=1000, netoUsd=20 para este flag
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
+
+    // Replica EXACTA de la formula del componente: cashNetoUsd + safTotalUsd(0)
+    // + (hayDiferencial ? diferencialNetoBs/tasaDelDia : 0) + absorcion(0)
+    const diferencialNetoBs = 1000
+    const diferencialContribUsd = diferencialNetoBs / TASA
+    const expectedTotalCobradoUsd = 300 + diferencialContribUsd
+    const expectedTotalCobradoBs = 300 * TASA + diferencialNetoBs
+
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(expectedTotalCobradoUsd))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatBs(expectedTotalCobradoBs))).toBeInTheDocument()
+    // Si el termino del diferencial se perdiera, TOTAL COBRADO caeria al cash puro (300) —
+    // este assert negativo prueba que la fila no se quedo en el valor pre-diferencial.
+    expect(totalCobrado.queryByText(formatUsd(300))).not.toBeInTheDocument()
+
+    const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
+    expect(saldoFacturas.getByText(formatUsd(expectedTotalCobradoUsd))).toBeInTheDocument()
+    expect(saldoFacturas.getByText(formatBs(expectedTotalCobradoBs))).toBeInTheDocument()
+  })
+
+  it('Escenario G — cash + negocio asume (absorcion) activo: TOTAL COBRADO y Saldo facturas incluyen el aporte de la absorcion (absorcionBs / tasaDelDia)', () => {
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 200, totalOriginal: 200, totalBs: 200 * TASA },
+      ],
+      hayAbsorcion: true, // setup() fija totalBs=500, totalUsd=10 para este flag
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
+
+    // Replica EXACTA de la formula del componente: cashNetoUsd + safTotalUsd(0)
+    // + diferencial(0) + (hayAbsorcion ? absorcionBs/tasaDelDia : 0)
+    const absorcionBs = 500
+    const absorcionContribUsd = absorcionBs / TASA
+    const expectedTotalCobradoUsd = 200 + absorcionContribUsd
+    const expectedTotalCobradoBs = 200 * TASA + absorcionBs
+
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(expectedTotalCobradoUsd))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatBs(expectedTotalCobradoBs))).toBeInTheDocument()
+    // Si el termino de absorcion se perdiera, TOTAL COBRADO caeria al cash puro (200).
+    expect(totalCobrado.queryByText(formatUsd(200))).not.toBeInTheDocument()
+
+    const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
+    expect(saldoFacturas.getByText(formatUsd(expectedTotalCobradoUsd))).toBeInTheDocument()
+    expect(saldoFacturas.getByText(formatBs(expectedTotalCobradoBs))).toBeInTheDocument()
+  })
 })
