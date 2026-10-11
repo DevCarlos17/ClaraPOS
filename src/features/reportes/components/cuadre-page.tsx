@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { todayStr } from '@/lib/dates'
-import { formatTasa, formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { formatTasa, formatUsd, formatBs } from '@/lib/currency'
 import { formatDate, formatDateTime, formatHora } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -181,7 +181,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   // KPI data — shown after consultar
   const { totalVentasUsd, totalVentasBs, facturasCount } = useVentasDelDia(activeFilters)
   const { cxcTotalUsd } = useCxcDelDia(activeFilters)
-  const { items: safItems, totalUsd: safTotalUsd } = useSafDiario(activeFilters)
+  const { items: safItems } = useSafDiario(activeFilters)
 
   // OCULTO (fix/cuadre-ocultar-neto-esperado): saldoContadoUsd solo alimentaba
   // "Total Caja Neto Esperado" (ahora oculto). Se comenta el hook para no dejar
@@ -729,19 +729,6 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                         {formatUsd(anticipoUsd)}
                       </div>
                     )}
-                  </div>
-                </div>
-              )}
-
-              {/* Cobros por Adelantado (SAF directo) — solo si hay */}
-              {safTotalUsd > 0.001 && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Cobros por Adelantado (SAF)</span>
-                  <div className="text-right">
-                    {tasaPromedio > 0 && (
-                      <div className="text-indigo-600">{formatBs(usdToBs(safTotalUsd, tasaPromedio))}</div>
-                    )}
-                    <div className="text-xs text-muted-foreground">{formatUsd(safTotalUsd)}</div>
                   </div>
                 </div>
               )}
