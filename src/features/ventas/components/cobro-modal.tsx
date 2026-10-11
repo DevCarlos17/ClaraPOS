@@ -18,7 +18,8 @@ import { useFacturasPendientes } from '@/features/cxc/hooks/use-cxc'
 import { useDeudaFacturasCliente } from '@/features/cxc/hooks/use-deuda-cliente'
 import { calcularDisponibleCredito } from '@/features/cxc/lib/deuda-credito-cliente'
 import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
-import { capSafMontoUsd } from '../lib/cap-saf-monto'
+import { SafMontoDualInput } from '@/components/shared/saf-monto-dual-input'
+import type { SafMontoEstado } from '@/lib/saf-monto'
 import { calcularPendienteVenta } from '../lib/pendiente-venta'
 import { evaluarPagoPendiente } from '../lib/pago-guard'
 import type { CargoEspecial } from '../hooks/use-ventas'
@@ -44,7 +45,7 @@ interface SplitEntry {
   montoBs: number
 }
 
-interface CobroModalProps {
+export interface CobroModalProps {
   isOpen: boolean
   onClose: () => void
   /** Tasa live del parent; se congela internamente al abrir el modal */
@@ -67,6 +68,23 @@ interface CobroModalProps {
    *  enviado al servidor para el re-chequeo de stock por deposito (Slice 2b). */
   depositoId: string | null
   onSuccess: (data: VentaExitosaData) => void
+}
+
+/**
+ * Parseo defensivo del monto SAF (USD) tipeado: un string a mitad de
+ * edicion (ej. "1.") nunca debe tirar. Pura — mismo criterio que
+ * `toDecimalSafe` en `saf-monto-dual-input.tsx`, duplicada aqui porque este
+ * modal necesita el Decimal numerico en varios puntos (equivalente Bs,
+ * gate de submit, `safEntry.montoUsd`) ademas del string crudo que posee
+ * `SafMontoDualInput`.
+ */
+function parseSafMontoUsd(val: string): Decimal {
+  if (val.trim() === '') return new Decimal(0)
+  try {
+    return new Decimal(val)
+  } catch {
+    return new Decimal(0)
+  }
 }
 
 export function CobroModal({
@@ -101,19 +119,24 @@ export function CobroModal({
   const { disponible: safDisponible, tieneSaf } = useSaldoAFavor(clienteId || null)
   // safDisponible puede llegar con ruido de punto flotante desde el SUM() de
   // SQLite (CAST(monto AS REAL)). Se redondea a 2 decimales aqui, en el
-  // limite de UI, para usar como tope en el input y en el clamp de safMonto —
+  // limite de UI, para usar como tope en `evaluarSafMonto`/`SafMontoDualInput` —
   // nunca se usa .toNumber() sin redondear sobre un valor que alimenta la
   // pantalla o el monto aplicado (regla #10: NUNCA float en campos financieros).
   const safDisponibleDecimal = new Decimal(safDisponible).toDecimalPlaces(2)
   // Deuda real de facturas — fuente del gate de limite de credito (nunca
   // saldo_actual neteado, nunca suma saldo a favor). Ver design.md Decision 3.
   const { deudaFacturasUsd } = useDeudaFacturasCliente(clienteId || null)
-  const [safMonto, setSafMonto] = useState(0)
-  // Input Bs auxiliar del SAF (comodidad de tipeo, ver engram
-  // pos/saldo-favor-cobro-modelo): el USD (`safMonto`) sigue siendo la
-  // fuente de verdad; este string solo refleja lo que el cajero tipea en Bs.
+  // SAF USD es la fuente de verdad, a precision completa (string crudo del
+  // input, NUNCA clampeado ni redondeado — fix sdd/saf-snapshot-y-trazabilidad
+  // PR-A2, reemplaza el clamp silencioso de `capSafMontoUsd`). El Bs es
+  // comodidad de tipeo derivada por `SafMontoDualInput`. `safEstado` es el
+  // lift-up del estado del helper `evaluarSafMonto` usado para componer el
+  // gate de "Procesar" (ver `puedeProcesar`).
+  const [safMontoUsdStr, setSafMontoUsdStr] = useState('')
   const [safMontoBsStr, setSafMontoBsStr] = useState('')
+  const [safEstado, setSafEstado] = useState<SafMontoEstado>('ok')
   const [safSeleccionado, setSafSeleccionado] = useState(false)
+  const safMontoUsdDecimal = parseSafMontoUsd(safMontoUsdStr)
 
   // ── Estado de resolución de discrepancias ─────────────────────────────────
   const [discrepancyMode, setDiscrepancyMode] = useState<DiscrepancyMode>(null)
@@ -143,8 +166,9 @@ export function CobroModal({
     setSplitVuelto([])
     setSupervisorAuthorized(false)
     setSupervisorId(null)
-    setSafMonto(0)
+    setSafMontoUsdStr('')
     setSafMontoBsStr('')
+    setSafEstado('ok')
     setSafSeleccionado(false)
   // La tasa se congela solo al abrir (se excluye tasa de deps intencionalmente)
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -180,7 +204,7 @@ export function CobroModal({
 
   // Ancla en Bs (sin doble conversion USD→Bs→USD)
   // SAF se cuenta en USD; convertir a Bs para el balance
-  const safMontoBsEquiv = safSeleccionado ? usdToBs(safMonto, tasaUsada) : new Decimal(0)
+  const safMontoBsEquiv = safSeleccionado ? usdToBs(safMontoUsdDecimal, tasaUsada) : new Decimal(0)
   const totalPagadoBs = pagos.reduce((sum, p) => {
     return sum.plus(p.moneda === 'BS' ? p.monto : usdToBs(p.monto, tasaUsada))
   }, new Decimal(0)).plus(safMontoBsEquiv)
@@ -309,8 +333,12 @@ export function CobroModal({
     if (pendienteBs4.abs().lte('0.01')) {
       return (
         (pagos.length > 0 && esPagado) ||
-        // SAF como único método de cobro: pagos=[] pero SAF cubre el monto
-        (safSeleccionado && safMonto > 0 && esPagado) ||
+        // SAF como único método de cobro: pagos=[] pero SAF cubre el monto.
+        // AND `safEstado === 'ok'` (sdd/saf-snapshot-y-trazabilidad PR-A2):
+        // un monto que excede el disponible o el total NUNCA puede procesar,
+        // aunque matematicamente "cubra" el pendiente (lo cubriria con un
+        // monto invalido).
+        (safSeleccionado && safMontoUsdDecimal.gt(0) && esPagado && safEstado === 'ok') ||
         (tipoDetectado === 'CREDITO' && pagos.length > 0) ||
         (tipoDetectado === 'CREDITO' && pagos.length === 0 && !!clienteId)
       )
@@ -336,39 +364,6 @@ export function CobroModal({
   const monedaMetodo = selectedMetodo?.moneda as 'USD' | 'BS' | undefined
 
   // ── Handlers ─────────────────────────────────────────────────────────────
-
-  // SAF: par de handlers bidireccionales USD<->Bs (mismo patron que
-  // handleCostoUsdChange/handleCostoBsChange en producto-form.tsx). El USD
-  // (`safMonto`) es siempre la fuente de verdad capeada a precision completa
-  // via `capSafMontoUsd` (min(disponible, total)); el Bs es comodidad de
-  // tipeo. Nunca se reformatea el campo que el cajero esta tipeando — solo
-  // se actualiza el campo companero (mismo criterio que producto-form.tsx).
-  const handleSafMontoUsdChange = (val: string) => {
-    // Parseo defensivo: un input a mitad de edicion (ej. "1.") puede llegar
-    // como string no valida para Decimal.
-    let ingresado: string | number = val === '' ? 0 : val
-    try {
-      new Decimal(ingresado)
-    } catch {
-      ingresado = 0
-    }
-    const capped = capSafMontoUsd(ingresado, safDisponibleDecimal, totalEfectivoUsd)
-    setSafMonto(capped.toNumber())
-    setSafMontoBsStr(tasaUsada > 0 ? usdToBs(capped, tasaUsada).toFixed(2) : '')
-  }
-
-  const handleSafMontoBsChange = (val: string) => {
-    setSafMontoBsStr(val)
-    let ingresadoBs: string | number = val === '' ? 0 : val
-    try {
-      new Decimal(ingresadoBs)
-    } catch {
-      ingresadoBs = 0
-    }
-    const usdFull = tasaUsada > 0 ? bsToUsd(ingresadoBs, tasaUsada) : new Decimal(0)
-    const capped = capSafMontoUsd(usdFull, safDisponibleDecimal, totalEfectivoUsd)
-    setSafMonto(capped.toNumber())
-  }
 
   const handleAddPago = () => {
     const montoNum = parseFloat(montoStr)
@@ -549,8 +544,8 @@ export function CobroModal({
 
       // Build SAF entry if client is using their credit balance as payment method
       const safEntry: SafEntry | undefined =
-        safSeleccionado && safMonto > 0 && clienteId
-          ? { clienteId, montoUsd: safMonto, safOrigenRefs: [] }
+        safSeleccionado && safMontoUsdDecimal.gt(0) && clienteId
+          ? { clienteId, montoUsd: safMontoUsdDecimal.toNumber(), safOrigenRefs: [] }
           : undefined
 
       const result = await crearVenta({
@@ -816,11 +811,13 @@ export function CobroModal({
                     if (checked) {
                       // Pre-cargar monto: min(disponible, totalVenta), a precision
                       // completa (sin redondeo prematuro — fix pos-saf-input-bs).
-                      const capped = capSafMontoUsd(safDisponibleDecimal, safDisponibleDecimal, totalEfectivoUsd)
-                      setSafMonto(capped.toNumber())
-                      setSafMontoBsStr(tasaUsada > 0 ? usdToBs(capped, tasaUsada).toFixed(2) : '')
+                      // Default inicial unicamente — el usuario puede editarlo
+                      // libremente despues sin ningun clamp (PR-A2).
+                      const inicial = Decimal.min(safDisponibleDecimal, totalEfectivoUsd)
+                      setSafMontoUsdStr(inicial.toString())
+                      setSafMontoBsStr(tasaUsada > 0 ? usdToBs(inicial, tasaUsada).toFixed(2) : '')
                     } else {
-                      setSafMonto(0)
+                      setSafMontoUsdStr('')
                       setSafMontoBsStr('')
                     }
                   }}
@@ -829,32 +826,16 @@ export function CobroModal({
                 Saldo a favor ({formatUsd(safDisponible)} disponible)
               </label>
               {safSeleccionado && (
-                <div className="flex items-center gap-1.5">
-                  <div className="flex items-center gap-1">
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      max={Decimal.min(safDisponibleDecimal, totalEfectivoUsd).toNumber()}
-                      value={safMonto || ''}
-                      onChange={(e) => handleSafMontoUsdChange(e.target.value)}
-                      placeholder="0.00"
-                      className="h-7 w-20 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                    />
-                    <span className="text-xs text-blue-700">USD</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Input
-                      type="text"
-                      inputMode="decimal"
-                      value={safMontoBsStr}
-                      onChange={(e) => handleSafMontoBsChange(e.target.value)}
-                      placeholder="0.00"
-                      className="h-7 w-20 text-xs"
-                    />
-                    <span className="text-xs text-blue-700">Bs</span>
-                  </div>
-                </div>
+                <SafMontoDualInput
+                  montoUsdStr={safMontoUsdStr}
+                  montoBsStr={safMontoBsStr}
+                  disponibleUsd={safDisponibleDecimal}
+                  totalUsd={totalEfectivoUsd}
+                  tasa={tasaUsada}
+                  onUsdChange={setSafMontoUsdStr}
+                  onBsChange={setSafMontoBsStr}
+                  onEstadoChange={setSafEstado}
+                />
               )}
             </div>
           </div>
