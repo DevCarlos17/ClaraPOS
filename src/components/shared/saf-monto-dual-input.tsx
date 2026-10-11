@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import Decimal from 'decimal.js'
 import { usdToBs, bsToUsd, type DecimalInput } from '@/lib/currency'
 import { toMaskedDisplay } from '@/lib/decimal-display-mask'
@@ -59,6 +59,31 @@ export function SafMontoDualInput({
   useEffect(() => {
     onEstadoChange?.(estado)
   }, [estado, onEstadoChange])
+
+  // Ref al USD canonico vigente, leido (no suscrito) por el efecto de
+  // abajo — evita que el efecto se re-dispare en cada tecla de USD/Bs
+  // (feedback loop / clobber del campo que el usuario esta tipeando).
+  const usdRef = useRef(montoUsdStr)
+  usdRef.current = montoUsdStr
+
+  // Recalcula el Bs companero cuando la TASA (prop) cambia — el USD
+  // tecleado por el usuario es canonico y NUNCA se recalcula desde Bs en
+  // este efecto (regla CLAUDE.md #10, bugfix engram #5296, bug B). Antes
+  // de este fix, el companero solo se recomputaba dentro de
+  // `handleUsdChange`/`handleBsChange`; si el padre cambiaba `tasa` sin
+  // que el usuario tecleara nada (ej. pago-factura-modal recarga la tasa
+  // vigente, o abono-global-modal recalcula `tasaEfectiva` al cambiar
+  // `fechaPago`), el Bs mostrado quedaba stale hasta el siguiente tecleo.
+  // Dep array `[tasa]` SOLO — `usdRef` se lee, no se declara como dep, asi
+  // que tipear en USD/Bs (que no cambia `tasa`) nunca re-dispara esto.
+  useEffect(() => {
+    const tasaDecimal = toDecimalSafe(String(tasa))
+    if (!tasaDecimal.greaterThan(0)) return
+    if (usdRef.current.trim() === '') return
+    const bsDerivado = usdToBs(toDecimalSafe(usdRef.current), tasaDecimal)
+    onBsChange(toMaskedDisplay(bsDerivado.toString(), 2))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasa])
 
   const handleUsdChange = (val: string) => {
     onUsdChange(val)
