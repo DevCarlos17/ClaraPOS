@@ -222,10 +222,10 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     expect(totalFacturado.getByText(formatUsd(650))).toBeInTheDocument()
   })
 
-  it('Escenario C — mixto (ref #5317): cash 650 + SAF consumido 650, SAF generado 350 informativo (NO se resta): TOTAL COBRADO == Saldo facturas == Total facturado == 1300', () => {
+  it('Escenario C — mixto (ref #5317, corregido por #5332): cash GROSS 1000 (incluye excedente de A) + SAF consumido 650 (B), SAF generado 350 SE RESTA de Saldo facturas y la fila "Saldo a favor generado" NO se muestra en Card 1: TOTAL COBRADO == 1650, Saldo facturas == Total facturado == 1300', () => {
     setup({
       metodos: [
-        { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 650, totalOriginal: 650, totalBs: 650 * TASA },
+        { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 1000, totalOriginal: 1000, totalBs: 1000 * TASA },
       ],
       safTotalUsd: 650,
       anticipoUsd: 350,
@@ -236,18 +236,48 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
 
     const totalCobrado = within(screen.getByTestId('total-cobrado'))
-    expect(totalCobrado.getByText(formatUsd(1300))).toBeInTheDocument()
-    expect(totalCobrado.getByText(formatBs(1300 * TASA))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatUsd(1650))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatBs(1650 * TASA))).toBeInTheDocument()
 
     const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
     expect(saldoFacturas.getByText(formatUsd(1300))).toBeInTheDocument()
+    expect(saldoFacturas.getByText(formatBs(1300 * TASA))).toBeInTheDocument()
 
     const totalFacturado = within(screen.getByTestId('total-facturado'))
     expect(totalFacturado.getByText(formatUsd(1300))).toBeInTheDocument()
 
-    // Saldo a favor generado es INFORMATIVO — visible pero NO restado de ningun total
-    const safGenerado = within(screen.getByTestId('saf-generado'))
-    expect(safGenerado.getByText(formatUsd(350))).toBeInTheDocument()
+    // Saldo a favor generado (#5332): SU VALOR se resta en el computo de Saldo facturas,
+    // pero la fila ya NO se renderiza en Card 1 (pertenece solo a Card 2, "Cobros por Adelantado")
+    expect(screen.queryByTestId('saf-generado')).not.toBeInTheDocument()
+    expect(screen.queryByText('Saldo a favor generado')).not.toBeInTheDocument()
+  })
+
+  it('Escenario H — bug de staging (#5332): 2000 cash GROSS / factura 650 / 1350 SAF generado: TOTAL COBRADO == 2000, Saldo facturas == Total facturado == 650, fila "Saldo a favor generado" AUSENTE en Card 1', () => {
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 2000, totalOriginal: 2000, totalBs: 2000 * TASA },
+      ],
+      anticipoUsd: 1350,
+      totalVentasUsd: 650,
+      totalVentasBs: 650 * TASA,
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
+
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(2000))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatBs(2000 * TASA))).toBeInTheDocument()
+
+    const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
+    expect(saldoFacturas.getByText(formatUsd(650))).toBeInTheDocument()
+    expect(saldoFacturas.getByText(formatBs(650 * TASA))).toBeInTheDocument()
+
+    const totalFacturado = within(screen.getByTestId('total-facturado'))
+    expect(totalFacturado.getByText(formatUsd(650))).toBeInTheDocument()
+    expect(totalFacturado.getByText(formatBs(650 * TASA))).toBeInTheDocument()
+
+    expect(screen.queryByTestId('saf-generado')).not.toBeInTheDocument()
+    expect(screen.queryByText('Saldo a favor generado')).not.toBeInTheDocument()
   })
 
   it('Escenario D — CxC vieja cobrada hoy (overcount): cash bruto 700, cobros anteriores 200 se RESTAN -> TOTAL COBRADO == Saldo facturas == Total facturado == 500 (NO 700)', () => {
