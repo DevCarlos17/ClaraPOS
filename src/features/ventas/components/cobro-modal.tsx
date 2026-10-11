@@ -828,6 +828,13 @@ export function CobroModal({
                     } else {
                       setSafMontoUsdStr('')
                       setSafMontoBsStr('')
+                      // Resetear safEstado al desmarcar: SafMontoDualInput
+                      // desmonta sin limpiar su ultimo estado via
+                      // onEstadoChange, dejando un 'excedeTotal'/
+                      // 'excedeDisponible' obsoleto que bloquearia un
+                      // sobrepago en efectivo legitimo y sin relacion con
+                      // SAF (regresion engram #5294).
+                      setSafEstado('ok')
                     }
                   }}
                   className="rounded border-blue-300"

@@ -206,4 +206,37 @@ describe('CobroModal — SAF dual input (PR-A2, sdd/saf-snapshot-y-trazabilidad)
     // Procesar debe quedar bloqueado
     expect(screen.getByRole('button', { name: /Procesar/i })).toBeDisabled()
   })
+
+  it('destildar SAF luego de un monto invalido resetea safEstado y no bloquea un sobrepago en efectivo genuino (regresion engram #5294)', async () => {
+    // Mismo escenario que el test anterior ($1.30 total, SAF disponible
+    // $1.70, SAF tipeado $1.50 que excede el total) pero el cajero
+    // DESTILDA "Saldo a favor" antes de agregar el pago en efectivo. El
+    // excedente resultante es un sobrepago en efectivo 100% genuino, sin
+    // relacion alguna con SAF — no debe quedar bloqueado por un
+    // `safEstado` obsoleto que nunca se reseteo al desmarcar el checkbox.
+    mockedUseSaldoAFavor.mockReturnValue({ disponible: 1.7, tieneSaf: true })
+    const metodoEfectivo = makeMetodoEfectivo()
+    const user = userEvent.setup()
+    render(<CobroModal {...baseProps({ totalBrutoUsd: 1.3, metodos: [metodoEfectivo] })} />)
+
+    await activarSaf(user)
+    const safUsdInput = screen.getByLabelText(/Monto SAF \(USD\)/i)
+    await user.clear(safUsdInput)
+    await user.type(safUsdInput, '1.50')
+    expect(screen.getByText(/excede el total a pagar/i)).toBeInTheDocument()
+
+    // Destildar SAF — el cajero decide no usarlo.
+    await user.click(screen.getByLabelText(/Saldo a favor/i))
+    expect(screen.queryByLabelText(/Monto SAF \(USD\)/i)).not.toBeInTheDocument()
+
+    // Pago en efectivo que genuinamente sobrepaga el total (sin SAF).
+    await user.selectOptions(screen.getByRole('combobox'), metodoEfectivo.id)
+    const montoInput = screen.getByPlaceholderText(/Monto \(USD\)/i)
+    await user.type(montoInput, '5{Enter}')
+
+    // Los controles de excedente deben aparecer (sobrepago legitimo) y
+    // Procesar debe quedar habilitado con el modo auto-seleccionado (VUELTO).
+    expect(screen.getByRole('button', { name: /Dar vuelto/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Procesar/i })).not.toBeDisabled()
+  })
 })
