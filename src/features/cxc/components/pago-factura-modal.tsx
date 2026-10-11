@@ -29,6 +29,8 @@ import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { db } from '@/core/db/powersync/db'
 import { localNow } from '@/lib/dates'
 import { hayFormaDeCobroValida, calcularTotalAplicado } from '../lib/pago-gating'
+import { SafMontoDualInput } from '@/components/shared/saf-monto-dual-input'
+import type { SafMontoEstado } from '@/lib/saf-monto'
 
 type OverpayMode = 'VUELTO' | 'SAF' | 'PROPINA' | null
 
@@ -76,9 +78,17 @@ export function PagoFacturaModal({
   const [microBalance, setMicroBalance] = useState<{ saldoUsd: Decimal; saldoBs: Decimal; tasa: number } | null>(null)
   const [loadingDiferencial, setLoadingDiferencial] = useState(false)
 
-  // Manual SAF application state
+  // Manual SAF application state — montoSafStr es la fuente de verdad USD
+  // (precision completa, string crudo del input, NUNCA clampeado ni
+  // redondeado — fix sdd/saf-snapshot-y-trazabilidad PR-C, reemplaza el
+  // input unico sin companion Bs). montoSafBsStr es la comodidad de tipeo
+  // derivada por `SafMontoDualInput`. safEstado es el lift-up del estado del
+  // helper `evaluarSafMonto` usado para componer el gate de submit (ver
+  // `canSubmit`).
   const [usarSaf, setUsarSaf] = useState(false)
   const [montoSafStr, setMontoSafStr] = useState('')
+  const [montoSafBsStr, setMontoSafBsStr] = useState('')
+  const [safEstado, setSafEstado] = useState<SafMontoEstado>('ok')
 
   // Overpayment
   const [overpayMode, setOverpayMode] = useState<OverpayMode>(null)
@@ -145,6 +155,8 @@ export function PagoFacturaModal({
       setOverpayMode(null)
       setUsarSaf(false)
       setMontoSafStr('')
+      setMontoSafBsStr('')
+      setSafEstado('ok')
     }
   }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -157,6 +169,8 @@ export function PagoFacturaModal({
     setOverpayMode(null)
     setUsarSaf(false)
     setMontoSafStr('')
+    setMontoSafBsStr('')
+    setSafEstado('ok')
   }, [destino]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleClose() {
@@ -171,6 +185,8 @@ export function PagoFacturaModal({
     setOverpayMode(null)
     setUsarSaf(false)
     setMontoSafStr('')
+    setMontoSafBsStr('')
+    setSafEstado('ok')
     setMicroBalance(null)
     setLoadingDiferencial(false)
     setDestinoCobro('CAJA')
@@ -220,6 +236,12 @@ export function PagoFacturaModal({
   // SAF manual calculations
   const montoSafNum = usarSaf ? (parseFloat(montoSafStr) || 0) : 0
   const maxSaf = Math.min(safDisponible, saldoEfectivo)
+  // safDisponible puede llegar con ruido de punto flotante desde el SUM()/CAST
+  // de SQLite. Se redondea a 2 decimales aqui, en el limite de UI, para usar
+  // como tope en `evaluarSafMonto`/`SafMontoDualInput` — mismo criterio que
+  // `safDisponibleDecimal` en `cobro-modal.tsx` y `disponibleDecimal` en
+  // `abono-global-modal.tsx` (gap identificado en design, CxC no lo tenia).
+  const disponibleDecimal = new Decimal(safDisponible).toDecimalPlaces(2)
   // Required payment via method = saldo - SAF
   // Do NOT use toFixed(2) here — that truncates small USD amounts like $0.022 → $0.02
   const saldoRequeridoConSaf = Math.max(0, saldoEfectivo - montoSafNum)
@@ -244,11 +266,15 @@ export function PagoFacturaModal({
   const safCubreTodo = usarSaf && montoSafNum >= saldoEfectivo - 0.001
   // Fix A (PR11): habilitar tambien cuando el SAF es la UNICA via de pago, aunque
   // no cubra el 100% del saldo (ver pago-gating.ts para el contrato completo).
+  // AND `safEstado === 'ok'` (sdd/saf-snapshot-y-trazabilidad PR-C): un monto
+  // que excede el disponible o el total NUNCA puede procesar, aunque
+  // matematicamente "cubra" el saldo (la cubriria con un monto invalido).
   const canSubmit =
     hayFormaDeCobroValida(usarSaf, montoSafNum, !!metodoCobro, montoNum) &&
     !loading &&
     tasaNum > 0 && !destinoPrestamoInvalido && overpayResuelto &&
-    (!usarSaf || montoSafNum > 0)
+    (!usarSaf || montoSafNum > 0) &&
+    (!usarSaf || safEstado === 'ok')
 
   function handlePayMax() {
     if (moneda === 'BS') {
@@ -826,9 +852,20 @@ export function PagoFacturaModal({
                     type="checkbox"
                     checked={usarSaf}
                     onChange={(e) => {
-                      setUsarSaf(e.target.checked)
-                      if (!e.target.checked) setMontoSafStr('')
-                      else setMontoSafStr(Math.min(safDisponible, saldoEfectivo).toFixed(2))
+                      const checked = e.target.checked
+                      setUsarSaf(checked)
+                      if (!checked) {
+                        setMontoSafStr('')
+                        setMontoSafBsStr('')
+                      } else {
+                        // Pre-cargar monto: min(disponible, saldoEfectivo), a
+                        // precision completa — default inicial unicamente, el
+                        // usuario puede editarlo libremente despues sin ningun
+                        // clamp (mismo criterio que abono-global-modal.tsx PR-B).
+                        const inicial = Decimal.min(disponibleDecimal, new Decimal(saldoEfectivo))
+                        setMontoSafStr(inicial.toString())
+                        setMontoSafBsStr(tasaNum > 0 ? usdToBs(inicial, tasaNum).toFixed(2) : '')
+                      }
                     }}
                     className="rounded border-blue-300"
                   />
@@ -838,24 +875,27 @@ export function PagoFacturaModal({
               {usarSaf && (
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs text-blue-700">Monto SAF a aplicar (USD)</label>
+                    <label className="text-xs text-blue-700">Monto SAF a aplicar</label>
                     <button
                       type="button"
-                      onClick={() => setMontoSafStr(maxSaf.toFixed(2))}
+                      onClick={() => {
+                        setMontoSafStr(maxSaf.toFixed(2))
+                        setMontoSafBsStr(tasaNum > 0 ? usdToBs(maxSaf, tasaNum).toFixed(2) : '')
+                      }}
                       className="text-xs text-blue-600 hover:underline"
                     >
                       Aplicar máximo ({formatUsd(maxSaf)})
                     </button>
                   </div>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    max={maxSaf}
-                    value={montoSafStr}
-                    onChange={(e) => setMontoSafStr(e.target.value)}
-                    placeholder="0.00"
-                    className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  <SafMontoDualInput
+                    montoUsdStr={montoSafStr}
+                    montoBsStr={montoSafBsStr}
+                    disponibleUsd={disponibleDecimal}
+                    totalUsd={saldoEfectivo}
+                    tasa={tasaNum}
+                    onUsdChange={setMontoSafStr}
+                    onBsChange={setMontoSafBsStr}
+                    onEstadoChange={setSafEstado}
                   />
                   {montoSafNum > 0 && saldoRequeridoConSaf > 0.001 && (
                     <p className="text-xs text-blue-600">
