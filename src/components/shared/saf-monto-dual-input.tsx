@@ -71,7 +71,10 @@ export function SafMontoDualInput({
     onBsChange(val)
     const tasaDecimal = toDecimalSafe(String(tasa))
     const usdDerivado = tasaDecimal.greaterThan(0) ? bsToUsd(toDecimalSafe(val), tasaDecimal) : new Decimal(0)
-    onUsdChange(toMaskedDisplay(usdDerivado.toString(), 2))
+    // USD es el campo canonico/persistido (regla CLAUDE.md #10: redondear
+    // solo al final de la cadena) — NUNCA enmascarar aqui a 2dp, a
+    // diferencia de Bs (companion de solo-display en handleUsdChange).
+    onUsdChange(usdDerivado.toString())
   }
 
   return (

@@ -51,7 +51,10 @@ describe('SafMontoDualInput (PR-A1, reemplaza el clamp de capSafMontoUsd en los 
 
     await user.type(screen.getByLabelText(/Monto SAF \(Bs\)/i), '400')
 
-    expect(screen.getByLabelText(/Monto SAF \(USD\)/i)).toHaveValue('10.00')
+    // El USD derivado es el campo canonico/persistido (CLAUDE.md #10): se
+    // guarda con precision completa, sin mascara de 2dp — "10", no
+    // "10.00" (decimal.js no rellena ceros en una division exacta).
+    expect(screen.getByLabelText(/Monto SAF \(USD\)/i)).toHaveValue('10')
   })
 
   it('el campo Bs que el usuario esta tipeando NUNCA se reformatea (queda exactamente lo tecleado, sin padding de ceros)', async () => {
@@ -105,5 +108,17 @@ describe('SafMontoDualInput (PR-A1, reemplaza el clamp de capSafMontoUsd en los 
     await user.type(screen.getByLabelText(/Monto SAF \(USD\)/i), '50')
 
     expect(onEstadoChange).toHaveBeenCalledWith('excedeDisponible')
+  })
+
+  it('tipear en el input Bs deriva el USD canonico con precision completa, SIN redondear a 2dp (regla CLAUDE.md #10: redondear solo al final de la cadena, nunca en el estado persistido)', async () => {
+    const user = userEvent.setup()
+    render(<Harness disponibleUsd="100.00" totalUsd="100.00" tasa="500" />)
+
+    // Bs 754 @ tasa 500 = 1.508 USD exacto (no termina en 2dp) — si el
+    // estado canonico se enmascara a 2dp antes de guardarse, se pierde
+    // 0.002 USD de precision real que luego se persistiria truncado.
+    await user.type(screen.getByLabelText(/Monto SAF \(Bs\)/i), '754')
+
+    expect(screen.getByLabelText(/Monto SAF \(USD\)/i)).toHaveValue('1.508')
   })
 })
