@@ -198,4 +198,31 @@ describe('PagoFacturaModal — SAF dual input (PR-C, sdd/saf-snapshot-y-trazabil
     // porque el componente recibe tasa=0.
     expect(safBsInput).toHaveValue('2000.00')
   })
+
+  it('la tasa de cobro se precarga de nuevo al cerrar y reabrir el modal el mismo dia (bugfix engram #5296, bug A)', async () => {
+    mockedUseSaldoAFavor.mockReturnValue({ disponible: 200, tieneSaf: true })
+    const user = userEvent.setup()
+    const { rerender } = render(<PagoFacturaModal {...baseProps({ factura: makeFactura(100) })} />)
+
+    const tasaInput = screen.getByPlaceholderText('0.0000')
+    // Primera apertura: la tasa se precarga correctamente (mock db.execute
+    // devuelve `{ valor: '40' }` para la query de tasas_cambio).
+    await waitFor(() => expect(tasaInput).toHaveValue(40))
+
+    // Usuario cierra el modal via "Cancelar" -> handleClose() resetea
+    // tasaStr a '' internamente y notifica al padre via onClose.
+    await user.click(screen.getByRole('button', { name: /Cancelar/i }))
+
+    // El padre reacciona a onClose cerrando el modal (isOpen=false)...
+    rerender(<PagoFacturaModal {...baseProps({ factura: makeFactura(100) })} isOpen={false} />)
+    // ...y el usuario lo reabre el MISMO dia (fechaPago no cambia de valor).
+    rerender(<PagoFacturaModal {...baseProps({ factura: makeFactura(100) })} isOpen={true} />)
+
+    // Antes del fix: el efecto que carga `tasaStr` depende de `fechaPago`
+    // (no de `isOpen`); como `fechaPago` sigue siendo "hoy" en el reopen,
+    // el efecto no se re-ejecuta y `tasaStr` queda en '' (dejado por
+    // handleClose) -> el input de tasa queda vacio tras reabrir.
+    const tasaInputReabierto = screen.getByPlaceholderText('0.0000')
+    await waitFor(() => expect(tasaInputReabierto).toHaveValue(40))
+  })
 })
