@@ -76,7 +76,7 @@ export function PagosResumen({
             <div key={i} className="h-10 bg-muted rounded animate-pulse" />
           ))}
         </div>
-      ) : metodosMostrar.length === 0 && cxcTotalUsd <= 0 ? (
+      ) : metodosMostrar.length === 0 && cxcTotalUsd <= 0 && !haySaf && !hayDiferencial && !hayAbsorcion ? (
         <div className="text-center py-8 text-muted-foreground">
           <p className="text-sm">Sin cobros en esta fecha</p>
         </div>
