@@ -93,40 +93,29 @@ export function PagosResumen({
   const { devolucionesNcUsd: reintegroSesionUsd, devolucionesNcBsNativo: reintegroSesionBsNativo } =
     splitEgresosArqueo(movimientosManuales)
 
-  // Equivalentes bimonetarios del reintegro (fix/cuadre-reintegro-nc-moneda, #5372):
-  // splitEgresosArqueo clasifica por METODO_MONEDA en 2 buckets MUTUAMENTE EXCLUYENTES
-  // (nunca ambos > 0 a la vez) — NO es una conversion. Si el reembolso se pago en Bs, el
-  // bucket USD queda estructuralmente en 0 (y viceversa). Sin este equivalente,
-  // netoSesionUsd no bajaba aunque netoSesionBs SI bajara (columnas inconsistentes) y la
-  // fila quedaba oculta porque el gate miraba solo el bucket USD. Se deriva el equivalente
-  // faltante via tasaDelDia — mismo patron que `safBs` (arriba, L72).
+  // Equivalentes bimonetarios del reintegro (fix/cuadre-reintegro-nc-moneda, #5372, hardening
+  // aditivo #5374): splitEgresosArqueo clasifica por METODO_MONEDA en 2 buckets NATIVOS —
+  // NO es una conversion, y NO son mutuamente excluyentes: una sesion puede tener DOS
+  // reembolsos de NC distintos, uno resuelto en EFECTIVO USD y otro en EFECTIVO BS, con
+  // AMBOS buckets > 0 simultaneamente. El equivalente de cada moneda debe ser la SUMA del
+  // bucket nativo de esa moneda MAS la conversion del bucket nativo de la OTRA moneda via
+  // tasaDelDia (mismo patron que `safBs`, arriba L72) — nunca un "nativo-si-hay-sino-
+  // convertir" exclusivo, que descartaria en silencio el aporte de la moneda no elegida
+  // cuando ambos buckets son nonzero. En el caso de una sola moneda (el unico caso
+  // originalmente testeado) el termino convertido del bucket en 0 tambien da 0, asi que
+  // esta formula es identica a la anterior ahi — pero tambien cubre el caso mixto.
   const reintegroSesionUsdEquiv =
-    reintegroSesionUsd > 0.001
-      ? reintegroSesionUsd
-      : tasaDelDia > 0
-      ? bsToUsd(reintegroSesionBsNativo, tasaDelDia).toNumber()
-      : 0
+    reintegroSesionUsd + (tasaDelDia > 0 ? bsToUsd(reintegroSesionBsNativo, tasaDelDia).toNumber() : 0)
   const reintegroSesionBsEquiv =
-    reintegroSesionBsNativo > 0.001
-      ? reintegroSesionBsNativo
-      : tasaDelDia > 0
-      ? usdToBs(reintegroSesionUsd, tasaDelDia).toNumber()
-      : 0
+    reintegroSesionBsNativo + (tasaDelDia > 0 ? usdToBs(reintegroSesionUsd, tasaDelDia).toNumber() : 0)
 
-  // Mismo problema y mismo fix para Devolucion de Tesoreria — useDevolucionTesoreriaNC
-  // tiene el MISMO split por moneda mutuamente excluyente (use-cuadre.ts:1317-1365).
+  // Mismo problema y mismo fix aditivo para Devolucion de Tesoreria — useDevolucionTesoreriaNC
+  // tiene el MISMO split por moneda (use-cuadre.ts:1317-1365), con la misma posibilidad de
+  // ambos buckets nonzero (ej. un reembolso por banco en USD y otro por caja fuerte en Bs).
   const devolucionTesoreriaUsdEquiv =
-    devolucionTesoreriaUsd > 0.001
-      ? devolucionTesoreriaUsd
-      : tasaDelDia > 0
-      ? bsToUsd(devolucionTesoreriaBs, tasaDelDia).toNumber()
-      : 0
+    devolucionTesoreriaUsd + (tasaDelDia > 0 ? bsToUsd(devolucionTesoreriaBs, tasaDelDia).toNumber() : 0)
   const devolucionTesoreriaBsEquiv =
-    devolucionTesoreriaBs > 0.001
-      ? devolucionTesoreriaBs
-      : tasaDelDia > 0
-      ? usdToBs(devolucionTesoreriaUsd, tasaDelDia).toNumber()
-      : 0
+    devolucionTesoreriaBs + (tasaDelDia > 0 ? usdToBs(devolucionTesoreriaUsd, tasaDelDia).toNumber() : 0)
 
   // TOTAL NETO SESIÓN (sdd/cuadre-saf-generado-consumido/nc-refund-right-card) — segundo
   // total que espeja la Card izquierda (Resumen de Caja, CuadreTotalNetoSesion): TOTAL

@@ -677,3 +677,85 @@ describe('PagosResumen — reembolso NC/tesoreria en Bs nativo: fila visible + c
     expect(totalNetoSesion.getByText(formatUsd(1.3))).toBeInTheDocument()
   })
 })
+
+// REGRESION mixta (fresh-context review de cf822df, engram #5374): el patron "bucket nativo
+// si es >0, sino convertir el OTRO bucket" no es una suma real cuando AMBOS buckets nativos
+// son simultaneamente > 0 — es decir, una sesion con DOS reembolsos de NC distintos en la
+// MISMA sesion, uno resuelto en EFECTIVO USD y otro en EFECTIVO BS. En ese caso cada *Equiv
+// toma solo su propio bucket nativo y descarta en silencio el aporte de la otra moneda,
+// sub-restando netoSesionUsd y netoSesionBs. El fix correcto es ADITIVO:
+//   usdEquiv = reintegroSesionUsd + bsToUsd(reintegroSesionBsNativo, tasa)
+//   bsEquiv  = reintegroSesionBsNativo + usdToBs(reintegroSesionUsd, tasa)
+// Esto da resultados IDENTICOS en todos los casos de una sola moneda ya testeados (el
+// termino convertido es 0 cuando el otro bucket es 0) pero tambien maneja el caso mixto.
+describe('PagosResumen — reembolsos NC en AMBAS monedas en la misma sesion: el equivalente es ADITIVO, no exclusivo (fresh-context review cf822df, #5374)', () => {
+  it('Reintegro NC (sesion): un reembolso de $1.00 EFECTIVO USD + otro de Bs250 EFECTIVO BS en la MISMA sesion (tasa 500) -> ambos buckets nativos > 0 -> netoSesion debe restar la SUMA de los 2, no solo uno', () => {
+    const TASA_BS = 500
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'TDD Banesco', tipo: 'TARJETA', moneda: 'BS', totalUsd: 1.3, totalOriginal: 650, totalBs: 650 },
+        { metodo_cobro_id: 'm2', nombre: 'Efectivo BS', tipo: 'EFECTIVO', moneda: 'BS', totalUsd: 1.3, totalOriginal: 650, totalBs: 650 },
+      ],
+      totalVentasUsd: 2.6,
+      totalVentasBs: 1300,
+      movimientosManuales: [
+        // Reembolso 1: $1.00 pagado en EFECTIVO USD (origen NCR) -> bucket USD nativo
+        { metodo_tipo: 'EFECTIVO', metodo_moneda: 'USD', mov_tipo: 'EGRESO', origen: 'NCR', total: 1 },
+        // Reembolso 2: Bs250 pagado en EFECTIVO BS (origen NCR) -> bucket Bs nativo
+        { metodo_tipo: 'EFECTIVO', metodo_moneda: 'BS', mov_tipo: 'EGRESO', origen: 'NCR', total: 250 },
+      ],
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA_BS} />)
+
+    // TOTAL COBRADO = 1300 Bs / $2.60 (gross, sin descontar los reintegros) — sin cambios.
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(2.6))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatBs(1300))).toBeInTheDocument()
+
+    // reintegroSesionUsd (bucket nativo) = 1.00, reintegroSesionBsNativo (bucket nativo) = 250.
+    // ADITIVO: usdEquiv = 1.00 + bsToUsd(250,500) = 1.00 + 0.50 = 1.50
+    //          bsEquiv  = 250 + usdToBs(1.00,500) = 250 + 500   = 750
+    // (el patron "exclusivo" previo habria dado usdEquiv=1.00 y bsEquiv=250 -- descartando
+    // el aporte de la otra moneda en cada columna).
+    expect(screen.getByText('(−) Reintegro NC (sesión)')).toBeInTheDocument()
+    const reintegro = within(screen.getByTestId('reintegro-nc-sesion'))
+    expect(reintegro.getByText(formatBs(750))).toBeInTheDocument()
+    expect(reintegro.getByText(formatUsd(1.5))).toBeInTheDocument()
+
+    // netoSesionUsd = 2.60 - 1.50 = 1.10 ; netoSesionBs = 1300 - 750 = 550.
+    // Consistencia bimonetaria: 1.10 * 500 = 550 (ambas columnas reflejan la MISMA resta).
+    const totalNetoSesion = within(screen.getByTestId('total-neto-sesion'))
+    expect(totalNetoSesion.getByText(formatBs(550))).toBeInTheDocument()
+    expect(totalNetoSesion.getByText(formatUsd(1.1))).toBeInTheDocument()
+  })
+
+  it('Devolucion de Tesoreria: devolucionTesoreriaUsd=1.00 Y devolucionTesoreriaBs=250 simultaneamente (ambos buckets nativos > 0, tasa 500) -> netoSesion debe restar la SUMA aditiva de las 2 monedas', () => {
+    const TASA_BS = 500
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'TDD Banesco', tipo: 'TARJETA', moneda: 'BS', totalUsd: 1.3, totalOriginal: 650, totalBs: 650 },
+        { metodo_cobro_id: 'm2', nombre: 'Efectivo BS', tipo: 'EFECTIVO', moneda: 'BS', totalUsd: 1.3, totalOriginal: 650, totalBs: 650 },
+      ],
+      totalVentasUsd: 2.6,
+      totalVentasBs: 1300,
+      devolucionTesoreriaUsd: 1,
+      devolucionTesoreriaBs: 250,
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA_BS} />)
+
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(2.6))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatBs(1300))).toBeInTheDocument()
+
+    expect(screen.getByText('(−) Devolución de Tesorería')).toBeInTheDocument()
+    const devolucion = within(screen.getByTestId('devolucion-tesoreria'))
+    expect(devolucion.getByText(formatBs(750))).toBeInTheDocument()
+    expect(devolucion.getByText(formatUsd(1.5))).toBeInTheDocument()
+
+    const totalNetoSesion = within(screen.getByTestId('total-neto-sesion'))
+    expect(totalNetoSesion.getByText(formatBs(550))).toBeInTheDocument()
+    expect(totalNetoSesion.getByText(formatUsd(1.1))).toBeInTheDocument()
+  })
+})
