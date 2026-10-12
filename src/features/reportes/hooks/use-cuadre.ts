@@ -1296,6 +1296,74 @@ export function useIvaPorAlicuotaNC(filters: CuadreFilters | null) {
   }
 }
 
+// ─── Devolucion de Tesoreria por NC (sesion) ───────────────
+// Egresos REALES de tesoreria (banco o caja fuerte) que reembolsaron NC(s) de ESTA
+// sesion de caja via modalidad REFUND_TESORERIA->TESORERIA (dinero que NUNCA salio de
+// la sesion — a diferencia del reintegro en efectivo via movimientos_metodo_cobro
+// origen='NCR', que SI sale de la sesion y ya se deriva con
+// splitEgresosArqueo(useMovimientosManualesDia(...).movimientos), cuadre-arqueo-teorico-model.ts).
+// Mirror de useReembolsosTesoreriaFactura (use-notas-credito.ts, escopeado por venta_id)
+// pero escopeado POR SESION via buildCuadreWhere(filters, empresaId, 'nc') — mismo patron
+// que useIvaPorAlicuotaNC. `empresa_id` se filtra DIRECTO en movimientos_bancarios/
+// mov_caja_fuerte (regla #11, defensa en profundidad) ademas del JOIN a notas_credito.
+// Consumido por pagos-resumen.tsx para la fila "(-) Devolucion de Tesoreria" y restado en
+// TOTAL NETO SESION (Card derecha) — ver engram sdd/cuadre-saf-generado-consumido/nc-refund-right-card.
+export interface DevolucionTesoreriaNCResult {
+  totalUsd: number
+  totalBs: number
+  isLoading: boolean
+}
+
+export function useDevolucionTesoreriaNC(filters: CuadreFilters | null): DevolucionTesoreriaNCResult {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [where, whereParams] = useMemo(
+    () => (filters ? buildCuadreWhere(filters, empresaId, 'nc') : ['1=0', [] as unknown[]]),
+    [filters, empresaId]
+  )
+
+  const { data: bancosData, isLoading: loadingBancos } = useQuery(
+    filters
+      ? `SELECT
+           COALESCE(SUM(CASE WHEN mon.codigo_iso = 'VES' THEN 0 ELSE CAST(mb.monto AS REAL) END), 0) as total_usd,
+           COALESCE(SUM(CASE WHEN mon.codigo_iso = 'VES' THEN CAST(mb.monto AS REAL) ELSE 0 END), 0) as total_bs
+         FROM movimientos_bancarios mb
+         JOIN notas_credito nc ON nc.id = mb.doc_origen_id
+         JOIN bancos_empresa b ON b.id = mb.banco_empresa_id
+         LEFT JOIN monedas mon ON mon.id = b.moneda_id
+         WHERE mb.origen = 'REEMBOLSO_NCR' AND mb.doc_origen_tipo = 'NOTA_CREDITO'
+           AND mb.empresa_id = ?
+           AND ${where}`
+      : '',
+    filters ? [empresaId, ...whereParams] : []
+  )
+
+  const { data: cajasData, isLoading: loadingCajas } = useQuery(
+    filters
+      ? `SELECT
+           COALESCE(SUM(CASE WHEN mon.codigo_iso = 'VES' THEN 0 ELSE CAST(mcf.monto AS REAL) END), 0) as total_usd,
+           COALESCE(SUM(CASE WHEN mon.codigo_iso = 'VES' THEN CAST(mcf.monto AS REAL) ELSE 0 END), 0) as total_bs
+         FROM mov_caja_fuerte mcf
+         JOIN notas_credito nc ON nc.id = mcf.doc_origen_id
+         JOIN caja_fuerte cf ON cf.id = mcf.caja_fuerte_id
+         LEFT JOIN monedas mon ON mon.id = cf.moneda_id
+         WHERE mcf.origen = 'REEMBOLSO_NCR' AND mcf.doc_origen_tipo = 'NOTA_CREDITO'
+           AND mcf.empresa_id = ?
+           AND ${where}`
+      : '',
+    filters ? [empresaId, ...whereParams] : []
+  )
+
+  const bancosRow = (bancosData?.[0] ?? {}) as { total_usd?: number; total_bs?: number }
+  const cajasRow = (cajasData?.[0] ?? {}) as { total_usd?: number; total_bs?: number }
+
+  return {
+    totalUsd: Number((Number(bancosRow.total_usd ?? 0) + Number(cajasRow.total_usd ?? 0)).toFixed(2)),
+    totalBs: Number((Number(bancosRow.total_bs ?? 0) + Number(cajasRow.total_bs ?? 0)).toFixed(2)),
+    isLoading: loadingBancos || loadingCajas,
+  }
+}
+
 // ─── Pagos Detalle Completo ────────────────────────────────
 
 export interface PagoDetalleCompleto {

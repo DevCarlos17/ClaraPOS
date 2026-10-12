@@ -1,4 +1,4 @@
-import { Money, CreditCard, Coins, ArrowsLeftRight, HandFist } from '@phosphor-icons/react'
+import { Money, CreditCard, Coins, ArrowsLeftRight, HandFist, ArrowUUpLeft, Bank } from '@phosphor-icons/react'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import {
   usePagosPorMetodo,
@@ -8,8 +8,11 @@ import {
   useAnticiposDelDia,
   useDiferencialCambiarioDelDia,
   useAbsorcionDelDia,
+  useMovimientosManualesDia,
+  useDevolucionTesoreriaNC,
   type CuadreFilters,
 } from '../hooks/use-cuadre'
+import { splitEgresosArqueo } from './cuadre-arqueo-teorico-model'
 
 interface PagosResumenProps {
   filters: CuadreFilters
@@ -50,6 +53,12 @@ export function PagosResumen({
     hayAbsorcion,
     isLoading: loadingAbsorcion,
   } = useAbsorcionDelDia(filters)
+  const { movimientos: movimientosManuales, isLoading: loadingMovManuales } = useMovimientosManualesDia(filters)
+  const {
+    totalUsd: devolucionTesoreriaUsd,
+    totalBs: devolucionTesoreriaBs,
+    isLoading: loadingDevolucionTesoreria,
+  } = useDevolucionTesoreriaNC(filters)
 
   // Excluir metodos EFECTIVO con saldo $0 (fondo inicial sin ventas en efectivo)
   const metodosMostrar = metodos.filter((m) => m.totalUsd > 0.001 || m.totalOriginal > 0.001)
@@ -76,14 +85,24 @@ export function PagosResumen({
   const totalCobradoBs =
     cashBrutoBs + safBs + (hayDiferencial ? diferencialNetoBs : 0) + (hayAbsorcion ? absorcionBs : 0)
 
-  // TOTAL NETO SESIÓN (sdd/cuadre-total-neto-sesion-right) — segundo total que espeja la
-  // Card izquierda (Resumen de Caja, CuadreTotalNetoSesion): TOTAL COBRADO (dinero/credito
-  // ya cobrado) + "A credito (CxC)" (pendiente de cobro de ESTA sesion). TOTAL COBRADO en si
-  // NO cambia — sigue significando "lo realmente cobrado", sin CxC pendiente. Este nuevo
-  // total agrega el pendiente para dar el total NETO de la sesion completa (cobrado +
-  // por cobrar), mismo concepto que la Card izquierda.
-  const netoSesionUsd = totalCobradoUsd + cxcTotalUsd
-  const netoSesionBs = totalCobradoBs + cxcTotalBs
+  // Reintegro NC (sesion) — reembolso de NC pagado EN EFECTIVO de ESTA sesion (origen='NCR'
+  // en movimientos_metodo_cobro). Reutiliza el MISMO split que usa la Card "Arqueo Teorico"
+  // (splitEgresosArqueo + useMovimientosManualesDia, cuadre-page.tsx) — read-only, misma
+  // fuente de datos, sin recalcular desde cero. Esta plata SI salio de la sesion (va al
+  // cliente), por eso resta del TOTAL NETO SESION.
+  const { devolucionesNcUsd: reintegroSesionUsd, devolucionesNcBsNativo: reintegroSesionBsNativo } =
+    splitEgresosArqueo(movimientosManuales)
+
+  // TOTAL NETO SESIÓN (sdd/cuadre-saf-generado-consumido/nc-refund-right-card) — segundo
+  // total que espeja la Card izquierda (Resumen de Caja, CuadreTotalNetoSesion): TOTAL
+  // COBRADO (dinero/credito ya cobrado) + "A credito (CxC)" (pendiente de cobro de ESTA
+  // sesion) - reintegroSesion (NC reembolsada en efectivo de la sesion) -
+  // devolucionTesoreria (NC reembolsada desde banco/caja fuerte). TOTAL COBRADO en si NO
+  // cambia. La Card izquierda SIEMPRE resta la NC completa sin importar el origen del
+  // reembolso — estos 2 terminos son los que hacen que la derecha espeje ese mismo total
+  // sin importar si el reembolso fue en efectivo de la sesion o desde tesoreria.
+  const netoSesionUsd = totalCobradoUsd + cxcTotalUsd - reintegroSesionUsd - devolucionTesoreriaUsd
+  const netoSesionBs = totalCobradoBs + cxcTotalBs - reintegroSesionBsNativo - devolucionTesoreriaBs
 
   // Saldo a favor generado (excedente del cliente, pasa a credito futuro). NO se muestra como
   // fila en esta card (pertenece solo a "Resumen de Caja" -> "Cobros por Adelantado"). Solo se
@@ -98,7 +117,9 @@ export function PagosResumen({
     loadingSaf ||
     loadingAnticipos ||
     loadingDiferencial ||
-    loadingAbsorcion
+    loadingAbsorcion ||
+    loadingMovManuales ||
+    loadingDevolucionTesoreria
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
@@ -273,7 +294,51 @@ export function PagosResumen({
             </button>
           )}
 
-          {/* TOTAL NETO SESIÓN — TOTAL COBRADO + CxC pendiente (espeja la Card izquierda) */}
+          {/* Reintegro NC (sesion) — reembolso en EFECTIVO de ESTA sesion (origen='NCR') */}
+          {reintegroSesionUsd > 0.001 && (
+            <div
+              data-testid="reintegro-nc-sesion"
+              className="w-full flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50/40 px-3 py-2.5 text-left"
+            >
+              <div className="flex items-center gap-2">
+                <ArrowUUpLeft size={16} className="text-rose-500" />
+                <div>
+                  <p className="text-sm font-medium text-rose-700">(−) Reintegro NC (sesión)</p>
+                  <p className="text-xs text-rose-500">Devuelto en efectivo de esta sesion</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {reintegroSesionBsNativo > 0.001 && (
+                  <span className="text-xs text-rose-400">{formatBs(reintegroSesionBsNativo)}</span>
+                )}
+                <span className="text-sm font-bold text-rose-700">{formatUsd(reintegroSesionUsd)}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Devolucion de Tesoreria — reembolso real desde banco/caja fuerte (nunca salio de la sesion) */}
+          {devolucionTesoreriaUsd > 0.001 && (
+            <div
+              data-testid="devolucion-tesoreria"
+              className="w-full flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50/40 px-3 py-2.5 text-left"
+            >
+              <div className="flex items-center gap-2">
+                <Bank size={16} className="text-rose-500" />
+                <div>
+                  <p className="text-sm font-medium text-rose-700">(−) Devolución de Tesorería</p>
+                  <p className="text-xs text-rose-500">Reembolsado desde banco o caja fuerte</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {devolucionTesoreriaBs > 0.001 && (
+                  <span className="text-xs text-rose-400">{formatBs(devolucionTesoreriaBs)}</span>
+                )}
+                <span className="text-sm font-bold text-rose-700">{formatUsd(devolucionTesoreriaUsd)}</span>
+              </div>
+            </div>
+          )}
+
+          {/* TOTAL NETO SESIÓN — TOTAL COBRADO + CxC pendiente - reintegroSesion - devolucionTesoreria (espeja la Card izquierda) */}
           <div data-testid="total-neto-sesion" className="pt-3 mt-1 border-t-2">
             <div className="flex justify-between items-center text-sm font-bold">
               <span>TOTAL NETO SESIÓN</span>
