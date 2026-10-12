@@ -596,3 +596,84 @@ describe('PagosResumen — Reintegro NC (sesion) y Devolucion de Tesoreria resta
     expect(totalNetoSesion.getByText(formatUsd(720))).toBeInTheDocument()
   })
 })
+
+// REGRESION (fix/cuadre-reintegro-nc-moneda, engram #5372): splitEgresosArqueo /
+// useDevolucionTesoreriaNC clasifican el reembolso en 2 BUCKETS MUTUAMENTE EXCLUYENTES
+// (USD vs Bs) segun la MONEDA del metodo/cuenta usada para reembolsar — NO es una
+// conversion. Cuando el reembolso es 100% en Bs (ej EFECTIVO BS), el bucket USD queda
+// estructuralmente en 0 mientras el bucket Bs trae el monto real. Esto rompia 2 cosas:
+//   1) el gate de render de la fila (chequeaba SOLO el bucket USD -> fila oculta)
+//   2) netoSesionUsd (resta SOLO el bucket USD) quedaba sin bajar mientras netoSesionBs SI
+//      bajaba -> las 2 columnas de TOTAL NETO SESION dejaban de ser consistentes entre si.
+// El fix deriva el equivalente de la moneda faltante via tasaDelDia (mismo patron que
+// `safBs`/`diferencialNetoUsdCalc` en este archivo), para que AMBAS columnas bajen de forma
+// consistente y la fila se muestre sin importar en que moneda se resolvio el reembolso.
+describe('PagosResumen — reembolso NC/tesoreria en Bs nativo: fila visible + columnas USD/Bs consistentes (fix/cuadre-reintegro-nc-moneda, #5372)', () => {
+  it('Reintegro NC (sesion) pagado en EFECTIVO BS (metodo_moneda=BS): la fila RENDERIZA y netoSesion resta de forma CONSISTENTE en USD y Bs (USD = Bs / tasa)', () => {
+    const TASA_BS = 500
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'TDD Banesco', tipo: 'TARJETA', moneda: 'BS', totalUsd: 1.3, totalOriginal: 650, totalBs: 650 },
+        { metodo_cobro_id: 'm2', nombre: 'Efectivo BS', tipo: 'EFECTIVO', moneda: 'BS', totalUsd: 1.3, totalOriginal: 650, totalBs: 650 },
+      ],
+      totalVentasUsd: 2.6,
+      totalVentasBs: 1300,
+      movimientosManuales: [
+        { metodo_tipo: 'EFECTIVO', metodo_moneda: 'BS', mov_tipo: 'EGRESO', origen: 'NCR', total: 650 },
+      ],
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA_BS} />)
+
+    // TOTAL COBRADO = 1300 Bs / $2.60 (gross, sin descontar el reintegro)
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(2.6))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatBs(1300))).toBeInTheDocument()
+
+    // La fila DEBE renderizar aunque el bucket nativo USD de splitEgresosArqueo sea 0 —
+    // el gate debe mirar TAMBIEN el bucket Bs nativo (reintegroSesionBsNativo).
+    expect(screen.getByText('(−) Reintegro NC (sesión)')).toBeInTheDocument()
+    const reintegro = within(screen.getByTestId('reintegro-nc-sesion'))
+    // Bs nativo (real, sin conversion): 650
+    expect(reintegro.getByText(formatBs(650))).toBeInTheDocument()
+    // USD equivalente derivado via tasa (antes: $0.00 estructural) = 650 / 500 = 1.30
+    expect(reintegro.getByText(formatUsd(1.3))).toBeInTheDocument()
+
+    // netoSesionBs = 1300 - 650 = 650 Y netoSesionUsd = 2.60 - 1.30 = 1.30 -- AMBAS
+    // columnas deben reflejar la resta (antes: USD se quedaba pegado en 2.60, inconsistente
+    // con el Bs que SI bajaba a 650).
+    const totalNetoSesion = within(screen.getByTestId('total-neto-sesion'))
+    expect(totalNetoSesion.getByText(formatBs(650))).toBeInTheDocument()
+    expect(totalNetoSesion.getByText(formatUsd(1.3))).toBeInTheDocument()
+  })
+
+  it('Devolucion de Tesoreria resuelta desde banco/caja fuerte en Bs (devolucionTesoreriaBs>0, devolucionTesoreriaUsd=0): la fila RENDERIZA y netoSesion resta de forma CONSISTENTE en USD y Bs', () => {
+    const TASA_BS = 500
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'TDD Banesco', tipo: 'TARJETA', moneda: 'BS', totalUsd: 1.3, totalOriginal: 650, totalBs: 650 },
+        { metodo_cobro_id: 'm2', nombre: 'Efectivo BS', tipo: 'EFECTIVO', moneda: 'BS', totalUsd: 1.3, totalOriginal: 650, totalBs: 650 },
+      ],
+      totalVentasUsd: 2.6,
+      totalVentasBs: 1300,
+      devolucionTesoreriaBs: 650,
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA_BS} />)
+
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(2.6))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatBs(1300))).toBeInTheDocument()
+
+    // La fila DEBE renderizar aunque devolucionTesoreriaUsd (bucket nativo USD) sea 0 — el
+    // gate debe mirar TAMBIEN devolucionTesoreriaBs.
+    expect(screen.getByText('(−) Devolución de Tesorería')).toBeInTheDocument()
+    const devolucion = within(screen.getByTestId('devolucion-tesoreria'))
+    expect(devolucion.getByText(formatBs(650))).toBeInTheDocument()
+    expect(devolucion.getByText(formatUsd(1.3))).toBeInTheDocument()
+
+    const totalNetoSesion = within(screen.getByTestId('total-neto-sesion'))
+    expect(totalNetoSesion.getByText(formatBs(650))).toBeInTheDocument()
+    expect(totalNetoSesion.getByText(formatUsd(1.3))).toBeInTheDocument()
+  })
+})
