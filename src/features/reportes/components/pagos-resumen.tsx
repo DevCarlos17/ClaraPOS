@@ -6,7 +6,6 @@ import {
   useTotalesFiscales,
   useSafDiario,
   useAnticiposDelDia,
-  useCobrosViaPOS,
   useDiferencialCambiarioDelDia,
   useAbsorcionDelDia,
   type CuadreFilters,
@@ -40,11 +39,6 @@ export function PagosResumen({
   const { totalUsd: safTotalUsd, isLoading: loadingSaf } = useSafDiario(filters)
   const { anticipoUsd, isLoading: loadingAnticipos } = useAnticiposDelDia(filters)
   const {
-    totalCobrosUsd: cobrosAnterioresUsd,
-    totalCobrosBsEquiv: cobrosAnterioresBs,
-    isLoading: loadingCobrosAnteriores,
-  } = useCobrosViaPOS(filters)
-  const {
     netoBs: diferencialNetoBs,
     netoUsd: diferencialNetoUsd,
     hayDiferencial,
@@ -65,13 +59,6 @@ export function PagosResumen({
     return sum + (m.moneda === 'BS' ? m.totalOriginal : m.totalBs)
   }, 0)
 
-  // Cobros anteriores (CxC de sesion previa): ya estan incluidos en cashBruto por construccion
-  // de usePagosPorMetodo (no filtra por created_at == venta.created_at). Hay que restarlos para
-  // que TOTAL COBRADO no sobre-cuente efectivo que ya fue facturado en otra sesion.
-  const hayCobrosAnteriores = cobrosAnterioresUsd > 0.001
-  const cashNetoUsd = cashBrutoUsd - cobrosAnterioresUsd
-  const cashNetoBs = cashBrutoBs - cobrosAnterioresBs
-
   const haySaf = safTotalUsd > 0.001
   const safBs = tasaDelDia > 0 ? usdToBs(safTotalUsd, tasaDelDia).toNumber() : 0
 
@@ -79,11 +66,15 @@ export function PagosResumen({
   const diferencialNetoUsdCalc = tasaDelDia > 0 ? diferencialNetoBs / tasaDelDia : diferencialNetoUsd
   const absorcionUsdCalc = tasaDelDia > 0 ? absorcionBs / tasaDelDia : absorcionUsd
 
-  // TOTAL COBRADO = cash neto (sin cobros anteriores) + SAF consumido + diferencial + absorcion
+  // TOTAL COBRADO = cash bruto (incluye cobros de CxC vieja, dinero real en caja) + SAF
+  // consumido + diferencial + absorcion. NO se resta cobrosAnteriores: esa resta existia
+  // para que "Saldó facturas" (comparacion ya eliminada en PR#226) calzara contra lo
+  // facturado de ESTA sesion. Sin esa comparacion, el proposito de este total es "dinero
+  // real movido en caja" — el cobro de CxC vieja cuenta igual que cualquier otro efectivo.
   const totalCobradoUsd =
-    cashNetoUsd + safTotalUsd + (hayDiferencial ? diferencialNetoUsdCalc : 0) + (hayAbsorcion ? absorcionUsdCalc : 0)
+    cashBrutoUsd + safTotalUsd + (hayDiferencial ? diferencialNetoUsdCalc : 0) + (hayAbsorcion ? absorcionUsdCalc : 0)
   const totalCobradoBs =
-    cashNetoBs + safBs + (hayDiferencial ? diferencialNetoBs : 0) + (hayAbsorcion ? absorcionBs : 0)
+    cashBrutoBs + safBs + (hayDiferencial ? diferencialNetoBs : 0) + (hayAbsorcion ? absorcionBs : 0)
 
   // Saldo a favor generado (excedente del cliente, pasa a credito futuro). NO se muestra como
   // fila en esta card (pertenece solo a "Resumen de Caja" -> "Cobros por Adelantado"). Solo se
@@ -97,7 +88,6 @@ export function PagosResumen({
     loadingTotales ||
     loadingSaf ||
     loadingAnticipos ||
-    loadingCobrosAnteriores ||
     loadingDiferencial ||
     loadingAbsorcion
 
@@ -116,8 +106,7 @@ export function PagosResumen({
         !haySaf &&
         !hayDiferencial &&
         !hayAbsorcion &&
-        !haySafGenerado &&
-        !hayCobrosAnteriores ? (
+        !haySafGenerado ? (
         <div className="text-center py-8 text-muted-foreground">
           <p className="text-sm">Sin cobros en esta fecha</p>
         </div>
@@ -165,28 +154,6 @@ export function PagosResumen({
               </button>
             )
           })}
-
-          {/* Cobros anteriores (CxC) — efectivo cobrado hoy de una factura de otra sesion.
-              Se resta porque ya fue sumado dentro de metodosMostrar (usePagosPorMetodo no
-              excluye cobros de CxC vieja) y no es parte del facturado de ESTA sesion. */}
-          {hayCobrosAnteriores && (
-            <div
-              data-testid="cobros-anteriores"
-              className="w-full flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/40 px-3 py-2.5 text-left"
-            >
-              <div className="flex items-center gap-2">
-                <CreditCard size={16} className="text-slate-500" />
-                <div>
-                  <p className="text-sm font-medium text-slate-700">Cobros anteriores (CxC)</p>
-                  <p className="text-xs text-slate-500">Facturado en una sesion anterior</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400">{`-${formatBs(cobrosAnterioresBs)}`}</span>
-                <span className="text-sm font-bold text-slate-600">{`-${formatUsd(cobrosAnterioresUsd)}`}</span>
-              </div>
-            </div>
-          )}
 
           {/* Saldo a favor aplicado como pago directo en POS */}
           {haySaf && (
@@ -264,7 +231,7 @@ export function PagosResumen({
             </button>
           )}
 
-          {/* TOTAL COBRADO — cash neto + SAF consumido + diferencial + absorcion */}
+          {/* TOTAL COBRADO — cash bruto + SAF consumido + diferencial + absorcion */}
           <div data-testid="total-cobrado" className="pt-2 mt-1 border-t">
             <div className="flex justify-between items-center text-sm font-bold">
               <span>TOTAL COBRADO</span>
