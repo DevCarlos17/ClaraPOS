@@ -162,17 +162,20 @@ describe('PagosResumen — guard de empty-state considera TODOS los conceptos (B
 })
 
 // Partida doble de totales (sdd/cuadre-saf-generado-consumido/design-totales #5318):
-// "Total cobrado" (cash-only) y "Total facturado" (recomputo local sin useTotalesFiscales)
-// daban numeros incorrectos en escenarios con SAF consumido, cobros de CxC vieja o ventas a
-// credito. El fix agrega "TOTAL COBRADO" (cash neto de cobros anteriores + SAF consumido +
-// diferencial + absorcion), "Saldo a favor generado" (informativa, NO se resta ni se suma a
-// ningun total) y "Saldó facturas" (TOTAL COBRADO + CxC pendiente), y re-fuente "Total
-// facturado" desde useTotalesFiscales (dato fiscal real, ya fetcheado antes y descartado).
-// Tabla de 5 escenarios: ver #5318.
+// "Total cobrado" (cash-only) daba numeros incorrectos en escenarios con SAF consumido,
+// cobros de CxC vieja o ventas a credito. El fix agrega "TOTAL COBRADO" (cash neto de
+// cobros anteriores + SAF consumido + diferencial + absorcion). Tabla de escenarios: ver
+// #5318.
+//
+// REORDER (sdd/cuadre-reordenar-cards): "Saldó facturas" y "Total facturado" se QUITAN de
+// esta card (Card derecha). "Total Facturado" ahora vive solo en Card izquierda (Resumen de
+// Caja). "Saldó facturas" ya no aporta nada distinto de TOTAL COBRADO una vez que SAF
+// generado se muestra como informativo en Card izquierda. TOTAL COBRADO sigue siendo la
+// ultima fila visible de esta card.
 const TASA = 42
 
 describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-saf-generado-consumido)', () => {
-  it('Escenario A — solo efectivo: TOTAL COBRADO == Saldo facturas == Total facturado == 500', () => {
+  it('Escenario A — solo efectivo: TOTAL COBRADO == 500; "Saldó facturas" y "Total facturado" AUSENTES de esta card', () => {
     setup({
       metodos: [
         { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 500, totalOriginal: 500, totalBs: 500 * TASA },
@@ -187,19 +190,13 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     expect(totalCobrado.getByText(formatUsd(500))).toBeInTheDocument()
     expect(totalCobrado.getByText(formatBs(500 * TASA))).toBeInTheDocument()
 
-    const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
-    expect(saldoFacturas.getByText(formatUsd(500))).toBeInTheDocument()
-    expect(saldoFacturas.getByText(formatBs(500 * TASA))).toBeInTheDocument()
-
-    const totalFacturado = within(screen.getByTestId('total-facturado'))
-    expect(totalFacturado.getByText(formatUsd(500))).toBeInTheDocument()
-    expect(totalFacturado.getByText(formatBs(500 * TASA))).toBeInTheDocument()
-
+    expect(screen.queryByTestId('saldo-facturas')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('total-facturado')).not.toBeInTheDocument()
     expect(screen.queryByText('Cobros anteriores (CxC)')).not.toBeInTheDocument()
     expect(screen.queryByText('Saldo a favor generado')).not.toBeInTheDocument()
   })
 
-  it('Escenario B — solo SAF consumido (sin efectivo): TOTAL COBRADO == Saldo facturas == Total facturado == 650', () => {
+  it('Escenario B — solo SAF consumido (sin efectivo): TOTAL COBRADO == 650; "Saldó facturas" y "Total facturado" AUSENTES', () => {
     setup({
       metodos: [],
       safTotalUsd: 650,
@@ -215,14 +212,11 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     expect(totalCobrado.getByText(formatUsd(650))).toBeInTheDocument()
     expect(totalCobrado.getByText(formatBs(650 * TASA))).toBeInTheDocument()
 
-    const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
-    expect(saldoFacturas.getByText(formatUsd(650))).toBeInTheDocument()
-
-    const totalFacturado = within(screen.getByTestId('total-facturado'))
-    expect(totalFacturado.getByText(formatUsd(650))).toBeInTheDocument()
+    expect(screen.queryByTestId('saldo-facturas')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('total-facturado')).not.toBeInTheDocument()
   })
 
-  it('Escenario C — mixto (ref #5317, corregido por #5332): cash GROSS 1000 (incluye excedente de A) + SAF consumido 650 (B), SAF generado 350 SE RESTA de Saldo facturas y la fila "Saldo a favor generado" NO se muestra en Card 1: TOTAL COBRADO == 1650, Saldo facturas == Total facturado == 1300', () => {
+  it('Escenario C — mixto (ref #5317, corregido por #5332): cash GROSS 1000 (incluye excedente de A) + SAF consumido 650 (B): TOTAL COBRADO == 1650; "Saldo a favor generado" y "Saldó facturas"/"Total facturado" AUSENTES de esta card', () => {
     setup({
       metodos: [
         { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 1000, totalOriginal: 1000, totalBs: 1000 * TASA },
@@ -239,20 +233,15 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     expect(totalCobrado.getByText(formatUsd(1650))).toBeInTheDocument()
     expect(totalCobrado.getByText(formatBs(1650 * TASA))).toBeInTheDocument()
 
-    const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
-    expect(saldoFacturas.getByText(formatUsd(1300))).toBeInTheDocument()
-    expect(saldoFacturas.getByText(formatBs(1300 * TASA))).toBeInTheDocument()
-
-    const totalFacturado = within(screen.getByTestId('total-facturado'))
-    expect(totalFacturado.getByText(formatUsd(1300))).toBeInTheDocument()
-
-    // Saldo a favor generado (#5332): SU VALOR se resta en el computo de Saldo facturas,
-    // pero la fila ya NO se renderiza en Card 1 (pertenece solo a Card 2, "Cobros por Adelantado")
+    // Saldo a favor generado: la fila ya NO se renderiza en esta card (pertenece solo a
+    // Card izquierda, "Cobros por Adelantado"). "Saldó facturas"/"Total facturado" tampoco.
     expect(screen.queryByTestId('saf-generado')).not.toBeInTheDocument()
     expect(screen.queryByText('Saldo a favor generado')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('saldo-facturas')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('total-facturado')).not.toBeInTheDocument()
   })
 
-  it('Escenario H — bug de staging (#5332): 2000 cash GROSS / factura 650 / 1350 SAF generado: TOTAL COBRADO == 2000, Saldo facturas == Total facturado == 650, fila "Saldo a favor generado" AUSENTE en Card 1', () => {
+  it('Escenario H — bug de staging (#5332): 2000 cash GROSS / factura 650 / 1350 SAF generado: TOTAL COBRADO == 2000; "Saldo a favor generado", "Saldó facturas" y "Total facturado" AUSENTES en esta card', () => {
     setup({
       metodos: [
         { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 2000, totalOriginal: 2000, totalBs: 2000 * TASA },
@@ -268,19 +257,13 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     expect(totalCobrado.getByText(formatUsd(2000))).toBeInTheDocument()
     expect(totalCobrado.getByText(formatBs(2000 * TASA))).toBeInTheDocument()
 
-    const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
-    expect(saldoFacturas.getByText(formatUsd(650))).toBeInTheDocument()
-    expect(saldoFacturas.getByText(formatBs(650 * TASA))).toBeInTheDocument()
-
-    const totalFacturado = within(screen.getByTestId('total-facturado'))
-    expect(totalFacturado.getByText(formatUsd(650))).toBeInTheDocument()
-    expect(totalFacturado.getByText(formatBs(650 * TASA))).toBeInTheDocument()
-
     expect(screen.queryByTestId('saf-generado')).not.toBeInTheDocument()
     expect(screen.queryByText('Saldo a favor generado')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('saldo-facturas')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('total-facturado')).not.toBeInTheDocument()
   })
 
-  it('Escenario D — CxC vieja cobrada hoy (overcount): cash bruto 700, cobros anteriores 200 se RESTAN -> TOTAL COBRADO == Saldo facturas == Total facturado == 500 (NO 700)', () => {
+  it('Escenario D — CxC vieja cobrada hoy (overcount): cash bruto 700, cobros anteriores 200 se RESTAN -> TOTAL COBRADO == 500 (NO 700); "Saldó facturas"/"Total facturado" AUSENTES', () => {
     setup({
       metodos: [
         { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 700, totalOriginal: 700, totalBs: 700 * TASA },
@@ -301,14 +284,11 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     expect(totalCobrado.getByText(formatBs(500 * TASA))).toBeInTheDocument()
     expect(totalCobrado.queryByText(formatUsd(700))).not.toBeInTheDocument()
 
-    const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
-    expect(saldoFacturas.getByText(formatUsd(500))).toBeInTheDocument()
-
-    const totalFacturado = within(screen.getByTestId('total-facturado'))
-    expect(totalFacturado.getByText(formatUsd(500))).toBeInTheDocument()
+    expect(screen.queryByTestId('saldo-facturas')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('total-facturado')).not.toBeInTheDocument()
   })
 
-  it('Escenario E — venta a credito pura: TOTAL COBRADO == 0, Saldo facturas == Total facturado == 400 (incluye CxC pendiente)', () => {
+  it('Escenario E — venta a credito pura: TOTAL COBRADO == 0; "A credito (CxC)" visible; "Saldó facturas"/"Total facturado" AUSENTES de esta card', () => {
     setup({
       metodos: [],
       cxcTotalUsd: 400,
@@ -324,13 +304,8 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     const totalCobrado = within(screen.getByTestId('total-cobrado'))
     expect(totalCobrado.getByText(formatUsd(0))).toBeInTheDocument()
 
-    const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
-    expect(saldoFacturas.getByText(formatUsd(400))).toBeInTheDocument()
-    expect(saldoFacturas.getByText(formatBs(400 * TASA))).toBeInTheDocument()
-
-    const totalFacturado = within(screen.getByTestId('total-facturado'))
-    expect(totalFacturado.getByText(formatUsd(400))).toBeInTheDocument()
-    expect(totalFacturado.getByText(formatBs(400 * TASA))).toBeInTheDocument()
+    expect(screen.queryByTestId('saldo-facturas')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('total-facturado')).not.toBeInTheDocument()
   })
 
   // Cobertura de brecha detectada en review (PASS WITH WARNINGS): los 5 escenarios A-E
@@ -369,9 +344,8 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     // este assert negativo prueba que la fila no se quedo en el valor pre-diferencial.
     expect(totalCobrado.queryByText(formatUsd(300))).not.toBeInTheDocument()
 
-    const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
-    expect(saldoFacturas.getByText(formatUsd(expectedTotalCobradoUsd))).toBeInTheDocument()
-    expect(saldoFacturas.getByText(formatBs(expectedTotalCobradoBs))).toBeInTheDocument()
+    expect(screen.queryByTestId('saldo-facturas')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('total-facturado')).not.toBeInTheDocument()
   })
 
   it('Escenario G — cash + negocio asume (absorcion) activo: TOTAL COBRADO y Saldo facturas incluyen el aporte de la absorcion (absorcionBs / tasaDelDia)', () => {
@@ -397,8 +371,7 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     // Si el termino de absorcion se perdiera, TOTAL COBRADO caeria al cash puro (200).
     expect(totalCobrado.queryByText(formatUsd(200))).not.toBeInTheDocument()
 
-    const saldoFacturas = within(screen.getByTestId('saldo-facturas'))
-    expect(saldoFacturas.getByText(formatUsd(expectedTotalCobradoUsd))).toBeInTheDocument()
-    expect(saldoFacturas.getByText(formatBs(expectedTotalCobradoBs))).toBeInTheDocument()
+    expect(screen.queryByTestId('saldo-facturas')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('total-facturado')).not.toBeInTheDocument()
   })
 })

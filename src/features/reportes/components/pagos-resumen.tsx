@@ -36,7 +36,7 @@ export function PagosResumen({
 }: PagosResumenProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(filters)
-  const { totales, isLoading: loadingTotales } = useTotalesFiscales(filters)
+  const { isLoading: loadingTotales } = useTotalesFiscales(filters)
   const { totalUsd: safTotalUsd, isLoading: loadingSaf } = useSafDiario(filters)
   const { anticipoUsd, isLoading: loadingAnticipos } = useAnticiposDelDia(filters)
   const {
@@ -86,21 +86,10 @@ export function PagosResumen({
     cashNetoBs + safBs + (hayDiferencial ? diferencialNetoBs : 0) + (hayAbsorcion ? absorcionBs : 0)
 
   // Saldo a favor generado (excedente del cliente, pasa a credito futuro). NO se muestra como
-  // fila en esta card (pertenece solo a "Resumen de Caja" -> "Cobros por Adelantado"), pero su
-  // VALOR si debe restarse de Saldó facturas: EFECTIVO (usePagosPorMetodo) es GROSS -- incluye
-  // el excedente que se convirtio en SAF generado, que NO liquido ninguna factura (evidencia
-  // write-side, ver sdd/cuadre-saf-generado-consumido/correccion-saf-generado).
+  // fila en esta card (pertenece solo a "Resumen de Caja" -> "Cobros por Adelantado"). Solo se
+  // usa aqui para decidir el guard de empty-state (una sesion 100%-SAF-generado no debe caer
+  // en "Sin cobros en esta fecha" si TOTAL COBRADO tiene algo que mostrar).
   const haySafGenerado = anticipoUsd > 0.001
-  const safGeneradoBs = tasaDelDia > 0 ? usdToBs(anticipoUsd, tasaDelDia).toNumber() : 0
-
-  // Saldo a favor liquidado (lo cobrado, neto del excedente que se volvio SAF generado) + lo
-  // que quedo pendiente a credito
-  const saldoFacturasUsd = totalCobradoUsd - anticipoUsd + cxcTotalUsd
-  const saldoFacturasBs = totalCobradoBs - safGeneradoBs + cxcTotalBs
-
-  // Total facturado real — fuente fiscal (ventas puras + IGTF), independiente de como se pago
-  const totalFacturadoUsd = (totales?.totalVentasUsd ?? 0) + (totales?.totalIgtfUsd ?? 0)
-  const totalFacturadoBs = (totales?.totalVentasBs ?? 0) + (totales?.totalIgtfBs ?? 0)
 
   const isLoadingAll =
     isLoading ||
@@ -308,31 +297,6 @@ export function PagosResumen({
             </button>
           )}
 
-          {/* Saldó facturas — TOTAL COBRADO − SAF generado + CxC pendiente. EFECTIVO
-              (usePagosPorMetodo) es GROSS -- incluye el excedente que se volvio SAF generado,
-              que no liquido ninguna factura, por eso se resta (#5332). Identidad objetivo:
-              igual a Total facturado cuando no hay fuga no cubierta (ver Open Questions en
-              #5318). */}
-          <div data-testid="saldo-facturas" className="pt-2 border-t">
-            <div className="flex justify-between items-center text-sm font-bold">
-              <span>Saldó facturas</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-normal text-muted-foreground">{formatUsd(saldoFacturasUsd)}</span>
-                <span className="text-base">{formatBs(saldoFacturasBs)}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Total facturado — fuente fiscal real (useTotalesFiscales), ya fetcheado arriba */}
-          <div data-testid="total-facturado" className="border-t pt-2">
-            <div className="flex justify-between items-center text-sm text-muted-foreground">
-              <span>Total facturado</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs">{formatUsd(totalFacturadoUsd)}</span>
-                <span className="font-semibold">{formatBs(totalFacturadoBs)}</span>
-              </div>
-            </div>
-          </div>
         </div>
       )}
     </div>

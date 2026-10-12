@@ -627,7 +627,42 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
             <div className="rounded-2xl bg-card shadow-lg p-5 space-y-3">
               <h3 className="text-sm font-semibold">Resumen de Caja</h3>
 
-              {/* Total Facturado (ventas puras, sin avances/préstamos) */}
+              {/* Total Contado — solo ventas cobradas en efectivo, sin fondo de apertura */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Total Contado</span>
+                <div className="text-right">
+                  {totalContadoBs > 0.001 || (tasaPromedio > 0 && totalContadoUsd > 0.001) ? (
+                    <>
+                      {totalContadoBs > 0.001 && (
+                        <div>{formatBs(totalContadoBs)}</div>
+                      )}
+                      {tasaPromedio > 0 && totalContadoUsd > 0.001 && (
+                        <div className="text-xs text-muted-foreground">{formatUsd(totalContadoUsd)}</div>
+                      )}
+                      {totalContadoBs <= 0.001 && totalContadoUsd > 0.001 && (
+                        <div>{formatUsd(totalContadoUsd)}</div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">{formatBs(0)}</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Total Credito (CxC) — muestra el total emitido a crédito (tipo original) */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Total Credito (CxC)</span>
+                <div className="text-right">
+                  <div>{formatBs(creditoBs)}</div>
+                  <div className="text-xs text-muted-foreground">{formatUsd(creditoUsd)}</div>
+                </div>
+              </div>
+
+              <div className="border-t" />
+
+              {/* Total Facturado (ventas puras, sin avances/préstamos) — sumatoria de
+                  Contado + Credito mostrados arriba. Mismo dato/fuente que antes, solo
+                  reordenado debajo del desglose contado/credito que lo compone. */}
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Total Facturado (ventas)</span>
                 <div className="text-right">
@@ -672,67 +707,6 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 </div>
               )}
 
-              <div className="border-t" />
-
-              {/* Total Contado — solo ventas cobradas en efectivo, sin fondo de apertura */}
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Total Contado</span>
-                <div className="text-right">
-                  {totalContadoBs > 0.001 || (tasaPromedio > 0 && totalContadoUsd > 0.001) ? (
-                    <>
-                      {totalContadoBs > 0.001 && (
-                        <div>{formatBs(totalContadoBs)}</div>
-                      )}
-                      {tasaPromedio > 0 && totalContadoUsd > 0.001 && (
-                        <div className="text-xs text-muted-foreground">{formatUsd(totalContadoUsd)}</div>
-                      )}
-                      {totalContadoBs <= 0.001 && totalContadoUsd > 0.001 && (
-                        <div>{formatUsd(totalContadoUsd)}</div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="text-xs text-muted-foreground">{formatBs(0)}</div>
-                  )}
-                </div>
-              </div>
-
-              {/* Total Credito (CxC) — muestra el total emitido a crédito (tipo original) */}
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Total Credito (CxC)</span>
-                <div className="text-right">
-                  <div>{formatBs(creditoBs)}</div>
-                  <div className="text-xs text-muted-foreground">{formatUsd(creditoUsd)}</div>
-                </div>
-              </div>
-
-              {/* Cobros Anteriores (CxC) */}
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Cobros Anteriores (CxC)</span>
-                <div className="text-right">
-                  <div className="text-blue-600">
-                    {formatBs(totalCobrosBsEquiv)}
-                  </div>
-                  <div className="text-xs text-muted-foreground">{formatUsd(cobrosAnterioresUsd)}</div>
-                </div>
-              </div>
-
-              {/* Cobros por Adelantado (anticipos sin factura) */}
-              {(anticipoUsd > 0.001 || anticipoBsNativo > 0.001) && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Cobros por Adelantado</span>
-                  <div className="text-right">
-                    {anticipoBsNativo > 0.001 && (
-                      <div className="text-indigo-600">{formatBs(anticipoBsNativo)}</div>
-                    )}
-                    {anticipoUsd > 0.001 && (
-                      <div className={anticipoBsNativo > 0.001 ? 'text-xs text-muted-foreground' : 'text-indigo-600'}>
-                        {formatUsd(anticipoUsd)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
               {/* Propinas — solo si hay */}
               {(propinaBs > 0.001 || propinaUsd > 0.001) && (() => {
                 // Calcular el total en Bs y en USD para mostrar ambos.
@@ -763,6 +737,47 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 totalNcrUsd={totalNcrSesionUsd}
                 totalNcrBs={totalNcrSesionBs}
               />
+
+              {/* Caja no facturada en esta sesion — bloque informativo separado del
+                  resumen de facturacion de arriba (sdd/cuadre-reordenar-cards). Cobros
+                  Anteriores (CxC de sesiones previas) y Cobros por Adelantado (SAF
+                  generado) son efectivo que entro a caja pero NO pertenece a lo
+                  facturado por ESTA sesion — por eso se agrupan aparte, con separacion
+                  visual mas fuerte (border-t-2) que el resto de las filas. Mismos datos
+                  y formulas que antes, solo reubicados. */}
+              <div className="border-t-2 pt-3 space-y-3">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Caja no facturada en esta sesión
+                </p>
+
+                {/* Cobros Anteriores (CxC) */}
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Cobros Anteriores (CxC)</span>
+                  <div className="text-right">
+                    <div className="text-blue-600">
+                      {formatBs(totalCobrosBsEquiv)}
+                    </div>
+                    <div className="text-xs text-muted-foreground">{formatUsd(cobrosAnterioresUsd)}</div>
+                  </div>
+                </div>
+
+                {/* Cobros por Adelantado (anticipos sin factura) */}
+                {(anticipoUsd > 0.001 || anticipoBsNativo > 0.001) && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Cobros por Adelantado</span>
+                    <div className="text-right">
+                      {anticipoBsNativo > 0.001 && (
+                        <div className="text-indigo-600">{formatBs(anticipoBsNativo)}</div>
+                      )}
+                      {anticipoUsd > 0.001 && (
+                        <div className={anticipoBsNativo > 0.001 ? 'text-xs text-muted-foreground' : 'text-indigo-600'}>
+                          {formatUsd(anticipoUsd)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* OCULTO (fix/cuadre-ocultar-neto-esperado): "Diferencial Cambiario" y
                   "Total Caja Neto Esperado" se ocultan por decision de negocio.
