@@ -11,7 +11,6 @@ vi.mock('../../hooks/use-cuadre', () => ({
   useTotalesFiscales: vi.fn(),
   useSafDiario: vi.fn(),
   useAnticiposDelDia: vi.fn(),
-  useCobrosViaPOS: vi.fn(),
   useDiferencialCambiarioDelDia: vi.fn(),
   useAbsorcionDelDia: vi.fn(),
 }))
@@ -25,7 +24,6 @@ import {
   useTotalesFiscales,
   useSafDiario,
   useAnticiposDelDia,
-  useCobrosViaPOS,
   useDiferencialCambiarioDelDia,
   useAbsorcionDelDia,
 } from '../../hooks/use-cuadre'
@@ -35,7 +33,6 @@ const mockedUseCxcDelDia = vi.mocked(useCxcDelDia)
 const mockedUseTotalesFiscales = vi.mocked(useTotalesFiscales)
 const mockedUseSafDiario = vi.mocked(useSafDiario)
 const mockedUseAnticiposDelDia = vi.mocked(useAnticiposDelDia)
-const mockedUseCobrosViaPOS = vi.mocked(useCobrosViaPOS)
 const mockedUseDiferencialCambiarioDelDia = vi.mocked(useDiferencialCambiarioDelDia)
 const mockedUseAbsorcionDelDia = vi.mocked(useAbsorcionDelDia)
 
@@ -47,8 +44,6 @@ function setup(opts: {
   cxcTotalBs?: number
   safTotalUsd?: number
   anticipoUsd?: number
-  cobrosAnterioresUsd?: number
-  cobrosAnterioresBsEquiv?: number
   totalVentasUsd?: number
   totalVentasBs?: number
   totalIgtfUsd?: number
@@ -82,13 +77,6 @@ function setup(opts: {
   mockedUseAnticiposDelDia.mockReturnValue({
     anticipoUsd: opts.anticipoUsd ?? 0,
     anticipoBsNativo: 0,
-    isLoading: false,
-  } as never)
-  mockedUseCobrosViaPOS.mockReturnValue({
-    porMetodo: [],
-    totalCobrosUsd: opts.cobrosAnterioresUsd ?? 0,
-    totalCobrosBs: 0,
-    totalCobrosBsEquiv: opts.cobrosAnterioresBsEquiv ?? 0,
     isLoading: false,
   } as never)
   mockedUseDiferencialCambiarioDelDia.mockReturnValue({
@@ -263,29 +251,47 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     expect(screen.queryByTestId('total-facturado')).not.toBeInTheDocument()
   })
 
-  it('Escenario D — CxC vieja cobrada hoy (overcount): cash bruto 700, cobros anteriores 200 se RESTAN -> TOTAL COBRADO == 500 (NO 700); "Saldó facturas"/"Total facturado" AUSENTES', () => {
+  it('Escenario D — CxC vieja cobrada hoy (owner-confirmed): cash bruto 700 (incluye 200 de CxC vieja) NO se resta -> TOTAL COBRADO == 700 (dinero real en caja); fila negativa "Cobros anteriores (CxC)" fue ELIMINADA (sdd/cuadre-cobros-anteriores-y-neto-sesion)', () => {
     setup({
       metodos: [
         { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 700, totalOriginal: 700, totalBs: 700 * TASA },
       ],
-      cobrosAnterioresUsd: 200,
-      cobrosAnterioresBsEquiv: 200 * TASA,
       totalVentasUsd: 500,
       totalVentasBs: 500 * TASA,
     })
 
     render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
 
-    const cobrosAnteriores = within(screen.getByTestId('cobros-anteriores'))
-    expect(cobrosAnteriores.getByText(`-${formatUsd(200)}`)).toBeInTheDocument()
+    // La fila negativa "Cobros anteriores (CxC)" fue eliminada — era resta huerfana
+    // de una comparacion ("Saldó facturas") ya quitada en PR#226. El efectivo de CxC
+    // vieja ES dinero real en caja y debe contar en TOTAL COBRADO.
+    expect(screen.queryByTestId('cobros-anteriores')).not.toBeInTheDocument()
+    expect(screen.queryByText('Cobros anteriores (CxC)')).not.toBeInTheDocument()
 
     const totalCobrado = within(screen.getByTestId('total-cobrado'))
-    expect(totalCobrado.getByText(formatUsd(500))).toBeInTheDocument()
-    expect(totalCobrado.getByText(formatBs(500 * TASA))).toBeInTheDocument()
-    expect(totalCobrado.queryByText(formatUsd(700))).not.toBeInTheDocument()
+    expect(totalCobrado.getByText(formatUsd(700))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatBs(700 * TASA))).toBeInTheDocument()
+    expect(totalCobrado.queryByText(formatUsd(500))).not.toBeInTheDocument()
 
     expect(screen.queryByTestId('saldo-facturas')).not.toBeInTheDocument()
     expect(screen.queryByTestId('total-facturado')).not.toBeInTheDocument()
+  })
+
+  it('Escenario owner — ejemplo completo del owner: cash bruto 2699.99 (incluye 99.99 CxC vieja) + SAF aplicado 650 -> TOTAL COBRADO == 3349.99', () => {
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 2699.99, totalOriginal: 2699.99, totalBs: 2699.99 * TASA },
+      ],
+      safTotalUsd: 650,
+      totalVentasUsd: 1950,
+      totalVentasBs: 1950 * TASA,
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
+
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(3349.99))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatBs(3349.99 * TASA))).toBeInTheDocument()
   })
 
   it('Escenario E — venta a credito pura: TOTAL COBRADO == 0; "A credito (CxC)" visible; "Saldó facturas"/"Total facturado" AUSENTES de esta card', () => {

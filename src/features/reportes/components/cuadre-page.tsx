@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { todayStr } from '@/lib/dates'
-import { formatTasa, formatUsd, formatBs } from '@/lib/currency'
+import { formatTasa, formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatDate, formatDateTime, formatHora } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -16,7 +16,7 @@ import { AuditModal } from './audit-modal'
 import { CxcModal } from './cxc-modal'
 import { CuadreMetodoModal } from './cuadre-metodo-modal'
 import { CuadreTotalesFiscales } from './cuadre-totales-fiscales'
-import { CuadreDevolucionesNeto } from './cuadre-devoluciones-neto'
+import { CuadreDevolucionesNeto, CuadreTotalNetoSesion } from './cuadre-devoluciones-neto'
 import { CuadreConteoFisico } from './cuadre-conteo-fisico'
 import { CuadreDetallePagos } from './cuadre-detalle-pagos'
 import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
@@ -212,6 +212,19 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { anticipoUsd, anticipoBsNativo } = useAnticiposDelDia(activeFilters)
   const diferencialCambiario = useDiferencialCambiarioDelDia(activeFilters)
   const absorcion = useAbsorcionDelDia(activeFilters)
+
+  // TOTAL NETO SESION (sdd/cuadre-cobros-anteriores-y-neto-sesion, Option A): a diferencia
+  // de "TOTAL FACTURADO NETO" (solo factura - NC), este total SI incluye la "caja no
+  // facturada" — cobros anteriores + SAF generado + diferencial/absorcion cuando existen.
+  // anticipoBsEquiv usa usdToBs(anticipoUsd, tasa) — NO anticipoBsNativo (solo la porcion
+  // nativa-VES, subestima el total — ver engram #5346). Mismo patron que safBs en
+  // pagos-resumen.tsx. diferencial/absorcion recalculan USD desde Bs/tasa, igual que la
+  // Card derecha, para que ambas cards calcen bit-a-bit en el mismo escenario.
+  const facturadoNetoUsd = totalesFiscales.totalVentasUsd + totalesFiscales.totalIgtfUsd - totalNcrSesionUsd
+  const facturadoNetoBs = totalesFiscales.totalVentasBs + totalesFiscales.totalIgtfBs - totalNcrSesionBs
+  const anticipoBsEquiv = tasaPromedio > 0 ? usdToBs(anticipoUsd, tasaPromedio).toNumber() : anticipoBsNativo
+  const diferencialNetoUsdCalc = tasaPromedio > 0 ? diferencialCambiario.netoBs / tasaPromedio : diferencialCambiario.netoUsd
+  const absorcionUsdCalc = tasaPromedio > 0 ? absorcion.totalBs / tasaPromedio : absorcion.totalUsd
   // Detalle individual de movimientos para las tablas al pie del cuadre
   const { movimientos: movsEfectivoDetalle } = useMovimientosEfectivoCaja(activeFilters)
   const { items: cobranzasCxC } = useCobranzasCxCCaja(activeFilters)
@@ -777,7 +790,46 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                     </div>
                   </div>
                 )}
+
+                {/* Diferencial Cambiario — solo si hay registros (mismo criterio que Card
+                    derecha, pagos-resumen.tsx, para que ambas cards calcen). */}
+                {diferencialCambiario.hayDiferencial && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Diferencial Cambiario</span>
+                    <div className="text-right">
+                      <div className="text-amber-600">{formatBs(diferencialCambiario.netoBs)}</div>
+                      <div className="text-xs text-muted-foreground">{formatUsd(diferencialNetoUsdCalc)}</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Negocio asume (absorcion) — solo si hay registros */}
+                {absorcion.hayAbsorcion && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Negocio asume</span>
+                    <div className="text-right">
+                      <div className="text-orange-600">{formatBs(absorcion.totalBs)}</div>
+                      <div className="text-xs text-muted-foreground">{formatUsd(absorcionUsdCalc)}</div>
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {/* TOTAL NETO SESIÓN — incluye la caja no facturada de arriba (sdd/cuadre-cobros-anteriores-y-neto-sesion) */}
+              <CuadreTotalNetoSesion
+                facturadoNetoUsd={facturadoNetoUsd}
+                facturadoNetoBs={facturadoNetoBs}
+                cobrosAnterioresUsd={cobrosAnterioresUsd}
+                cobrosAnterioresBs={totalCobrosBsEquiv}
+                anticipoUsd={anticipoUsd}
+                anticipoBs={anticipoBsEquiv}
+                diferencialUsd={diferencialNetoUsdCalc}
+                diferencialBs={diferencialCambiario.netoBs}
+                hayDiferencial={diferencialCambiario.hayDiferencial}
+                absorcionUsd={absorcionUsdCalc}
+                absorcionBs={absorcion.totalBs}
+                hayAbsorcion={absorcion.hayAbsorcion}
+              />
 
               {/* OCULTO (fix/cuadre-ocultar-neto-esperado): "Diferencial Cambiario" y
                   "Total Caja Neto Esperado" se ocultan por decision de negocio.
