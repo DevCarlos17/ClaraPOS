@@ -1,4 +1,4 @@
-import { productoSchema } from '../producto-schema'
+import { productoSchema, codigoEsRequerido } from '../producto-schema'
 
 const baseValido = {
   codigo: 'PROD001',
@@ -107,9 +107,14 @@ describe('productoSchema — regla precio_mayor_usd <= precio_venta_usd', () => 
 })
 
 describe('productoSchema — validaciones de campos basicos', () => {
-  it('rechaza codigo vacio', () => {
+  // producto-numeracion-correlativa: el schema compartido ya NO exige codigo
+  // no-vacio a nivel zod — esa validacion se movio a nivel de formulario
+  // (codigoEsRequerido), condicional al modo de numeracion de la empresa
+  // (solo se exige en 'libre'; en 'correlativo' el codigo llega vacio por
+  // diseno, lo asigna el trigger server-side).
+  it('acepta codigo vacio a nivel de schema (la validacion de requerido se movio al formulario)', () => {
     const result = productoSchema.safeParse({ ...baseValido, codigo: '' })
-    expect(result.success).toBe(false)
+    expect(result.success).toBe(true)
   })
 
   it('rechaza nombre menor a 3 caracteres', () => {
@@ -125,5 +130,15 @@ describe('productoSchema — validaciones de campos basicos', () => {
   it('rechaza stock_minimo negativo', () => {
     const result = productoSchema.safeParse({ ...baseValido, stock_minimo: -1 })
     expect(result.success).toBe(false)
+  })
+})
+
+describe('codigoEsRequerido — validacion de "codigo requerido" condicional al modo de numeracion (producto-numeracion-correlativa)', () => {
+  it('modo libre: el codigo es requerido (el usuario lo define)', () => {
+    expect(codigoEsRequerido('libre')).toBe(true)
+  })
+
+  it('modo correlativo: el codigo NO es requerido (lo asigna el servidor, llega vacio)', () => {
+    expect(codigoEsRequerido('correlativo')).toBe(false)
   })
 })

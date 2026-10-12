@@ -448,3 +448,22 @@ export function extraerValoresNuevos(
 
   return Object.keys(resultado).length > 0 ? resultado : null
 }
+
+/**
+ * producto-numeracion-correlativa (SC-B1, D4): aplica `construir` a cada
+ * item obteniendo un timestamp PROPIO por iteracion (`obtenerAhora()` se
+ * llama una vez POR item, nunca una sola vez para todo el `.map()`). Fija el
+ * bug de causa raiz de `import-productos-modal.tsx` donde `const now =
+ * localNow()` se calculaba UNA sola vez fuera del loop y las N filas
+ * importadas quedaban con el MISMO `created_at`, volviendo indeterminista
+ * "Ultimo codigo creado" (`ORDER BY created_at DESC`) para N>1 filas.
+ * `obtenerAhora` es inyectable (default `Date.now`-like real via el llamador)
+ * para poder probar el mecanismo sin depender del reloj real del sistema.
+ */
+export function mapConTimestampPropio<T, R>(
+  items: T[],
+  construir: (item: T, timestamp: string) => R,
+  obtenerAhora: () => string
+): R[] {
+  return items.map((item) => construir(item, obtenerAhora()))
+}

@@ -354,6 +354,7 @@ export interface Productos {
   deposito_id: string | null
   costo_factura_usd: string | null // costo segun factura ultima compra (tasa proveedor); NULL/legacy -> usar costo_usd
   tasa_paralela_ref: string | null // tasa paralela de la ultima compra; NULL = tasa interna/oficial
+  codigo_status: string // 'pendiente' | 'asignado' (numeracion correlativa server-side, migracion 0099)
 }
 
 export interface InventarioStock {

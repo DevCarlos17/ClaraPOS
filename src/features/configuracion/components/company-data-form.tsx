@@ -3,12 +3,28 @@ import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useCompany, updateCompany, parseEmpresaConfig, serializeEmpresaConfig } from '../hooks/use-company'
+import {
+  useCompany,
+  updateCompany,
+  parseEmpresaConfig,
+  serializeEmpresaConfig,
+  readConfigNamespace,
+  serializeConfigNamespace,
+} from '../hooks/use-company'
 import { companySchema } from '../schemas/company-schema'
 
 const MONEDA_PRESENTACION_OPTIONS: { value: 'USD' | 'BS'; label: string }[] = [
   { value: 'USD', label: 'Dolares (USD)' },
   { value: 'BS', label: 'Bolivares (Bs)' },
+]
+
+type NumeracionModo = 'libre' | 'correlativo'
+
+const NUMERACION_MODO_DEFAULTS: { numeracion_modo: NumeracionModo } = { numeracion_modo: 'libre' }
+
+const NUMERACION_MODO_OPTIONS: { value: NumeracionModo; label: string }[] = [
+  { value: 'libre', label: 'Libre (texto definido por el usuario)' },
+  { value: 'correlativo', label: 'Correlativo (asignado automaticamente por el servidor)' },
 ]
 
 export function CompanyDataForm() {
@@ -40,6 +56,17 @@ export function CompanyDataForm() {
     setMonedaPresentacion(parseEmpresaConfig(company.config).moneda_presentacion_documentos ?? 'USD')
   }
 
+  // Numeracion de codigo de producto (namespace 'inventario', producto-numeracion-correlativa).
+  // Mismo patron de sincronizacion-en-render que moneda de presentacion (ver comentario arriba):
+  // evita que el Select de Radix monte con el fallback 'libre' y reciba un cambio de `value`
+  // sobre una instancia ya montada.
+  const [numeracionModo, setNumeracionModo] = useState<NumeracionModo>('libre')
+  const [numeracionSyncedForCompanyId, setNumeracionSyncedForCompanyId] = useState<string | undefined>(undefined)
+  if (company && company.id !== numeracionSyncedForCompanyId) {
+    setNumeracionSyncedForCompanyId(company.id)
+    setNumeracionModo(readConfigNamespace(company.config, 'inventario', NUMERACION_MODO_DEFAULTS).numeracion_modo)
+  }
+
   useEffect(() => {
     if (!company) return
     setNombre(company.nombre ?? '')
@@ -67,9 +94,11 @@ export function CompanyDataForm() {
         direccion: result.data.direccion,
         telefono: result.data.telefono,
         email: result.data.email,
-        config: serializeEmpresaConfig(company.config, {
-          moneda_presentacion_documentos: monedaPresentacion,
-        }),
+        config: serializeConfigNamespace(
+          serializeEmpresaConfig(company.config, { moneda_presentacion_documentos: monedaPresentacion }),
+          'inventario',
+          { numeracion_modo: numeracionModo }
+        ),
       })
       toast.success('Datos de empresa actualizados')
     } catch {
@@ -170,6 +199,26 @@ export function CompanyDataForm() {
           </SelectTrigger>
           <SelectContent>
             {MONEDA_PRESENTACION_OPTIONS.map((opcion) => (
+              <SelectItem key={opcion.value} value={opcion.value}>
+                {opcion.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="numeracion-modo">Modo de numeracion de codigo de producto</Label>
+        <Select
+          value={numeracionModo}
+          onValueChange={(value) => setNumeracionModo(value as NumeracionModo)}
+          disabled={isSubmitting}
+        >
+          <SelectTrigger id="numeracion-modo" aria-label="Modo de numeracion de codigo de producto">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {NUMERACION_MODO_OPTIONS.map((opcion) => (
               <SelectItem key={opcion.value} value={opcion.value}>
                 {opcion.label}
               </SelectItem>

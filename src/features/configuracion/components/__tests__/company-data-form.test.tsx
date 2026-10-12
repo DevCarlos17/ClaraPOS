@@ -125,6 +125,77 @@ describe('CompanyDataForm — selector de moneda de presentacion de documentos',
     expect(JSON.parse(payload.config as string)).toEqual({
       moneda_contable: 'USD',
       moneda_presentacion_documentos: 'BS',
+      // producto-numeracion-correlativa: toda escritura de config ahora
+      // tambien serializa el namespace 'inventario.numeracion_modo'
+      // (default 'libre' cuando la empresa no lo configuro aun).
+      inventario: { numeracion_modo: 'libre' },
+    })
+  })
+})
+
+describe('CompanyDataForm — selector de modo de numeracion de codigo de producto (producto-numeracion-correlativa)', () => {
+  beforeEach(() => {
+    mockedUpdateCompany.mockReset().mockResolvedValue(undefined)
+  })
+
+  it('sin inventario.numeracion_modo en config, la opcion Libre queda seleccionada por defecto', async () => {
+    const user = userEvent.setup()
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+
+    render(<CompanyDataForm />)
+    await user.click(
+      screen.getByRole('combobox', { name: /modo de numeracion de codigo de producto/i })
+    )
+
+    expect(await screen.findByRole('option', { name: /^Libre/i })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByRole('option', { name: /^Correlativo/i })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    )
+  })
+
+  it("config con inventario.numeracion_modo = 'correlativo' preexistente, esa opcion queda seleccionada", async () => {
+    const user = userEvent.setup()
+    mockedUseCompany.mockReturnValue({
+      company: baseCompany({ config: '{"inventario":{"numeracion_modo":"correlativo"}}' }),
+      isLoading: false,
+    })
+
+    render(<CompanyDataForm />)
+    await user.click(
+      screen.getByRole('combobox', { name: /modo de numeracion de codigo de producto/i })
+    )
+
+    expect(await screen.findByRole('option', { name: /^Correlativo/i })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  })
+
+  it("seleccionar Correlativo y enviar llama a updateCompany con inventario.numeracion_modo: 'correlativo', preservando otras claves de config", async () => {
+    const user = userEvent.setup()
+    mockedUseCompany.mockReturnValue({
+      company: baseCompany({ config: '{"moneda_contable":"USD"}' }),
+      isLoading: false,
+    })
+
+    render(<CompanyDataForm />)
+
+    await user.click(
+      screen.getByRole('combobox', { name: /modo de numeracion de codigo de producto/i })
+    )
+    await user.click(await screen.findByRole('option', { name: /^Correlativo/i }))
+    await user.click(screen.getByRole('button', { name: /Guardar Cambios/i }))
+
+    expect(mockedUpdateCompany).toHaveBeenCalledTimes(1)
+    const [, payload] = mockedUpdateCompany.mock.calls[0]
+    expect(JSON.parse(payload.config as string)).toEqual({
+      moneda_contable: 'USD',
+      moneda_presentacion_documentos: 'USD',
+      inventario: { numeracion_modo: 'correlativo' },
     })
   })
 })

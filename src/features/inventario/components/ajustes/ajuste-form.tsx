@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import Decimal from 'decimal.js'
 import { crearAjuste, aplicarAjuste } from '@/features/inventario/hooks/use-ajustes'
 import { useAjusteMotivosActivos } from '@/features/inventario/hooks/use-ajuste-motivos'
-import { useProductos } from '@/features/inventario/hooks/use-productos'
+import { useProductosTipo } from '@/features/inventario/hooks/use-productos'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useUnidades } from '@/features/inventario/hooks/use-unidades'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -148,7 +148,9 @@ function ProductoBuscador({
 export function AjusteForm({ isOpen, onClose, inline = false }: AjusteFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { motivos } = useAjusteMotivosActivos()
-  const { productos } = useProductos()
+  // useProductosTipo('P') ya filtra tipo='P', is_active=1 y codigo_status='asignado'
+  // (excluye PENDIENTE de numeracion correlativa, Requirement 5 / SC-E3)
+  const { productos } = useProductosTipo('P')
   const { depositos } = useDepositosActivos()
   const { unidades } = useUnidades()
   const { user } = useCurrentUser()
