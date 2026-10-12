@@ -11,7 +11,6 @@ vi.mock('../../hooks/use-cuadre', () => ({
   useTotalesFiscales: vi.fn(),
   useSafDiario: vi.fn(),
   useAnticiposDelDia: vi.fn(),
-  useCobrosViaPOS: vi.fn(),
   useDiferencialCambiarioDelDia: vi.fn(),
   useAbsorcionDelDia: vi.fn(),
 }))
@@ -25,7 +24,6 @@ import {
   useTotalesFiscales,
   useSafDiario,
   useAnticiposDelDia,
-  useCobrosViaPOS,
   useDiferencialCambiarioDelDia,
   useAbsorcionDelDia,
 } from '../../hooks/use-cuadre'
@@ -35,7 +33,6 @@ const mockedUseCxcDelDia = vi.mocked(useCxcDelDia)
 const mockedUseTotalesFiscales = vi.mocked(useTotalesFiscales)
 const mockedUseSafDiario = vi.mocked(useSafDiario)
 const mockedUseAnticiposDelDia = vi.mocked(useAnticiposDelDia)
-const mockedUseCobrosViaPOS = vi.mocked(useCobrosViaPOS)
 const mockedUseDiferencialCambiarioDelDia = vi.mocked(useDiferencialCambiarioDelDia)
 const mockedUseAbsorcionDelDia = vi.mocked(useAbsorcionDelDia)
 
@@ -47,8 +44,6 @@ function setup(opts: {
   cxcTotalBs?: number
   safTotalUsd?: number
   anticipoUsd?: number
-  cobrosAnterioresUsd?: number
-  cobrosAnterioresBsEquiv?: number
   totalVentasUsd?: number
   totalVentasBs?: number
   totalIgtfUsd?: number
@@ -82,13 +77,6 @@ function setup(opts: {
   mockedUseAnticiposDelDia.mockReturnValue({
     anticipoUsd: opts.anticipoUsd ?? 0,
     anticipoBsNativo: 0,
-    isLoading: false,
-  } as never)
-  mockedUseCobrosViaPOS.mockReturnValue({
-    porMetodo: [],
-    totalCobrosUsd: opts.cobrosAnterioresUsd ?? 0,
-    totalCobrosBs: 0,
-    totalCobrosBsEquiv: opts.cobrosAnterioresBsEquiv ?? 0,
     isLoading: false,
   } as never)
   mockedUseDiferencialCambiarioDelDia.mockReturnValue({
@@ -268,8 +256,6 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
       metodos: [
         { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 700, totalOriginal: 700, totalBs: 700 * TASA },
       ],
-      cobrosAnterioresUsd: 200,
-      cobrosAnterioresBsEquiv: 200 * TASA,
       totalVentasUsd: 500,
       totalVentasBs: 500 * TASA,
     })
@@ -297,8 +283,6 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
         { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 2699.99, totalOriginal: 2699.99, totalBs: 2699.99 * TASA },
       ],
       safTotalUsd: 650,
-      cobrosAnterioresUsd: 99.99,
-      cobrosAnterioresBsEquiv: 99.99 * TASA,
       totalVentasUsd: 1950,
       totalVentasBs: 1950 * TASA,
     })
