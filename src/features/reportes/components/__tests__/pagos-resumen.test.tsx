@@ -381,3 +381,79 @@ describe('PagosResumen — totales de partida doble (design #5318, sdd/cuadre-sa
     expect(screen.queryByTestId('total-facturado')).not.toBeInTheDocument()
   })
 })
+
+// TOTAL NETO SESIÓN en Card derecha (sdd/cuadre-total-neto-sesion-right): segundo total que
+// espeja la Card izquierda (Resumen de Caja), para que ambas cards muestren el mismo gran
+// total. Formula: TOTAL NETO SESION = TOTAL COBRADO + "A credito (CxC)" pendiente. TOTAL
+// COBRADO en si NO cambia (sigue excluyendo CxC) — el nuevo total es un segundo total que se
+// agrega DESPUES de la fila de CxC, no un reemplazo.
+describe('PagosResumen — TOTAL NETO SESIÓN (segundo total, sdd/cuadre-total-neto-sesion-right)', () => {
+  it('con CxC pendiente > 0: TOTAL NETO SESION = TOTAL COBRADO + CxC; TOTAL COBRADO permanece SIN CAMBIOS', () => {
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 2699.99, totalOriginal: 2699.99, totalBs: 2699.99 * TASA },
+      ],
+      safTotalUsd: 650,
+      cxcTotalUsd: 400,
+      cxcTotalBs: 400 * TASA,
+      totalVentasUsd: 1950,
+      totalVentasBs: 1950 * TASA,
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
+
+    // TOTAL COBRADO sin cambios: 2699.99 (cash) + 650 (SAF) = 3349.99, SIN el CxC
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(3349.99))).toBeInTheDocument()
+    expect(totalCobrado.getByText(formatBs(3349.99 * TASA))).toBeInTheDocument()
+
+    // TOTAL NETO SESION = 3349.99 + 400 (CxC pendiente) = 3749.99
+    const totalNetoSesion = within(screen.getByTestId('total-neto-sesion'))
+    expect(screen.getByText('TOTAL NETO SESIÓN')).toBeInTheDocument()
+    expect(totalNetoSesion.getByText(formatUsd(3749.99))).toBeInTheDocument()
+    expect(totalNetoSesion.getByText(formatBs(3749.99 * TASA))).toBeInTheDocument()
+  })
+
+  it('sin CxC pendiente (cxc=0): TOTAL NETO SESION == TOTAL COBRADO', () => {
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 500, totalOriginal: 500, totalBs: 500 * TASA },
+      ],
+      cxcTotalUsd: 0,
+      totalVentasUsd: 500,
+      totalVentasBs: 500 * TASA,
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
+
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(500))).toBeInTheDocument()
+
+    const totalNetoSesion = within(screen.getByTestId('total-neto-sesion'))
+    expect(totalNetoSesion.getByText(formatUsd(500))).toBeInTheDocument()
+    expect(totalNetoSesion.getByText(formatBs(500 * TASA))).toBeInTheDocument()
+  })
+
+  it('posicion: la fila "A credito (CxC)" se renderiza ENTRE TOTAL COBRADO y TOTAL NETO SESION', () => {
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 100, totalOriginal: 100, totalBs: 100 * TASA },
+      ],
+      cxcTotalUsd: 400,
+      cxcTotalBs: 400 * TASA,
+      totalVentasUsd: 500,
+      totalVentasBs: 500 * TASA,
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
+
+    const totalCobradoEl = screen.getByTestId('total-cobrado')
+    const cxcEl = screen.getByText('A credito (CxC)')
+    const totalNetoSesionEl = screen.getByTestId('total-neto-sesion')
+
+    // totalCobradoEl DEBE venir ANTES de cxcEl (DOCUMENT_POSITION_FOLLOWING = cxcEl sigue a totalCobradoEl)
+    expect(totalCobradoEl.compareDocumentPosition(cxcEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // cxcEl DEBE venir ANTES de totalNetoSesionEl
+    expect(cxcEl.compareDocumentPosition(totalNetoSesionEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})

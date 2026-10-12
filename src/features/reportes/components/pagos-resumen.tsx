@@ -76,6 +76,15 @@ export function PagosResumen({
   const totalCobradoBs =
     cashBrutoBs + safBs + (hayDiferencial ? diferencialNetoBs : 0) + (hayAbsorcion ? absorcionBs : 0)
 
+  // TOTAL NETO SESIÓN (sdd/cuadre-total-neto-sesion-right) — segundo total que espeja la
+  // Card izquierda (Resumen de Caja, CuadreTotalNetoSesion): TOTAL COBRADO (dinero/credito
+  // ya cobrado) + "A credito (CxC)" (pendiente de cobro de ESTA sesion). TOTAL COBRADO en si
+  // NO cambia — sigue significando "lo realmente cobrado", sin CxC pendiente. Este nuevo
+  // total agrega el pendiente para dar el total NETO de la sesion completa (cobrado +
+  // por cobrar), mismo concepto que la Card izquierda.
+  const netoSesionUsd = totalCobradoUsd + cxcTotalUsd
+  const netoSesionBs = totalCobradoBs + cxcTotalBs
+
   // Saldo a favor generado (excedente del cliente, pasa a credito futuro). NO se muestra como
   // fila en esta card (pertenece solo a "Resumen de Caja" -> "Cobros por Adelantado"). Solo se
   // usa aqui para decidir el guard de empty-state (una sesion 100%-SAF-generado no debe caer
@@ -263,6 +272,17 @@ export function PagosResumen({
               </div>
             </button>
           )}
+
+          {/* TOTAL NETO SESIÓN — TOTAL COBRADO + CxC pendiente (espeja la Card izquierda) */}
+          <div data-testid="total-neto-sesion" className="pt-3 mt-1 border-t-2">
+            <div className="flex justify-between items-center text-sm font-bold">
+              <span>TOTAL NETO SESIÓN</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-normal text-muted-foreground">{formatUsd(netoSesionUsd)}</span>
+                <span className="text-base">{formatBs(netoSesionBs)}</span>
+              </div>
+            </div>
+          </div>
 
         </div>
       )}
