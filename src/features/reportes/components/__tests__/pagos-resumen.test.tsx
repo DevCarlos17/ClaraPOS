@@ -13,6 +13,8 @@ vi.mock('../../hooks/use-cuadre', () => ({
   useAnticiposDelDia: vi.fn(),
   useDiferencialCambiarioDelDia: vi.fn(),
   useAbsorcionDelDia: vi.fn(),
+  useMovimientosManualesDia: vi.fn(),
+  useDevolucionTesoreriaNC: vi.fn(),
 }))
 
 import { render, screen, within } from '@testing-library/react'
@@ -26,6 +28,8 @@ import {
   useAnticiposDelDia,
   useDiferencialCambiarioDelDia,
   useAbsorcionDelDia,
+  useMovimientosManualesDia,
+  useDevolucionTesoreriaNC,
 } from '../../hooks/use-cuadre'
 
 const mockedUsePagosPorMetodo = vi.mocked(usePagosPorMetodo)
@@ -35,6 +39,8 @@ const mockedUseSafDiario = vi.mocked(useSafDiario)
 const mockedUseAnticiposDelDia = vi.mocked(useAnticiposDelDia)
 const mockedUseDiferencialCambiarioDelDia = vi.mocked(useDiferencialCambiarioDelDia)
 const mockedUseAbsorcionDelDia = vi.mocked(useAbsorcionDelDia)
+const mockedUseMovimientosManualesDia = vi.mocked(useMovimientosManualesDia)
+const mockedUseDevolucionTesoreriaNC = vi.mocked(useDevolucionTesoreriaNC)
 
 const filters = { fecha: '2026-10-11', cajaId: 'caja-1', sesionCajaIds: ['sesion-1'] }
 
@@ -50,6 +56,9 @@ function setup(opts: {
   totalIgtfBs?: number
   hayDiferencial?: boolean
   hayAbsorcion?: boolean
+  movimientosManuales?: Array<{ metodo_tipo: string; metodo_moneda: string; mov_tipo: string; origen: string; total: number }>
+  devolucionTesoreriaUsd?: number
+  devolucionTesoreriaBs?: number
 }) {
   mockedUsePagosPorMetodo.mockReturnValue({
     metodos: opts.metodos ?? [],
@@ -89,6 +98,15 @@ function setup(opts: {
     totalBs: opts.hayAbsorcion ? 500 : 0,
     totalUsd: opts.hayAbsorcion ? 10 : 0,
     hayAbsorcion: opts.hayAbsorcion ?? false,
+    isLoading: false,
+  } as never)
+  mockedUseMovimientosManualesDia.mockReturnValue({
+    movimientos: opts.movimientosManuales ?? [],
+    isLoading: false,
+  } as never)
+  mockedUseDevolucionTesoreriaNC.mockReturnValue({
+    totalUsd: opts.devolucionTesoreriaUsd ?? 0,
+    totalBs: opts.devolucionTesoreriaBs ?? 0,
     isLoading: false,
   } as never)
 }
@@ -455,5 +473,126 @@ describe('PagosResumen — TOTAL NETO SESIÓN (segundo total, sdd/cuadre-total-n
     expect(totalCobradoEl.compareDocumentPosition(cxcEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     // cxcEl DEBE venir ANTES de totalNetoSesionEl
     expect(cxcEl.compareDocumentPosition(totalNetoSesionEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
+// Reintegro NC (sesion) + Devolucion de Tesoreria (sdd/cuadre-saf-generado-consumido/
+// nc-refund-right-card, engram #5369): cuando una NC se reembolsa, Card IZQUIERDA
+// (Resumen de Caja) SIEMPRE resta la NC completa en su TOTAL NETO SESION, sin importar el
+// origen del reembolso. Card DERECHA (esta card) antes NO mostraba el reembolso saliendo,
+// por lo que su TOTAL NETO SESION quedaba mas alto que el de la izquierda. El fix agrega 2
+// filas de resta, cada una gateada a > 0: "(-) Reintegro NC (sesion)" (reembolso en
+// EFECTIVO de la sesion, reusa useMovimientosManualesDia + splitEgresosArqueo ->
+// devolucionesNcUsd/BsNativo) y "(-) Devolucion de Tesoreria" (reembolso real desde
+// banco/caja fuerte, useDevolucionTesoreriaNC — el dinero nunca salio de la sesion).
+// Nueva formula: TOTAL NETO SESION = TOTAL COBRADO + CxC - reintegroSesion - devolucionTesoreria.
+describe('PagosResumen — Reintegro NC (sesion) y Devolucion de Tesoreria restan en TOTAL NETO SESION (sdd/cuadre-saf-generado-consumido/nc-refund-right-card)', () => {
+  it('ejemplo del owner (sesion): factura1 650 (TDD Banesco) + factura2 650 (Efectivo) = TOTAL COBRADO 1300; NC reembolsa 650 EN EFECTIVO DE LA SESION -> fila "Reintegro NC (sesion)" visible con 650; TOTAL NETO SESION = 1300 - 650 = 650 (== LEFT 650)', () => {
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'TDD Banesco', tipo: 'TARJETA', moneda: 'USD', totalUsd: 650, totalOriginal: 650, totalBs: 650 * TASA },
+        { metodo_cobro_id: 'm2', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 650, totalOriginal: 650, totalBs: 650 * TASA },
+      ],
+      totalVentasUsd: 1300,
+      totalVentasBs: 1300 * TASA,
+      movimientosManuales: [
+        { metodo_tipo: 'EFECTIVO', metodo_moneda: 'USD', mov_tipo: 'EGRESO', origen: 'NCR', total: 650 },
+      ],
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
+
+    // TOTAL COBRADO permanece en 1300 (gross, SIN descontar el reintegro)
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(1300))).toBeInTheDocument()
+
+    expect(screen.getByText('(−) Reintegro NC (sesión)')).toBeInTheDocument()
+    const reintegro = within(screen.getByTestId('reintegro-nc-sesion'))
+    expect(reintegro.getByText(formatUsd(650))).toBeInTheDocument()
+
+    expect(screen.queryByText('(−) Devolución de Tesorería')).not.toBeInTheDocument()
+
+    const totalNetoSesion = within(screen.getByTestId('total-neto-sesion'))
+    expect(totalNetoSesion.getByText(formatUsd(650))).toBeInTheDocument()
+  })
+
+  it('variante tesoreria: mismo escenario pero el reembolso de 650 sale de BANCO/CAJA FUERTE (nunca salio de la sesion) -> "Reintegro NC (sesion)" AUSENTE, "Devolucion de Tesoreria" visible con 650; TOTAL NETO SESION = 1300 - 650 = 650 (== LEFT 650)', () => {
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'TDD Banesco', tipo: 'TARJETA', moneda: 'USD', totalUsd: 650, totalOriginal: 650, totalBs: 650 * TASA },
+        { metodo_cobro_id: 'm2', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 650, totalOriginal: 650, totalBs: 650 * TASA },
+      ],
+      totalVentasUsd: 1300,
+      totalVentasBs: 1300 * TASA,
+      devolucionTesoreriaUsd: 650,
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
+
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(1300))).toBeInTheDocument()
+
+    expect(screen.queryByText('(−) Reintegro NC (sesión)')).not.toBeInTheDocument()
+
+    expect(screen.getByText('(−) Devolución de Tesorería')).toBeInTheDocument()
+    const devolucionTesoreria = within(screen.getByTestId('devolucion-tesoreria'))
+    expect(devolucionTesoreria.getByText(formatUsd(650))).toBeInTheDocument()
+
+    const totalNetoSesion = within(screen.getByTestId('total-neto-sesion'))
+    expect(totalNetoSesion.getByText(formatUsd(650))).toBeInTheDocument()
+  })
+
+  it('sin NC (ambos refunds en 0): ninguna de las 2 filas se renderiza y TOTAL NETO SESION no cambia (sin regresion)', () => {
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 500, totalOriginal: 500, totalBs: 500 * TASA },
+      ],
+      totalVentasUsd: 500,
+      totalVentasBs: 500 * TASA,
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
+
+    expect(screen.queryByTestId('reintegro-nc-sesion')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('devolucion-tesoreria')).not.toBeInTheDocument()
+
+    const totalCobrado = within(screen.getByTestId('total-cobrado'))
+    expect(totalCobrado.getByText(formatUsd(500))).toBeInTheDocument()
+
+    const totalNetoSesion = within(screen.getByTestId('total-neto-sesion'))
+    expect(totalNetoSesion.getByText(formatUsd(500))).toBeInTheDocument()
+  })
+
+  it('posicion: "Reintegro NC (sesion)" y "Devolucion de Tesoreria" se renderizan DESPUES de "A credito (CxC)" y ANTES de TOTAL NETO SESION', () => {
+    setup({
+      metodos: [
+        { metodo_cobro_id: 'm1', nombre: 'Efectivo USD', tipo: 'EFECTIVO', moneda: 'USD', totalUsd: 700, totalOriginal: 700, totalBs: 700 * TASA },
+      ],
+      cxcTotalUsd: 100,
+      cxcTotalBs: 100 * TASA,
+      totalVentasUsd: 800,
+      totalVentasBs: 800 * TASA,
+      movimientosManuales: [
+        { metodo_tipo: 'EFECTIVO', metodo_moneda: 'USD', mov_tipo: 'EGRESO', origen: 'NCR', total: 50 },
+      ],
+      devolucionTesoreriaUsd: 30,
+    })
+
+    render(<PagosResumen filters={filters} tasaDelDia={TASA} />)
+
+    const cxcEl = screen.getByText('A credito (CxC)')
+    const reintegroEl = screen.getByTestId('reintegro-nc-sesion')
+    const devolucionEl = screen.getByTestId('devolucion-tesoreria')
+    const totalNetoSesionEl = screen.getByTestId('total-neto-sesion')
+
+    expect(cxcEl.compareDocumentPosition(reintegroEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(reintegroEl.compareDocumentPosition(devolucionEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(devolucionEl.compareDocumentPosition(totalNetoSesionEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    // TOTAL COBRADO = 700 (cash, gross) -- totalVentasUsd NO alimenta totalCobrado en este
+    // componente, solo cashBruto+saf+diferencial+absorcion.
+    // TOTAL NETO SESION = 700 (cobrado) + 100 (cxc) - 50 (reintegro) - 30 (tesoreria) = 720
+    const totalNetoSesion = within(totalNetoSesionEl)
+    expect(totalNetoSesion.getByText(formatUsd(720))).toBeInTheDocument()
   })
 })
