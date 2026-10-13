@@ -132,6 +132,12 @@ const TRIGGER_MANAGED_PATCH_COLUMNS: Record<string, string[]> = {
   // toca el mismo trigger (solo en ese UPDATE), por eso se stripea junto con
   // las otras dos — mismo mecanismo que clientes.saldo_actual/saf_disponible.
   saf_creditos_lotes: ['saldo_disponible_usd', 'status', 'updated_at'],
+  // estado se deriva via trigger prevent_venta_mutation() cuando
+  // saldo_pend_usd cambia (ver migrations/0106_ventas_estado_column.sql).
+  // saldo_pend_usd NO se stripea aqui: el cliente sigue siendo quien calcula
+  // y sube ese valor (misma logica que antes de este cambio); solo estado
+  // es gestionado por el trigger.
+  ventas: ['estado'],
 }
 
 // Tablas con triggers PostgreSQL que bloquean UPDATE (total o parcialmente).

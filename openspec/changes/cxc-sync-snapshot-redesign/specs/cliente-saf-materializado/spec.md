@@ -1,5 +1,16 @@
 # Cliente SAF Materializado Specification
 
+> **SUPERSEDED — ALREADY SHIPPED.** This spec described `clientes.saf_disponible`
+> as planned work under this change. It instead shipped under a different
+> change, `saf-snapshot-y-trazabilidad` (migrations `0101`-`0103`, verified
+> PASS), and was later extended further into an open-item accounting model
+> (`saf_creditos_lotes`/`saf_creditos_aplicaciones`, migrations `0104`-`0105`,
+> also shipped). This file is kept as historical documentation of the
+> requirements that were fulfilled — it is **not** an open task of
+> `cxc-sync-snapshot-redesign`, which now covers only `ventas.estado` (see
+> `specs/ventas-estado-derivado/spec.md` and `design.md`'s Amendment Note).
+> Do not implement against this spec under this change.
+
 ## Purpose
 
 New spec. `clientes.saf_disponible` is a trigger-maintained, O(1)-readable snapshot of unapplied saldo a favor (credit), replacing the full-history `SUM(SAFC)-SUM(SAF)` scan done today on every read. The UI-facing balance + pending-invoice list contract is frozen — only the data source hardens.

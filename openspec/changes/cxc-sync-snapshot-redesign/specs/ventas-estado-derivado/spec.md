@@ -8,26 +8,31 @@ New spec. `ventas.estado` (`pendiente`/`parcial`/`pago`/`reversado`) replaces th
 
 ### Requirement: Estado Is Trigger-Derived, Never Application-Written
 
-The system MUST derive `ventas.estado` exclusively inside the `prevent_venta_mutation()` trigger whenever `saldo_pend_usd` changes. No application code path MAY set `estado` directly on the authoritative (server) row.
+The system MUST derive `ventas.estado` exclusively inside Postgres triggers on the `ventas` table — a `BEFORE INSERT` trigger (magnitude-only, for the row's birth state) and the `BEFORE UPDATE OR DELETE` trigger `prevent_venta_mutation()` (full state machine including `reversado`, whenever `saldo_pend_usd` changes). No application code path MAY set `estado` on the authoritative (server) row by any means other than these two triggers; a client that sends its own `estado` value in an INSERT or UPDATE payload MUST have that value superseded by the corresponding trigger, never persisted as sent.
 
-#### Scenario: Server estado always comes from the trigger
-- GIVEN a payment reduces `saldo_pend_usd`
-- WHEN the row replicates to Postgres
-- THEN `estado` is computed by the trigger from `saldo_pend_usd`/`total_usd`, never from a client-sent value
+#### Scenario: Server estado always comes from a trigger, on INSERT
+- GIVEN a new sale is created (INSERT), either CONTADO (paid at creation) or CREDITO (unpaid at creation)
+- WHEN the row is inserted into Postgres
+- THEN `estado` is computed by the `BEFORE INSERT` trigger from `saldo_pend_usd`/`total_usd` alone, regardless of any `estado` value present in the client's insert payload
+
+#### Scenario: Server estado always comes from a trigger, on UPDATE
+- GIVEN a payment reduces `saldo_pend_usd` on an existing sale
+- WHEN the row replicates to Postgres as an UPDATE
+- THEN `estado` is computed by `prevent_venta_mutation()` from `saldo_pend_usd`/`total_usd` (+ last-movement lookup), never from a client-sent value
 
 ### Requirement: Estado Derivation By Saldo Magnitude With Decimal Tolerance
 
-The system MUST derive `estado` using a `0.005` USD tolerance over `NUMERIC(20,8)` columns: `pendiente` when `saldo_pend_usd >= total_usd - 0.005`; `pago` when `saldo_pend_usd <= 0.005`; `parcial` otherwise — subject to the `reversado` override below.
+The system MUST derive `estado` using a `0.005` USD tolerance over `NUMERIC(20,8)` columns: `pendiente` when `saldo_pend_usd >= total_usd - 0.005`; `pago` when `saldo_pend_usd <= 0.005`; `parcial` otherwise — subject to the `reversado` override below. At INSERT time only `pago`/`pendiente` are reachable (a brand-new invoice cannot yet be `parcial` or `reversado` — see the two creation scenarios below); the full 4-value range becomes reachable once UPDATEs (payments, reversals) begin.
 
 #### Scenario: CONTADO sale fully paid at creation
-- GIVEN a CONTADO sale with `saldo_pend_usd = 0`
-- WHEN the trigger derives estado
-- THEN `estado = 'pago'`
+- GIVEN a CONTADO sale is inserted with `saldo_pend_usd = 0`
+- WHEN the `BEFORE INSERT` trigger derives estado
+- THEN `estado = 'pago'` — immediately, at creation, not after any later UPDATE
 
-#### Scenario: CREDITO sale with no payment
-- GIVEN a CREDITO sale with `saldo_pend_usd = total_usd`
-- WHEN the trigger derives estado
-- THEN `estado = 'pendiente'`
+#### Scenario: CREDITO sale unpaid at creation
+- GIVEN a CREDITO sale is inserted with `saldo_pend_usd = total_usd`
+- WHEN the `BEFORE INSERT` trigger derives estado
+- THEN `estado = 'pendiente'` — immediately, at creation
 
 #### Scenario: Partial payment
 - GIVEN `0 < saldo_pend_usd < total_usd - 0.005`
@@ -55,14 +60,24 @@ The system MUST set `estado = 'reversado'` only when the most recent `movimiento
 
 ### Requirement: Offline-Hybrid Optimistic-Then-Authoritative Reconciliation
 
-The system MUST compute `estado` optimistically on the client (local TS mirror of the trigger logic) for instant UI feedback, MUST strip `estado` from every local-to-server `ventas` PATCH via `TRIGGER_MANAGED_PATCH_COLUMNS`, and MUST let the authoritative server-trigger value overwrite the local optimistic value once the row replicates back down.
+The system MUST compute `estado` optimistically on the client (local TS mirror of the trigger logic) for both creation (INSERT) and payment/reversal (UPDATE) write-sites, for instant UI feedback; MUST strip `estado` from every local-to-server `ventas` PATCH via `TRIGGER_MANAGED_PATCH_COLUMNS`; and MUST let the authoritative server-trigger value overwrite the local optimistic value once the row replicates back down. For INSERT, no client-side strip is required or present — the server's `BEFORE INSERT` trigger unconditionally overwrites the incoming row's `estado` before it is stored, regardless of what the client's PUT payload contained.
 
-#### Scenario: Optimistic local estado shown before sync
+#### Scenario: Optimistic local estado shown before sync, on creation
+- GIVEN a device is offline and creates a new sale (CONTADO or CREDITO)
+- WHEN the UI reads the just-created local row immediately
+- THEN it shows the client-computed optimistic `estado` (`'pago'` or `'pendiente'`), not `NULL` and not stuck at a stale value
+
+#### Scenario: Optimistic local estado shown before sync, on payment
 - GIVEN a device is offline and records a payment
 - WHEN the UI reads the local row immediately
 - THEN it shows the client-computed optimistic `estado`
 
-#### Scenario: Server reconciliation on replication
+#### Scenario: Server reconciliation on replication, on creation
+- GIVEN the device reconnects and the `ventas` PUT uploads with the client's optimistic `estado` still present (no strip applied to PUT)
+- WHEN the server's `BEFORE INSERT` trigger derives `estado` from the incoming row's `saldo_pend_usd`/`total_usd`
+- THEN the stored `estado` is the trigger's derived value, never the client's uploaded value, even though it was not stripped from the payload
+
+#### Scenario: Server reconciliation on replication, on payment
 - GIVEN the device reconnects and the `ventas` PATCH uploads with `estado` stripped
 - WHEN the server trigger recomputes `estado` and the row replicates back down
 - THEN the local `estado` is overwritten by the authoritative server value, resolving any drift

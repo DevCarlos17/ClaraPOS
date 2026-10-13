@@ -260,6 +260,7 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.s
     safDisponible: string
     facturaSaldoPend: string
     nroFactura?: string
+    totalUsd?: string
     /** Lotes SAF activos para `consumirSafLotesEnTx` (PR4). Default: un lote con saldo = safDisponible. */
     lotes?: Array<{ id: string; saldo_disponible_usd: string }>
   }) {
@@ -278,11 +279,15 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.s
               },
             }
           }
-          if (sql.startsWith('SELECT nro_factura, saldo_pend_usd FROM ventas WHERE id = ?')) {
+          if (sql.startsWith('SELECT nro_factura, saldo_pend_usd, total_usd FROM ventas WHERE id = ?')) {
             return {
               rows: {
                 length: 1,
-                item: () => ({ nro_factura: opts.nroFactura ?? 'F-001', saldo_pend_usd: opts.facturaSaldoPend }),
+                item: () => ({
+                  nro_factura: opts.nroFactura ?? 'F-001',
+                  saldo_pend_usd: opts.facturaSaldoPend,
+                  total_usd: opts.totalUsd ?? '100.00000000',
+                }),
               },
             }
           }
@@ -332,9 +337,9 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.s
     expect(safInsert).toBeDefined()
     expect(safInsert!.sql).not.toContain("'SAFC'")
 
-    const ventaUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?'))
+    const ventaUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?'))
     expect(ventaUpdates).toHaveLength(1)
-    expect(ventaUpdates[0]!.params).toEqual([toStorageString(0), 'venta-1']) // 50 - 50 = 0
+    expect(ventaUpdates[0]!.params).toEqual([toStorageString(0), 'pago', 'venta-1']) // 50 - 50 = 0
 
     // El gate ya NO escanea movimientos_cuenta (SUM(SAFC)/SUM(SAF)) — lee el snapshot directo
     const scanCalls = calls.filter((c) => c.sql.includes('as creado') && c.sql.includes('as consumido'))
@@ -433,7 +438,7 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
               },
             }
           }
-          if (sql.startsWith('SELECT id, nro_factura, saldo_pend_usd FROM ventas')) {
+          if (sql.startsWith('SELECT id, nro_factura, saldo_pend_usd, total_usd FROM ventas')) {
             return { rows: { length: facturas.length, item: (i: number) => facturas[i] } }
           }
           if (sql.startsWith('SELECT id, saldo_disponible_usd FROM saf_creditos_lotes')) {
@@ -963,9 +968,9 @@ describe('registrarReversoAbono — saldo acotado a total_usd', () => {
 
     await registrarReversoAbono(baseParams())
 
-    const ventaUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?'))
+    const ventaUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?'))
     expect(ventaUpdates).toHaveLength(1)
-    expect(ventaUpdates[0]!.params).toEqual([toStorageString(50), 'venta-1']) // 30 + 20 = 50 < 100
+    expect(ventaUpdates[0]!.params).toEqual([toStorageString(50), 'reversado', 'venta-1']) // 30 + 20 = 50 < 100
   })
 
   it('reverso saturante: nuevo saldo se acota a total_usd cuando la suma lo excederia', async () => {
@@ -978,10 +983,10 @@ describe('registrarReversoAbono — saldo acotado a total_usd', () => {
 
     await registrarReversoAbono(baseParams())
 
-    const ventaUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?'))
+    const ventaUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?'))
     expect(ventaUpdates).toHaveLength(1)
     // 90 + 30 = 120, pero nunca puede exceder total_usd = 100
-    expect(ventaUpdates[0]!.params).toEqual([toStorageString(100), 'venta-1'])
+    expect(ventaUpdates[0]!.params).toEqual([toStorageString(100), 'reversado', 'venta-1'])
   })
 })
 

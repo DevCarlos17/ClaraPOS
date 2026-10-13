@@ -1,5 +1,16 @@
 # Phase 0 Spike Runbook — PowerSync Upload Order Verification
 
+> **STATUS: CLOSED BY PRECEDENT, NOT FORMALLY EXECUTED.** This runbook's
+> manual test steps (0.2-0.5 in `tasks.md`) were never run under this
+> change's own banner. The question it answers was instead closed via a
+> strictly harder, already-shipped production precedent — see `design.md`
+> §1 and `tasks.md` Phase 0 for the full reasoning
+> (`saf-snapshot-y-trazabilidad` shipped a 4-table ordering chain on the
+> identical assumption, verified PASS). This file is kept as a reference
+> runbook template for a future change that needs to verify a genuinely
+> novel ordering question — it does not need to be executed for
+> `cxc-sync-snapshot-redesign` to proceed.
+
 > Change: `cxc-sync-snapshot-redesign` | Phase: 0 (BLOCKING verification spike)
 >
 > Goal: confirm PowerSync preserves upload ORDER across tables within one local

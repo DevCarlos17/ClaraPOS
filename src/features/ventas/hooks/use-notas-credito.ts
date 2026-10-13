@@ -10,6 +10,7 @@ import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-con
 import { generarAsientosNCR } from '@/features/contabilidad/lib/generar-asientos'
 import { reversarDiferencialEnTx, useDetalleFactura as useDetalleFacturaCanonica } from '@/features/cxc/hooks/use-cxc'
 import { calcularSafDisponibleNuevo } from '@/features/cxc/lib/saldo-cliente'
+import { calcularEstadoVenta } from '@/features/cxc/lib/estado-venta'
 import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
 import { resolveDepositoReingresoNcr } from '@/features/inventario/lib/deposito-inactivo'
 import {
@@ -1529,14 +1530,29 @@ export async function crearNotaCredito(
     //    prevent_venta_mutation) — comportamiento identico a pre-Slice-4b.
     //    PARCIAL nunca cambia status: la factura sigue ACTIVA con su saldo
     //    reducido (Design §3 paso 7).
+    // `estado` (cxc-sync-snapshot-redesign, gap-closure): espejo optimista
+    // local del mismo valor que el trigger Postgres de `migrations/0106`
+    // derivaria para el `saldo_pend_usd` resultante de este UPDATE. El
+    // ultimo movimiento de cuenta escrito en esta transaccion (paso 6, si
+    // `montoAplicadoAPendiente.gt('0.01')`) es siempre tipo 'NCR' — igual
+    // criterio hardcoded que los 8 write-sites de `use-cxc.ts` (p.ej.
+    // `calcularEstadoVenta(..., 'PAG')`/`calcularEstadoVenta(..., 'REV')`):
+    // se conoce el tipo del movimiento que la propia transaccion acaba de
+    // insertar, sin re-consultar la DB. `status='ANULADA'` (TOTAL) es
+    // ortogonal a `estado` (validez fiscal vs cobranza, ver estado-venta.ts)
+    // — NUNCA se inventa un valor 'anulado' fuera del CHECK constraint.
+    const totalUsdVenta = new Decimal(venta.total_usd)
     if (tipoNc === 'TOTAL') {
-      await tx.execute("UPDATE ventas SET status = 'ANULADA', saldo_pend_usd = ? WHERE id = ?", [
-        '0.00',
-        venta_id,
-      ])
+      const estadoTotal = calcularEstadoVenta(new Decimal('0'), totalUsdVenta, 'NCR')
+      await tx.execute(
+        "UPDATE ventas SET status = 'ANULADA', saldo_pend_usd = ?, estado = ? WHERE id = ?",
+        ['0.00', estadoTotal, venta_id]
+      )
     } else {
-      await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
+      const estadoParcial = calcularEstadoVenta(nuevoSaldoPendVenta, totalUsdVenta, 'NCR')
+      await tx.execute('UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?', [
         toStorageString(nuevoSaldoPendVenta),
+        estadoParcial,
         venta_id,
       ])
     }

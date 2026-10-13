@@ -654,7 +654,7 @@ const movimientos_cuenta = new Table(
     saf_origen_refs: column.text,
     sesion_caja_id: column.text,
   },
-  { indexes: {} }
+  { indexes: { by_venta: ['venta_id'] } }
 )
 
 const vencimientos_cobrar = new Table(
@@ -771,6 +771,10 @@ const ventas = new Table(
     saldo_pend_usd: column.text,
     tipo: column.text,
     status: column.text,
+    // Estado de cobranza derivado via trigger (pendiente/parcial/pago/
+    // reversado), distinto de `status` (validez fiscal ACTIVA/ANULADA).
+    // Ver migrations/0106_ventas_estado_column.sql.
+    estado: column.text,
     usuario_id: column.text,
     fecha: column.text,
     created_at: column.text,

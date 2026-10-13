@@ -13,6 +13,7 @@ import {
   calcularSafDisponibleNuevo,
   calcularSaldoLoteDespues,
 } from '@/features/cxc/lib/saldo-cliente'
+import { calcularEstadoVenta } from '@/features/cxc/lib/estado-venta'
 
 export interface VentaPendiente {
   id: string
@@ -498,14 +499,20 @@ export async function aplicarPagoFacturaEnTx(
 
   // 1. Leer factura
   const ventaResult = await tx.execute(
-    'SELECT nro_factura, saldo_pend_usd, tasa FROM ventas WHERE id = ?',
+    'SELECT nro_factura, saldo_pend_usd, total_usd, tasa FROM ventas WHERE id = ?',
     [venta_id]
   )
   if (!ventaResult.rows || ventaResult.rows.length === 0) {
     throw new Error('Factura no encontrada')
   }
-  const venta = ventaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string; tasa: string }
+  const venta = ventaResult.rows.item(0) as {
+    nro_factura: string
+    saldo_pend_usd: string
+    total_usd: string
+    tasa: string
+  }
   const saldoFactura = new Decimal(venta.saldo_pend_usd || '0')
+  const totalFactura = new Decimal(venta.total_usd || '0')
   const tasaVenta = new Decimal(venta.tasa || '0')
   const tasaD = new Decimal(tasa)
   const montoD = new Decimal(monto)
@@ -558,8 +565,9 @@ export async function aplicarPagoFacturaEnTx(
 
   // 5. Reducir saldo pendiente de factura
   const nuevoSaldoFactura = Decimal.max(new Decimal(0), saldoFactura.minus(montoUsd))
-  await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-    toStorageString(nuevoSaldoFactura), venta_id,
+  const estadoFactura = calcularEstadoVenta(nuevoSaldoFactura, totalFactura, 'PAG')
+  await tx.execute('UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?', [
+    toStorageString(nuevoSaldoFactura), estadoFactura, venta_id,
   ])
 
   // 6. Movimiento de cuenta (tipo PAG) + actualizar saldo cliente
@@ -758,12 +766,17 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
 
       // 2. Read factura for validation and nro_factura
       const ventaRes = await tx.execute(
-        'SELECT nro_factura, saldo_pend_usd FROM ventas WHERE id = ?',
+        'SELECT nro_factura, saldo_pend_usd, total_usd FROM ventas WHERE id = ?',
         [venta_id]
       )
       if (!ventaRes.rows?.length) throw new Error('Factura no encontrada')
-      const ventaSaf = ventaRes.rows.item(0) as { nro_factura: string; saldo_pend_usd: string }
+      const ventaSaf = ventaRes.rows.item(0) as {
+        nro_factura: string
+        saldo_pend_usd: string
+        total_usd: string
+      }
       const saldoFacturaSaf = new Decimal(ventaSaf.saldo_pend_usd || '0')
+      const totalFacturaSaf = new Decimal(ventaSaf.total_usd || '0')
 
       // Validate SAF does not exceed invoice balance
       if (montoSaf.gt(saldoFacturaSaf.plus(new Decimal('0.01')))) {
@@ -797,8 +810,9 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
 
       // 4. Reduce invoice saldo by SAF amount
       const nuevoSaldoSaf = Decimal.max(new Decimal(0), saldoFacturaSaf.minus(montoSaf))
-      await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-        toStorageString(nuevoSaldoSaf), venta_id,
+      const estadoSaf = calcularEstadoVenta(nuevoSaldoSaf, totalFacturaSaf, 'SAF')
+      await tx.execute('UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?', [
+        toStorageString(nuevoSaldoSaf), estadoSaf, venta_id,
       ])
 
       // 5. Update cliente saldo_actual (consume SAF credit). Escritura
@@ -923,7 +937,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       // trazabilidad (Pregunta 9): antes `movimientos_cuenta.venta_id=NULL`
       // para este caso, ahora cada aplicacion apunta a su factura real.
       const facturasSafRes = await tx.execute(
-        `SELECT id, nro_factura, saldo_pend_usd FROM ventas
+        `SELECT id, nro_factura, saldo_pend_usd, total_usd FROM ventas
          WHERE cliente_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
          ORDER BY fecha ASC`,
         [cliente_id]
@@ -931,12 +945,19 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       let montoSafRestante = montoSaf
       if (facturasSafRes.rows) {
         for (let i = 0; i < facturasSafRes.rows.length && montoSafRestante.gt(FIFO_EPSILON); i++) {
-          const fSaf = facturasSafRes.rows.item(i) as { id: string; nro_factura: string; saldo_pend_usd: string }
+          const fSaf = facturasSafRes.rows.item(i) as {
+            id: string
+            nro_factura: string
+            saldo_pend_usd: string
+            total_usd: string
+          }
           const saldoFSaf = new Decimal(fSaf.saldo_pend_usd || '0')
+          const totalFSaf = new Decimal(fSaf.total_usd || '0')
           const aplicarSaf = Decimal.min(saldoFSaf, montoSafRestante)
           const nuevoSaldoFSaf = Decimal.max(new Decimal(0), saldoFSaf.minus(aplicarSaf))
-          await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-            toStorageString(nuevoSaldoFSaf), fSaf.id,
+          const estadoFSaf = calcularEstadoVenta(nuevoSaldoFSaf, totalFSaf, 'SAF')
+          await tx.execute('UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?', [
+            toStorageString(nuevoSaldoFSaf), estadoFSaf, fSaf.id,
           ])
 
           await consumirSafLotesEnTx(tx, {
@@ -989,7 +1010,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
 
     // 2. Obtener facturas pendientes FIFO (ORDER BY fecha ASC)
     const facturasResult = await tx.execute(
-      `SELECT id, nro_factura, saldo_pend_usd FROM ventas
+      `SELECT id, nro_factura, saldo_pend_usd, total_usd FROM ventas
        WHERE cliente_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
        ORDER BY fecha ASC`,
       [cliente_id]
@@ -1002,8 +1023,10 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           id: string
           nro_factura: string
           saldo_pend_usd: string
+          total_usd: string
         }
         const saldoFactura = new Decimal(factura.saldo_pend_usd || '0')
+        const totalFacturaFifo = new Decimal(factura.total_usd || '0')
         const montoAplicar = Decimal.min(saldoFactura, montoRestante)
 
         // INSERT pago vinculado a esta factura
@@ -1033,8 +1056,10 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
 
         // Reducir saldo de esta factura
         const nuevoSaldo = Decimal.max(new Decimal(0), saldoFactura.minus(montoAplicar))
-        await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
+        const estadoFifo = calcularEstadoVenta(nuevoSaldo, totalFacturaFifo, 'PAG')
+        await tx.execute('UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?', [
           toStorageString(nuevoSaldo),
+          estadoFifo,
           factura.id,
         ])
 
@@ -1500,15 +1525,23 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
 
       // 7b. Leer saldo actual de la factura
       const ventaResult = await tx.execute(
-        'SELECT saldo_pend_usd FROM ventas WHERE id = ?',
+        'SELECT saldo_pend_usd, total_usd FROM ventas WHERE id = ?',
         [venc.venta_id]
       )
       if (ventaResult.rows?.length) {
-        const saldoFacturaActual = new Decimal(
-          (ventaResult.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd || '0'
-        )
+        const ventaVencLinked = ventaResult.rows.item(0) as { saldo_pend_usd: string; total_usd: string }
+        const saldoFacturaActual = new Decimal(ventaVencLinked.saldo_pend_usd || '0')
+        const totalFacturaVencLinked = new Decimal(ventaVencLinked.total_usd || '0')
         // Reducir por el total aplicado: método + SAF
         const nuevoSaldoFactura = Decimal.max(new Decimal(0), saldoFacturaActual.minus(aplicadoTotal))
+        // El ultimo movimiento efectivamente insertado para esta venta en
+        // esta misma tx: PAG si hubo pago por metodo, si no SAF si hubo
+        // consumo de credito (ver 3a/7e mas abajo).
+        const tipoMovVencLinked: string | null = montoUsd.gt(0)
+          ? 'PAG'
+          : montoSafNum.gt(0)
+            ? 'SAF'
+            : null
 
         // 7c. Registrar pago en tabla pagos (solo si hay pago por método)
         if (montoUsd.gt(0) && monedaId) {
@@ -1530,9 +1563,10 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
         }
 
         // 7d. Actualizar saldo pendiente de la factura (total: método + SAF)
+        const estadoVencLinked = calcularEstadoVenta(nuevoSaldoFactura, totalFacturaVencLinked, tipoMovVencLinked)
         await tx.execute(
-          'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
-          [toStorageString(nuevoSaldoFactura), venc.venta_id]
+          'UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?',
+          [toStorageString(nuevoSaldoFactura), estadoVencLinked, venc.venta_id]
         )
 
         // 7e. Registrar movimiento de cuenta PAG y actualizar saldo cliente (solo por método)
@@ -1724,8 +1758,10 @@ export async function registrarReversoAbono(params: {
         const saldoPendActual = new Decimal(venta.saldo_pend_usd || '0')
         const totalFactura = new Decimal(venta.total_usd || '0')
         const nuevoSaldoFactura = Decimal.min(totalFactura, saldoPendActual.plus(montoUsd))
-        await tx.execute(`UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?`, [
+        const estadoReverso = calcularEstadoVenta(nuevoSaldoFactura, totalFactura, 'REV')
+        await tx.execute(`UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?`, [
           toStorageString(nuevoSaldoFactura),
+          estadoReverso,
           pago.venta_id,
         ])
       }
@@ -2329,6 +2365,12 @@ export async function reversarDiferencialEnTx(
   )
   const saldoNuevo = saldoActual.plus(montoUsd)
 
+  // 3b. Leer total_usd de la factura (necesario para derivar estado)
+  const ventaDifeRes = await tx.execute('SELECT total_usd FROM ventas WHERE id = ?', [ventaId])
+  const totalFacturaDife = new Decimal(
+    (ventaDifeRes.rows?.item(0) as { total_usd: string } | undefined)?.total_usd || '0'
+  )
+
   // 4. Insertar movimiento REV (movimientos_cuenta es inmutable — no se puede editar el original)
   await tx.execute(
     `INSERT INTO movimientos_cuenta
@@ -2348,9 +2390,10 @@ export async function reversarDiferencialEnTx(
   )
 
   // 5. Restaurar saldo_pend_usd en la factura (ventas no tiene updated_at)
+  const estadoDifeRev = calcularEstadoVenta(montoUsd, totalFacturaDife, 'REV')
   await tx.execute(
-    'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
-    [toStorageString(montoUsd), ventaId]
+    'UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?',
+    [toStorageString(montoUsd), estadoDifeRev, ventaId]
   )
 
   // 6. Actualizar saldo cliente en SQLite local
@@ -2398,12 +2441,17 @@ export async function registrarDiferencialCxC(params: DiferencialCxCParams): Pro
 
     // 1. Leer factura
     const ventaResult = await tx.execute(
-      'SELECT nro_factura, saldo_pend_usd FROM ventas WHERE id = ? AND empresa_id = ?',
+      'SELECT nro_factura, saldo_pend_usd, total_usd FROM ventas WHERE id = ? AND empresa_id = ?',
       [ventaId, empresaId]
     )
     if (!ventaResult.rows?.length) throw new Error('Factura no encontrada')
-    const venta = ventaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string }
+    const venta = ventaResult.rows.item(0) as {
+      nro_factura: string
+      saldo_pend_usd: string
+      total_usd: string
+    }
     const saldoUsd = new Decimal(venta.saldo_pend_usd || '0')
+    const totalFacturaDifePag = new Decimal(venta.total_usd || '0')
 
     if (saldoUsd.lte(0)) {
       // Factura ya saldada en DB — puede ocurrir si un pago exacto disparó un
@@ -2449,9 +2497,10 @@ export async function registrarDiferencialCxC(params: DiferencialCxCParams): Pro
     )
 
     // 4. Cerrar la factura (ventas no tiene updated_at)
+    const estadoDifePag = calcularEstadoVenta(new Decimal(0), totalFacturaDifePag, 'PAG')
     await tx.execute(
-      'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
-      [toStorageString(new Decimal(0)), ventaId]
+      'UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?',
+      [toStorageString(new Decimal(0)), estadoDifePag, ventaId]
     )
 
     // 5. Actualizar saldo cliente en SQLite local inmediatamente
