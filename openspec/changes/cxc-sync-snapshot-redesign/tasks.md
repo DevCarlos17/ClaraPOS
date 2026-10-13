@@ -221,9 +221,20 @@ prefers only 2 slices total.
 
 ## Phase 2: Backfill (after Phase 1 live in prod)
 
-- [ ] 2.1 Create `migrations/0107_backfill_ventas_estado.sql` per design §7:
+- [x] 2.1 Create `migrations/0107_backfill_ventas_estado.sql` per design §7:
   read-only `SELECT/JOIN` on `movimientos_cuenta`; `UPDATE ventas` only;
   `IS DISTINCT FROM`-guarded `WHERE` for idempotency.
+  - DONE: file authored verbatim per design §7's SQL (UPDATE + embedded §6
+    validation query, wrapped `BEGIN; ... ROLLBACK;` with instructions to
+    flip to `COMMIT` after inspection, matching §7's structure exactly, not
+    0103's no-wrap style). Header adds an explicit guard-by-guard analysis
+    proving the `prevent_venta_mutation()` UPDATE trigger does NOT revert
+    the backfill (its estado-derivation block is gated on `saldo_pend_usd`
+    changing, which this backfill never does) — confirmed safe, no
+    `DISABLE TRIGGER` needed. CASE re-verified byte-identical across
+    `migrations/0106`'s trigger, `estado-venta.ts`, and this file. No fake
+    test fabricated — no DB-test infra exists for raw SQL; verification is
+    the owner's manual BEGIN/ROLLBACK run (tasks 2.2-2.4, unchanged below).
 - [ ] 2.2 Run as `BEGIN; <backfill>; <design §6 validation query>; ROLLBACK;`
   in Supabase SQL editor — inspect 100% `PASS`, zero `movimientos_cuenta`
   row-count change (`SELECT COUNT(*) FROM movimientos_cuenta` before/after
