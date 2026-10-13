@@ -598,6 +598,9 @@ export interface Ventas {
   saldo_pend_usd: string
   tipo: string
   status: string
+  // Estado de cobranza derivado via trigger (pendiente/parcial/pago/
+  // reversado), distinto de `status`. Ver migrations/0106_ventas_estado_column.sql.
+  estado: string
   usuario_id: string
   fecha: string
   created_at: string

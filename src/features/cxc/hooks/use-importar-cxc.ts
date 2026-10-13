@@ -1,6 +1,8 @@
 import { db } from '@/core/db/powersync/db'
 import { v4 as uuidv4 } from 'uuid'
+import Decimal from 'decimal.js'
 import { localNow } from '@/lib/dates'
+import { calcularEstadoVenta } from '@/features/cxc/lib/estado-venta'
 import type { CxcImportRow, CxcImportRowResult, CxcImportSummary } from '../schemas/cxc-import-schema'
 
 interface ImportarCxcParams {
@@ -165,7 +167,14 @@ async function importarFilaCxc(
     const fechaDoc = `${fila.fecha}T00:00:00`
 
     // 6. INSERT ventas
+    // estado: escritura optimista local (cxc-sync-snapshot-redesign, CRITICAL-1
+    // fix, design.md §3c). El trigger `derive_venta_estado_insert()`
+    // (migrations/0106) es la autoridad final en el servidor — este valor solo
+    // da feedback instantaneo en la UI local antes del proximo sync-down. El
+    // import SAL siempre nace con saldo_pend_usd = monto completo (nunca 0),
+    // por lo que `estado` siempre resuelve a 'pendiente' (coincide con DEFAULT).
     const ventaId = uuidv4()
+    const estadoSal = calcularEstadoVenta(new Decimal(montoUsd), new Decimal(montoUsd), null)
     await tx.execute(
       `INSERT INTO ventas
          (id, empresa_id, cliente_id, nro_factura, num_control, deposito_id,
@@ -173,12 +182,12 @@ async function importarFilaCxc(
           total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd,
           total_usd, total_bs, descuento_usd, descuento_bs,
           saldo_pend_usd, tipo, status,
-          usuario_id, fecha, created_at, created_by)
+          usuario_id, fecha, created_at, created_by, estado)
        VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?,
                ?, 0, 0, 0,
                ?, ?, 0, 0,
                ?, 'SALDO_INICIAL', 'ACTIVA',
-               ?, ?, ?, ?)`,
+               ?, ?, ?, ?, ?)`,
       [
         ventaId,
         empresaId,
@@ -195,6 +204,7 @@ async function importarFilaCxc(
         fechaDoc,
         now,
         usuarioId,
+        estadoSal,
       ]
     )
 

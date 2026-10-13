@@ -12,6 +12,7 @@ import { aplicarPagoFacturaEnTx, consumirSafLotesEnTx } from '@/features/cxc/hoo
 import { calcularSafDisponibleNuevo } from '@/features/cxc/lib/saldo-cliente'
 import { buildStockPorDepositoFragments, resolveDepositoEgresoVenta } from '../lib/deposito-venta'
 import { calcularCierreVentaConSaf } from '../lib/calcular-cierre-venta-saf'
+import { calcularEstadoVenta } from '@/features/cxc/lib/estado-venta'
 import {
   upsertStockDeposito,
   leerStockDeposito,
@@ -538,9 +539,14 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     }
 
     // 3. INSERT venta
+    // estado: escritura optimista local (cxc-sync-snapshot-redesign, CRITICAL-1
+    // fix, design.md §3c). El trigger `derive_venta_estado_insert()`
+    // (migrations/0106) es la autoridad final en el servidor — este valor solo
+    // da feedback instantaneo en la UI local antes del proximo sync-down.
+    const estadoFinal = calcularEstadoVenta(saldoPendFinal, totalUsd, null)
     await tx.execute(
-      `INSERT INTO ventas (id, cliente_id, nro_factura, deposito_id, sesion_caja_id, tasa, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, descuento_usd, descuento_bs, saldo_pend_usd, tipo, status, usuario_id, fecha, empresa_id, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVA', ?, ?, ?, ?, ?)`,
+      `INSERT INTO ventas (id, cliente_id, nro_factura, deposito_id, sesion_caja_id, tasa, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, descuento_usd, descuento_bs, saldo_pend_usd, tipo, estado, status, usuario_id, fecha, empresa_id, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVA', ?, ?, ?, ?, ?)`,
       [
         ventaId,
         cliente_id,
@@ -558,6 +564,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         toStorageString(descuentoBsFinal),
         toStorageString(saldoPendFinal),
         tipoFinal,
+        estadoFinal,
         usuario_id,
         now,
         empresa_id,

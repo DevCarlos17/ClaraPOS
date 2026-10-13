@@ -985,4 +985,59 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       expect(calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))).toHaveLength(0)
     })
   })
+
+  describe('cxc-sync-snapshot-redesign (CRITICAL-1): estado optimista en el INSERT de ventas', () => {
+    it('CONTADO: el INSERT escribe estado = calcularEstadoVenta(saldoPendFinal=0, totalUsd, null) = "pago" — antes de este fix el estado local quedaba NULL/stuck en DEFAULT hasta el proximo sync-down', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [pago({ monto: 10 })],
+        })
+      )
+
+      const ventaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO ventas ('))
+      expect(ventaInsert).toBeDefined()
+      expect(ventaInsert!.sql).toContain('estado')
+      // params[14]=saldo_pend_usd, params[15]=tipo se mantienen intactos: `estado`
+      // se inserto justo DESPUES de `tipo` (indice 16), no reordena las columnas
+      // previas — cero aserciones pre-existentes de indice necesitan cambiar.
+      expect(ventaInsert!.params[14]).toBe('0.00000000')
+      expect(ventaInsert!.params[15]).toBe('CONTADO')
+      expect(ventaInsert!.params[16]).toBe('pago')
+    })
+
+    it('CREDITO: el INSERT escribe estado = calcularEstadoVenta(saldoPendFinal=totalUsd, totalUsd, null) = "pendiente"', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        clienteSaldoActual: '0',
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CREDITO',
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [],
+        })
+      )
+
+      const ventaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO ventas ('))
+      expect(ventaInsert).toBeDefined()
+      expect(ventaInsert!.params[14]).toBe('10.00000000')
+      expect(ventaInsert!.params[15]).toBe('CREDITO')
+      expect(ventaInsert!.params[16]).toBe('pendiente')
+    })
+  })
 })

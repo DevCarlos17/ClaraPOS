@@ -2419,3 +2419,136 @@ describe('useNotasCredito — Slice B (notas-credito-ruta-administrativa, Design
     expect(mockedUseQuery.mock.calls[0]![1]).toContain('emp-1')
   })
 })
+
+// =============================================================================
+// cxc-sync-snapshot-redesign — gap-closure: espejo optimista de `ventas.estado`
+// en el UNICO write-site de saldo_pend_usd que aun faltaba (`use-cxc.ts` ya
+// cubre los otros 8, ver estado-venta.ts). `calcularEstadoVenta` espeja el
+// trigger Postgres de `migrations/0106`; aqui solo se prueba que el UPDATE
+// existente de `ventas` (paso 8) AHORA TAMBIEN setea `estado` con el valor
+// que ese trigger produciria para el mismo `saldo_pend_usd` resultante —
+// NUNCA se toca ninguna otra columna/orden/monto de ese UPDATE.
+// =============================================================================
+describe('crearNotaCredito — cxc-sync-snapshot-redesign (estado optimista en el UPDATE de ventas)', () => {
+  it('NC TOTAL: el UPDATE que anula la factura (status=ANULADA, saldo_pend_usd=0) TAMBIEN setea estado=\'pago\' (saldo 0 por magnitud, igual al trigger — ver matriz 0106 "0|100|NCR|pago")', async () => {
+    const calls = mockCrearNcrTx({
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '100.00',
+        total_bs: '4000.00',
+        saldo_pend_usd: '60.00', // factura CREDITO con deuda parcial, antes de anularse por completo
+        tipo: 'CREDITO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '3.000', lote_id: null, precio_unitario_usd: '33.333333' }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      inventarioStock: { 'prod-1::dep-B': '10.000' },
+      clienteSaldoActual: '60.00',
+    })
+
+    await crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL', modalidad: 'AJUSTE_CXC' }))
+
+    const ventaUpdate = calls.find((c) => c.sql.startsWith('UPDATE ventas SET status'))
+    expect(ventaUpdate).toBeDefined()
+    // El UPDATE pre-existente no cambia de forma (status + saldo_pend_usd) —
+    // estado se agrega SIN remover nada de lo ya escrito.
+    expect(ventaUpdate!.sql).toContain('status')
+    expect(ventaUpdate!.sql).toContain('saldo_pend_usd')
+    expect(ventaUpdate!.sql).toContain('estado')
+    expect(ventaUpdate!.params).toContain('0.00')
+    expect(ventaUpdate!.params).toContain('pago')
+  })
+
+  it('NC PARCIAL que deja saldo intermedio: el UPDATE setea estado=\'parcial\' (saldo entre 0 y total, por magnitud)', async () => {
+    const ventaDetDosLineas = [
+      { id: 'vdet-A', producto_id: 'prod-A', cantidad: '4.000', lote_id: null, precio_unitario_usd: '10.00', tipo_impuesto: 'Exento', impuesto_pct: '0' },
+      { id: 'vdet-B', producto_id: 'prod-B', cantidad: '4.000', lote_id: null, precio_unitario_usd: '15.00', tipo_impuesto: 'Exento', impuesto_pct: '0' },
+    ]
+    const calls = mockCrearNcrTx({
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '100.00', // 4*10 + 4*15 = 100.00
+        total_bs: '4000.00',
+        saldo_pend_usd: '100.00', // factura CREDITO totalmente pendiente
+        tipo: 'CREDITO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: ventaDetDosLineas,
+      productos: {
+        'prod-A': { tipo: 'P', stock: '50.000', nombre: 'Producto A' },
+        'prod-B': { tipo: 'P', stock: '50.000', nombre: 'Producto B' },
+      },
+      inventarioStock: { 'prod-A::dep-B': '10.000' },
+      clienteSaldoActual: '100.00',
+    })
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'AJUSTE_CXC',
+        tipo: 'PARCIAL',
+        lineas: [{ venta_det_id: 'vdet-A', cantidadDevolver: '2.000' }], // totalUsdNc = 20.00 -> nuevoSaldoPend = 80.00
+      })
+    )
+
+    const ventaUpdate = calls.find((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
+    expect(ventaUpdate).toBeDefined()
+    expect(ventaUpdate!.sql).not.toContain('status')
+    expect(ventaUpdate!.sql).toContain('estado')
+    expect(ventaUpdate!.params).toContain('80.00000000')
+    expect(ventaUpdate!.params).toContain('parcial')
+  })
+
+  it('NC PARCIAL que liquida el saldo pendiente por completo: el UPDATE setea estado=\'pago\'', async () => {
+    const calls = mockCrearNcrTx({
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '46.40',
+        total_bs: '1856.00',
+        saldo_pend_usd: '10.00',
+        tipo: 'CREDITO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: [
+        {
+          id: 'vdet-A',
+          producto_id: 'prod-A',
+          cantidad: '4.000',
+          lote_id: null,
+          precio_unitario_usd: '10.00',
+          tipo_impuesto: 'Gravable',
+          impuesto_pct: '16',
+        },
+      ],
+      productos: { 'prod-A': { tipo: 'P', stock: '50.000', nombre: 'Producto A' } },
+      inventarioStock: { 'prod-A::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+    })
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'SALDO_FAVOR',
+        tipo: 'PARCIAL',
+        lineas: [{ venta_det_id: 'vdet-A', cantidadDevolver: '2.000' }], // totalUsdNc = 23.20 >= saldoPend (10.00) -> nuevoSaldoPend = 0
+      })
+    )
+
+    const ventaUpdate = calls.find((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
+    expect(ventaUpdate).toBeDefined()
+    expect(ventaUpdate!.params).toContain('0.00000000')
+    expect(ventaUpdate!.params).toContain('pago')
+  })
+})
