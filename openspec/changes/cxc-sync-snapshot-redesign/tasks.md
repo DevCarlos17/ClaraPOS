@@ -234,23 +234,165 @@ prefers only 2 slices total.
 
 ## Phase 3: UI Read-Path Swap (frozen-contract parity)
 
-- [ ] 3.1 `src/features/cxc/hooks/use-cxc.ts`: replace the dead-code filter
+- [x] 3.1 `src/features/cxc/hooks/use-cxc.ts`: replace the dead-code filter
   at line 154 (`status IS NULL OR status NOT IN ('ANULADA', 'REVERSADA')`)
   with `estado != 'pago'` for the pending-list branch, keeping the
   `status != 'ANULADA'` guard separately (`status` and `estado` are distinct
   columns — `status` means invoice validity, `estado` means collection
   state).
-- [ ] 3.2 Update `src/features/cxc/hooks/__tests__/use-cxc.test.ts`: assert
+  - DONE, with a scope clarification found by reading the real code (not the
+    stale line-154 pointer): `useFacturasPendientes()` has TWO branches, not
+    one. The dead `'REVERSADA'` string lives in the `incluirPagadas=true`
+    branch (history view — intentionally includes `pago` invoices so the
+    user can reverse old payments); applying `estado != 'pago'` THERE would
+    have been a regression (it would have hidden paid invoices from the
+    "ver pagadas" toggle). The REAL pending-invoices list — the one
+    exploration.md fact #2 names as "the pending-invoices list" — is the
+    OTHER (default, `incluirPagadas=false`) branch, which used
+    `CAST(saldo_pend_usd AS REAL) > 0.001`. Applied the swap there instead:
+    `status != 'ANULADA' AND estado != 'pago'`. The `incluirPagadas=true`
+    branch only had its dead `'REVERSADA'` token removed (`status NOT IN
+    ('ANULADA','REVERSADA')` → `status != 'ANULADA'`), no estado filtering
+    added, preserving its "show paid too" contract.
+  - **Flagged divergence (per orchestrator's STOP-and-report instruction)
+    — SUPERSEDED, see Phase 5**: at the time this task ran, the old
+    magnitude filter used a `0.001` tolerance and `estado='pago'` used
+    `0.005` (migrations/0106), so the ambiguous band was `(0.001, 0.005]`.
+    Phase 5 (task 5.1) later lowered `estado`'s tolerance to `0` exact
+    (migration `0108`), which COLLAPSES that `(0.001, 0.005]` band — it no
+    longer exists. The band that remains, at tolerance 0, is `(0, 0.001]`:
+    the OLD magnitude filter (`saldo_pend_usd > 0.001`) treats a balance in
+    that range as NOT pending (ignores it), while `estado` (tolerance 0)
+    treats ANY `saldo_pend_usd > 0` as not-`'pago'` — i.e. `estado` is now
+    STRICTER than the old filter in that narrow band, aligned with the
+    owner's "collect everything, don't round away real debt" intent (same
+    rationale as Phase 5). Task 5.3 (this corrective batch) closes the
+    matching inconsistency on the client-debt aggregates
+    (`use-cxc.ts`/`use-deuda-cliente.ts`), which still used `0.001` until
+    then.
+- [x] 3.2 Update `src/features/cxc/hooks/__tests__/use-cxc.test.ts`: assert
   identical output (pending-invoice set) for a fixed ledger fixture,
   before/after the query-shape change — frozen UI-contract parity scenario
   from the `ventas-estado-derivado` spec.
+  - DONE: 3 new tests added (`useFacturasPendientes — Fase 3` describe
+    block). (1) SQL-shape test for the default branch (`estado != 'pago'`,
+    `status != 'ANULADA'`, no more `saldo_pend_usd` scan). (2) SQL-shape +
+    behavioral test for `incluirPagadas=true` (no `'REVERSADA'` token,
+    `status != 'ANULADA'` kept, still returns a `saldo_pend_usd='0'` paid
+    invoice — proves no regression on that branch). (3) Pure-logic parity
+    test: a 7-row ledger fixture (FAC CREDITO/CONTADO, PAG partial/full, NC
+    full-cover, REV reopen, REV-then-clear) asserts `calcularEstadoVenta(...)
+    !== 'pago'` matches `saldo_pend_usd > 0.001` for every row — real
+    production-code assertion, not a trivial one.
+  - RED→GREEN verified by `git stash` on `use-cxc.ts` only: both SQL-shape
+    tests failed for the expected reason (old SQL string) against the
+    pre-change code, the parity test passed (pure logic, no SQL
+    dependency), and the 47 pre-existing tests in the file were unaffected.
+    After `git stash pop`, all 49/49 passed.
 - [ ] 3.3 Manual smoke test: CxC screen for one real client — pending list
   renders identically to pre-change values.
+  - NOT run — explicitly owner-manual (no real Supabase/PowerSync
+    connection available to this agent), same category as tasks 1.2/2.2-2.4.
 
 ## Phase 4: Cleanup
 
-- [ ] 4.1 Add `0106`-`0107` rows to `migrations/README.md` table, matching
+- [x] 4.1 Add `0106`-`0107` rows to `migrations/README.md` table, matching
   existing entry style (purpose + what it fixes).
-- [ ] 4.2 Run `yarn test:run` targeted on `src/features/cxc/`,
+  - DONE for `0106` (file exists, documented in full: column, index, both
+    triggers, CRITICAL-1 fix, dead-filter replacement).
+  - **BLOCKED/FLAGGED for `0107`**: `migrations/0107_backfill_ventas_estado.sql`
+    does NOT exist on disk (confirmed via glob + `git status`), even though
+    a prior apply-progress (Engram `#4840`, topic
+    `sdd/cxc-sync-snapshot-redesign/apply-progress`) claims task 2.1 already
+    authored it. This is a real discrepancy between recorded progress and
+    the actual filesystem state — not something this Phase 3/4 batch is
+    scoped to fix (that's Phase 2 work). Added the README row anyway,
+    describing the file per design.md §7 (same content the prior
+    apply-progress describes), with an explicit "Pendiente de re-creacion"
+    note so the table isn't silently wrong, and flagged this prominently in
+    the apply return summary for the orchestrator to resolve (either restore
+    the file from whatever session produced it, or re-run task 2.1).
+  - **RESOLVED in a later batch**: `0107_backfill_ventas_estado.sql` was
+    recreated (dated 2026-10-13, confirmed on disk) using tolerance `0`
+    exact — in parity with migration `0108` (Phase 5), not the original
+    `0.005` formula. `migrations/README.md`'s `0107` row has been corrected
+    accordingly (see Phase 5, task 5.4): no 0107-vs-0108 formula mismatch
+    remains.
+- [x] 4.2 Run `yarn test:run` targeted on `src/features/cxc/`,
   `src/core/db/` — confirm no regressions beyond pre-existing known failures
   (see engram `#962`, separate issue).
+  -     DONE: `src/features/cxc/` → 150 passed, 2 failed (both pre-existing,
+    confirmed unrelated to this change: `cxc-list.test.tsx` dialog assertion
+    fails even in isolation and does not reference `useFacturasPendientes`/
+    `estado`/`saldo_pend_usd`; `cxc-cliente-detalle.test.tsx`'s "Worker is
+    not defined" is cross-file PowerSync flakiness — re-ran that file alone,
+    8/8 passed). `src/core/db/` → 34/34 passed, 0 regressions.
+    `yarn type-check:test` → 3 pre-existing errors, none touching
+    `use-cxc.ts` or the new test block (producto-form tests + an unrelated
+    unused-var in `use-pwa-update.ts`).
+
+## Phase 5: Corrective — Tolerance 0 (interim decision, migrations/0108)
+
+> Not part of the original phase plan above — added retroactively to track
+> owner-directed corrective work that happened after Phase 4 shipped. See
+> `design.md`'s spec pointer and `specs/ventas-estado-derivado/spec.md`'s own
+> "Amendment Note (tolerance 0.005 → 0, interim)" for the full rationale
+> (ClaraPOS's bimonetary model can leave real Bs owed uncollected under a USD
+> tolerance). Tolerance 0 is explicitly INTERIM, pending a FUTURE
+> diferencial-cambiario-to-gasto change for `NUMERIC(20,8)` rounding dust —
+> see `src/features/cxc/lib/estado-venta.ts`.
+
+- [x] 5.1 Lower `ventas.estado` derivation tolerance from `0.005` USD to `0`
+  exact, in both the TS mirror and the Postgres triggers: `estado-venta.ts`
+  (`TOLERANCIA_ESTADO_VENTA`), `estado-venta.test.ts` (rewrote 2
+  tolerance-boundary tests + added 3 new triangulation tests, 13/13
+  passing), and new migration `migrations/0108_ventas_estado_tolerancia_cero.sql`
+  (`CREATE OR REPLACE FUNCTION` on `prevent_venta_mutation()` +
+  `derive_venta_estado_insert()`, all other guards byte-identical to
+  `0106`). Full regression at the time: `src/features/cxc/` 153/155 (2
+  pre-existing, same as always).
+- [x] 5.2 Recreate `migrations/0107_backfill_ventas_estado.sql` (flagged
+  missing-from-disk in task 4.1 above) using tolerance `0` exact — in
+  parity with `0108`, not the original `0.005` formula. Confirmed on disk,
+  dated 2026-10-13.
+- [x] 5.3 **(this batch)** Lower the client-debt AGGREGATE filters to
+  tolerance 0, closing the residual `(0, 0.001]` "ghost debt" inconsistency
+  against the tolerance-0 pending list (Fase 3/task 3.1's superseded note
+  above): a pending invoice's balance now actually counts toward
+  `deuda_usd`/`facturas_pendientes`, matching `estado != 'pago'`.
+  - `src/features/cxc/hooks/use-cxc.ts`: `DEUDA_CREDITO_CLIENTE_SELECT`
+    (`facturas_pendientes` COUNT + `deuda_usd` SUM, both
+    `CAST(saldo_pend_usd AS REAL) > 0.001` → `> 0`) and the outer
+    `WHERE deuda_usd > 0.001 ... ` → `WHERE deuda_usd > 0 ...` in both
+    `useClientesConDeuda` and `useBuscarClientesDeuda`. 4 new/extended
+    RED→GREEN tests (SQL-shape assertions) across
+    `use-cxc.test.ts`/`use-deuda-cliente.test.ts`.
+  - `src/features/cxc/hooks/use-deuda-cliente.ts`: `useDeudaFacturasCliente`
+    + `useDeudaFacturasClientes`, same `> 0.001` → `> 0` change (pure
+    debt-sum filters, no SAF involved).
+  - **Intentionally left at `0.001`** (NOT a debt filter — SAF/credit
+    availability gates, different concern): `credito_disponible_usd >
+    0.001` (both outer WHEREs in `use-cxc.ts`), and the SAF-credit
+    existence checks `creditoSafDisponible.lte('0.001')` /
+    `safDisponibleAntes.lte('0.001')` (×3 call sites in
+    `registrarPagoFactura`/`registrarAbonoGlobal`/`consumirSafLotesEnTx`).
+  - Full regression: `src/features/cxc/` 157/159 (2 pre-existing, same as
+    always — `cxc-list.test.tsx` dialog, `cxc-cliente-detalle.test.tsx`
+    PowerSync "Worker is not defined"). `yarn type-check:test`: same 3
+    pre-existing unrelated errors (producto-form tests, `use-pwa-update.ts`
+    unused var).
+- [x] 5.4 **(this batch)** Fix stale docs found by verify:
+  - `specs/ventas-estado-derivado/spec.md`: requirement "Estado Derivation
+    By Saldo Magnitude..." and "Reversado Detected..." + their scenarios
+    updated from `0.005` to `0` exact; added a new "Amendment Note
+    (tolerance 0.005 → 0, interim)" section; added 2 new boundary scenarios
+    (residual `0.004` is NOT pago; REV guard at exactly `0` stays `pago`).
+  - `migrations/README.md`: corrected the `0107` row — it previously
+    (falsely, post-5.2) claimed `0107` "uses tolerancia 0.005" and warned of
+    a 0107-vs-0108 formula mismatch. Both are now tolerance `0`, in parity;
+    no mismatch.
+  - `tasks.md` (this file): task 3.1's "Flagged divergence" note updated
+    from the stale `(0.001, 0.005]` band framing to the real `(0, 0.001]`
+    band description (superseded by 5.1's tolerance-0 switch); task 4.1
+    annotated with a pointer noting `0107` was later resolved; this Phase 5
+    section added to track all of the above.

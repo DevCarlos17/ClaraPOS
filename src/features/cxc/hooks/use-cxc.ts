@@ -87,10 +87,17 @@ export interface AbonoGlobalParams {
 //   O(1) — el trigger ya aplica MAX(0,...) al escribir, por lo que la lectura
 //   no necesita repetirlo).
 // Se envuelve en subconsulta para poder filtrar/ordenar por los alias calculados.
+// Tolerancia de deuda bajada a 0 exacto (cxc-sync-snapshot-redesign,
+// migrations/0108): en paridad con `estado != 'pago'` (tolerancia 0 en
+// ventas.estado), cualquier saldo_pend_usd > 0 cuenta como deuda real —
+// antes el umbral 0.001 dejaba una banda (0, 0.001] de "deuda fantasma"
+// (factura ya marcada pendiente por `estado` pero invisible en este
+// agregado). `credito_disponible_usd` (SAF) NO es deuda — ese umbral se
+// deja intacto donde se usa (ver WHERE de cada query abajo).
 const DEUDA_CREDITO_CLIENTE_SELECT = `
   c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
-  (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes,
-  COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd,
+  (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0) as facturas_pendientes,
+  COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0), 0) as deuda_usd,
   CAST(c.saf_disponible AS REAL) as credito_disponible_usd
 `
 
@@ -107,7 +114,7 @@ export function useClientesConDeuda() {
        FROM clientes c
        WHERE c.empresa_id = ? AND c.is_active = 1
      ) t
-     WHERE deuda_usd > 0.001 OR credito_disponible_usd > 0.001
+     WHERE deuda_usd > 0 OR credito_disponible_usd > 0.001
      ORDER BY deuda_usd DESC`,
     [empresaId]
   )
@@ -132,7 +139,7 @@ export function useBuscarClientesDeuda(query: string) {
            WHERE c.empresa_id = ? AND c.is_active = 1
              AND (c.identificacion LIKE ? OR c.nombre LIKE ?)
          ) t
-         WHERE deuda_usd > 0.001 OR credito_disponible_usd > 0.001
+         WHERE deuda_usd > 0 OR credito_disponible_usd > 0.001
          ORDER BY nombre ASC LIMIT 20`
       : '',
     shouldSearch ? [empresaId, pattern, pattern] : []
@@ -142,9 +149,16 @@ export function useBuscarClientesDeuda(query: string) {
 
 /**
  * Facturas de un cliente ordenadas por fecha ASC.
- * Por defecto solo devuelve las pendientes (saldo_pend_usd > 0).
- * Con incluirPagadas=true devuelve todas menos las anuladas/reversadas,
- * lo que permite acceder al historial de pagos para reversarlos.
+ * Por defecto solo devuelve las pendientes de cobro: `estado != 'pago'`
+ * (cubre pendiente/parcial/reversado), lee el snapshot trigger-derivado de
+ * `migrations/0106` en vez de re-derivar por magnitud de `saldo_pend_usd`
+ * en cada render (cxc-sync-snapshot-redesign, Fase 3). `status != 'ANULADA'`
+ * se mantiene como guard SEPARADO — `status` (validez fiscal) y `estado`
+ * (cobranza) son columnas independientes, ver estado-venta.ts.
+ * Con incluirPagadas=true devuelve todas menos las anuladas, lo que permite
+ * acceder al historial de pagos para reversarlos (el filtro `'REVERSADA'`
+ * dead-code se elimina: `ventas.status` solo admite ACTIVA/ANULADA, ver
+ * migrations/0006_ventas.sql:179 — `'REVERSADA'` nunca fue un valor real).
  */
 export function useFacturasPendientes(clienteId: string | null, incluirPagadas = false) {
   const { data, isLoading } = useQuery(
@@ -152,10 +166,10 @@ export function useFacturasPendientes(clienteId: string | null, incluirPagadas =
       ? incluirPagadas
         ? `SELECT * FROM ventas
            WHERE cliente_id = ?
-             AND (status IS NULL OR status NOT IN ('ANULADA', 'REVERSADA'))
+             AND (status IS NULL OR status != 'ANULADA')
            ORDER BY fecha ASC`
         : `SELECT * FROM ventas
-           WHERE cliente_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.001
+           WHERE cliente_id = ? AND status != 'ANULADA' AND estado != 'pago'
            ORDER BY fecha ASC`
       : '',
     clienteId ? [clienteId] : []

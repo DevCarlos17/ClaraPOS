@@ -61,6 +61,20 @@ describe('useDeudaFacturasCliente — fuente del gate de limite de credito (SUM(
     expect(result.current.deudaFacturasUsd).toBe(350.5)
   })
 
+  it('usa tolerancia 0 (saldo_pend_usd > 0), ya NO 0.001 — paridad con estado != \'pago\' (cxc-sync-snapshot-redesign, migrations/0108)', () => {
+    setCurrentUser('emp-1')
+    let capturedSql = ''
+    mockedUseQuery.mockImplementation(((sql: string) => {
+      capturedSql = sql
+      return { data: [{ deuda_usd: 0 }], isLoading: false }
+    }) as unknown as typeof useQuery)
+
+    renderHook(() => useDeudaFacturasCliente('cliente-1'))
+
+    expect(capturedSql).toContain('saldo_pend_usd AS REAL) > 0')
+    expect(capturedSql).not.toContain('saldo_pend_usd AS REAL) > 0.001')
+  })
+
   it('sin clienteId: no ejecuta query (string vacio, params vacios) y retorna deuda 0', () => {
     setCurrentUser('emp-1')
     mockedUseQuery.mockImplementation(((sql: string, params: unknown[] = []) => {
@@ -94,6 +108,20 @@ describe('useDeudaFacturasClientes — batch (IN clause), misma fuente que la ve
     const { result } = renderHook(() => useDeudaFacturasClientes(['cliente-1', 'cliente-2']))
 
     expect(result.current).toEqual({ 'cliente-1': 100, 'cliente-2': 0 })
+  })
+
+  it('usa tolerancia 0 (saldo_pend_usd > 0), ya NO 0.001 — paridad con estado != \'pago\' (cxc-sync-snapshot-redesign, migrations/0108)', () => {
+    setCurrentUser('emp-1')
+    let capturedSql = ''
+    mockedUseQuery.mockImplementation(((sql: string) => {
+      capturedSql = sql
+      return { data: [], isLoading: false }
+    }) as unknown as typeof useQuery)
+
+    renderHook(() => useDeudaFacturasClientes(['cliente-1']))
+
+    expect(capturedSql).toContain('saldo_pend_usd AS REAL) > 0')
+    expect(capturedSql).not.toContain('saldo_pend_usd AS REAL) > 0.001')
   })
 
   it('lista vacia: no ejecuta query, retorna mapa vacio', () => {
