@@ -35,6 +35,8 @@ import { renderHook } from '@testing-library/react'
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { toStorageString } from '@/lib/currency'
+import Decimal from 'decimal.js'
+import { calcularEstadoVenta } from '@/features/cxc/lib/estado-venta'
 import {
   registrarSafExcedente,
   registrarPagoFactura,
@@ -45,8 +47,10 @@ import {
   useDetalleFactura,
   useAfectacionCxc,
   useEvolucionFactura,
+  useFacturasPendientes,
   useSafAplicacionesFactura,
   useClientesConDeuda,
+  useBuscarClientesDeuda,
   type RegistrarSafExcedenteParams,
   type PagoFacturaParams,
   type AbonoGlobalParams,
@@ -1035,6 +1039,46 @@ describe('useClientesConDeuda — credito_disponible_usd lee el snapshot saf_dis
 })
 
 // ─────────────────────────────────────────────────────────────────────────
+// useClientesConDeuda / useBuscarClientesDeuda — corrective (cxc-sync-
+// snapshot-redesign, Task A): el filtro de DEUDA (saldo_pend_usd) baja de
+// magnitud 0.001 a tolerancia 0, en paridad con `estado != 'pago'`
+// (migrations/0108) — sin esto, un saldo en la banda (0, 0.001] queda
+// `estado='pendiente'` (cuenta como factura pendiente, Fase 3) pero NO suma
+// a `deuda_usd`/`facturas_pendientes` aqui, una "deuda fantasma" invisible
+// en el agregado de cliente. El umbral de `credito_disponible_usd`
+// (disponibilidad de SAF, NO deuda) queda INTACTO en 0.001 — es un concepto
+// distinto, ver JSDoc de DEUDA_CREDITO_CLIENTE_SELECT.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('useClientesConDeuda / useBuscarClientesDeuda — deuda a tolerancia 0, SAF intacto en 0.001', () => {
+  it('useClientesConDeuda: facturas_pendientes y deuda_usd usan > 0 (no > 0.001); credito_disponible_usd conserva > 0.001', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    renderHook(() => useClientesConDeuda())
+
+    const call = mockedUseQuery.mock.calls.find(([sql]) => String(sql).includes('FROM clientes c'))
+    expect(call).toBeDefined()
+    const [sql] = call!
+    expect(sql).not.toContain('saldo_pend_usd AS REAL) > 0.001')
+    expect(sql).toContain('saldo_pend_usd AS REAL) > 0)')
+    expect(sql).toContain('WHERE deuda_usd > 0 OR credito_disponible_usd > 0.001')
+  })
+
+  it('useBuscarClientesDeuda: misma paridad de tolerancia 0 para deuda, SAF intacto en 0.001', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    renderHook(() => useBuscarClientesDeuda('ab'))
+
+    const call = mockedUseQuery.mock.calls.find(([sql]) => String(sql).includes('FROM clientes c'))
+    expect(call).toBeDefined()
+    const [sql] = call!
+    expect(sql).not.toContain('saldo_pend_usd AS REAL) > 0.001')
+    expect(sql).toContain('saldo_pend_usd AS REAL) > 0)')
+    expect(sql).toContain('WHERE deuda_usd > 0 OR credito_disponible_usd > 0.001')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
 // useDetalleFactura — extension aditiva (Design §Decision 3): es_decimal +
 // precio_unitario_bs, via JOIN a ventas (tasa historica) + unidades.
 // ─────────────────────────────────────────────────────────────────────────
@@ -1276,5 +1320,89 @@ describe('useSafAplicacionesFactura (saf_creditos_aplicaciones WHERE venta_id, P
     expect(result.current.safAplicaciones).toHaveLength(2)
     const total = result.current.safAplicaciones.reduce((sum, r) => sum + parseFloat(r.monto), 0)
     expect(total).toBe(35)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// useFacturasPendientes — Fase 3 (cxc-sync-snapshot-redesign): read-path
+// swap de `CAST(saldo_pend_usd AS REAL) > 0.001` a `estado != 'pago'`
+// (snapshot trigger-derivado, migrations/0106), manteniendo `status !=
+// 'ANULADA'` como guard SEPARADO (validez fiscal vs cobranza). Contrato de
+// paridad congelada: el set de facturas pendientes debe ser IDENTICO al de
+// la magnitud-filter anterior (design.md §8, spec ventas-estado-derivado).
+//
+// DIVERGENCIA DOCUMENTADA (migrations/0108, tolerancia de `estado` bajada a
+// 0 exacto): con tolerancia 0.005 la fixture de abajo evitaba a proposito la
+// banda ambigua (0.001, 0.005]. Con tolerancia 0, esa banda deja de existir
+// — la UNICA banda de divergencia posible queda en `(0, 0.001]`: el filtro
+// VIEJO (`saldo_pend_usd > 0.001`) trataba un saldo en esa banda como NO
+// pendiente (lo ignoraba), mientras que `estado` (tolerancia 0) SI lo marca
+// como no-pago (pendiente/parcial) para cualquier saldo > 0. Es decir,
+// `estado` es ahora MAS ESTRICTO que el filtro viejo en esa banda —
+// alineado con la intencion del owner de "cobrar todo, no redondear deuda
+// real a cero". Esto es un CAMBIO DE COMPORTAMIENTO real (no solo interno)
+// pero deliberado e interino: ver estado-venta.ts para la nota de que
+// tolerancia 0 no es la respuesta final de produccion contra polvo de
+// redondeo (pendiente de la migracion futura de diferencial-cambiario).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('useFacturasPendientes — Fase 3: read-path estado (frozen UI-contract parity)', () => {
+  it('rama por defecto (incluirPagadas=false): usa estado != \'pago\' + status != \'ANULADA\', ya NO escanea CAST(saldo_pend_usd AS REAL)', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    renderHook(() => useFacturasPendientes('cliente-1'))
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]
+    expect(sql).toContain("status != 'ANULADA'")
+    expect(sql).toContain("estado != 'pago'")
+    expect(sql).not.toContain('saldo_pend_usd')
+    expect(params).toEqual(['cliente-1'])
+  })
+
+  it('rama incluirPagadas=true: elimina el filtro muerto \'REVERSADA\' pero preserva status != \'ANULADA\' (sigue incluyendo pagadas)', () => {
+    mockedUseQuery.mockReturnValue({
+      data: [
+        { id: 'v-1', nro_factura: 'F-001', fecha: '2026-01-01', total_usd: '100', total_bs: '4000', saldo_pend_usd: '0', tasa: '40', tipo: 'CONTADO', cliente_id: 'cliente-1' },
+      ],
+      isLoading: false,
+    } as never)
+
+    const { result } = renderHook(() => useFacturasPendientes('cliente-1', true))
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]
+    expect(sql).not.toContain('REVERSADA')
+    expect(sql).toContain("status != 'ANULADA'")
+    expect(params).toEqual(['cliente-1'])
+    // Contrato preservado: incluirPagadas=true debe seguir devolviendo facturas
+    // con saldo_pend_usd=0 (pagadas) — si el swap hubiera filtrado por estado
+    // aqui, esta factura (CONTADO pagada) desaparecería del historial.
+    expect(result.current.facturas).toHaveLength(1)
+    expect(result.current.facturas[0].saldo_pend_usd).toBe('0')
+  })
+
+  it('paridad congelada: para una fixture de ledger fija, estado != \'pago\' incluye EXACTAMENTE el mismo set que el filtro de magnitud anterior (saldo_pend_usd > 0.001)', () => {
+    // Fixture realista (no en la zona de tolerancia ambigua 0.001-0.005):
+    // cada fila simula el resultado de calcularEstadoVenta sobre saldo/total
+    // reales de distintos movimientos del Design §4 matrix.
+    const fixture: Array<{ saldo: string; total: string; ultimoMov: string | null }> = [
+      { saldo: '100.00', total: '100.00', ultimoMov: null },  // FAC CREDITO sin pagar -> pendiente
+      { saldo: '0.00', total: '50.00', ultimoMov: null },     // FAC CONTADO pagada al nacer -> pago
+      { saldo: '40.00', total: '100.00', ultimoMov: 'PAG' },  // pago parcial -> parcial
+      { saldo: '0.00', total: '100.00', ultimoMov: 'PAG' },   // pago total -> pago
+      { saldo: '0.00', total: '30.00', ultimoMov: 'NCR' },    // NC cubre 100% -> pago
+      { saldo: '80.00', total: '100.00', ultimoMov: 'REV' },  // reverso reabre -> reversado
+      { saldo: '0.00', total: '100.00', ultimoMov: 'REV' },   // reverso que vuelve a 0 (caso limite, no reversado) -> pago
+    ]
+
+    for (const { saldo, total, ultimoMov } of fixture) {
+      const saldoDecimal = new Decimal(saldo)
+      const totalDecimal = new Decimal(total)
+      const estado = calcularEstadoVenta(saldoDecimal, totalDecimal, ultimoMov)
+
+      const oldFilterIncluye = parseFloat(saldo) > 0.001
+      const newFilterIncluye = estado !== 'pago'
+
+      expect(newFilterIncluye).toBe(oldFilterIncluye)
+    }
   })
 })

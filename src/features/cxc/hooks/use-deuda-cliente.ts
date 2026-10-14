@@ -23,7 +23,7 @@ export function useDeudaFacturasCliente(clienteId: string | null): {
     shouldQuery
       ? `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0) as deuda_usd
          FROM ventas
-         WHERE cliente_id = ? AND empresa_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.001`
+         WHERE cliente_id = ? AND empresa_id = ? AND CAST(saldo_pend_usd AS REAL) > 0`
       : '',
     shouldQuery ? [clienteId, empresaId] : []
   )
@@ -49,7 +49,7 @@ export function useDeudaFacturasClientes(clienteIds: string[]): Record<string, n
     shouldQuery
       ? `SELECT cliente_id, COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0) as deuda_usd
          FROM ventas
-         WHERE empresa_id = ? AND cliente_id IN (${placeholders}) AND CAST(saldo_pend_usd AS REAL) > 0.001
+         WHERE empresa_id = ? AND cliente_id IN (${placeholders}) AND CAST(saldo_pend_usd AS REAL) > 0
          GROUP BY cliente_id`
       : '',
     shouldQuery ? [empresaId, ...ids] : []
