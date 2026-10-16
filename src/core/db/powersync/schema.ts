@@ -782,7 +782,17 @@ const ventas = new Table(
     // 0056: accounting observability
     contabilidad_ok: column.integer,
   },
-  { indexes: {} }
+  {
+    // Indice para pantalla CxC (use-cxc.ts): useClientesConDeuda /
+    // useBuscarClientesDeuda filtran por (cliente_id, empresa_id) en
+    // subqueries correlacionadas; useFacturasPendientes filtra por
+    // cliente_id y ordena por fecha ASC. El invariante multi-tenant
+    // existente (un cliente_id nunca abarca mas de un empresa_id) hace
+    // que este mismo indice sirva el ORDER BY sin sort adicional.
+    indexes: {
+      idx_ventas_cliente_empresa_fecha: ['cliente_id', 'empresa_id', 'fecha'],
+    },
+  }
 )
 
 const ventas_det = new Table(
