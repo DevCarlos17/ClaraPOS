@@ -654,7 +654,20 @@ const movimientos_cuenta = new Table(
     saf_origen_refs: column.text,
     sesion_caja_id: column.text,
   },
-  { indexes: { by_venta: ['venta_id'] } }
+  {
+    // idx_movimientos_cuenta_cliente_empresa_tipo: pantalla CxC (use-cxc.ts).
+    // useClientesConDeuda / useBuscarClientesDeuda calculan el saldo a favor
+    // con subqueries SUM(monto) WHERE cliente_id=? AND empresa_id=? AND
+    // tipo='SAFC'/'SAF' sobre el ledger inmutable movimientos_cuenta (la
+    // tabla mas grande). Sin indice, cada una es un full scan por cliente.
+    // El orden (cliente_id, empresa_id, tipo) sirve el predicado como index
+    // seek puro, y por prefijo izquierdo cubre los reads de validacion SAF
+    // del write-path que solo filtran cliente_id+empresa_id.
+    indexes: {
+      by_venta: ['venta_id'],
+      idx_movimientos_cuenta_cliente_empresa_tipo: ['cliente_id', 'empresa_id', 'tipo'],
+    },
+  }
 )
 
 const vencimientos_cobrar = new Table(
