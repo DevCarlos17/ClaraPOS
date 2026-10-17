@@ -118,7 +118,10 @@ describe('CxcList - lista completa con scroll interno (reemplaza paginado)', () 
     render(<CxcList />)
     await userEvent.type(screen.getByPlaceholderText('Buscar por nombre o cedula...'), 'mar')
 
-    for (let i = 1; i <= 15; i++) {
+    // El input dispara la query con debounce (300ms): findBy* espera a que el
+    // debounce se resuelva y la lista se re-renderice con los resultados.
+    expect(await screen.findByText('Resultado 1')).toBeInTheDocument()
+    for (let i = 2; i <= 15; i++) {
       expect(screen.getByText(`Resultado ${i}`)).toBeInTheDocument()
     }
     expect(screen.queryByText('Cliente 1')).not.toBeInTheDocument()
