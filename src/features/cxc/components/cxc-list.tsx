@@ -16,6 +16,7 @@ import {
 import { CxcClienteDetalle } from './cxc-cliente-detalle'
 import { CxcReportesGeneral } from './cxc-reportes-general'
 import { useMobile } from '@/hooks/use-mobile'
+import { useDebounce } from '@/hooks/use-debounce'
 
 // ─── KPI Card ─────────────────────────────────────────────────
 
@@ -73,14 +74,22 @@ function KpiCard({
 
 export function CxcList() {
   const [searchQuery, setSearchQuery] = useState('')
+  // El input refleja searchQuery al instante (UX responsiva), pero la query
+  // pesada (useBuscarClientesDeuda corre subqueries por cliente) se dispara
+  // solo con el valor debounced: evita re-ejecutarla en cada tecla.
+  const debouncedSearchQuery = useDebounce(searchQuery, 300)
   const { clientes: allClientes, isLoading } = useClientesConDeuda()
-  const { clientes: searchResults, isLoading: loadingSearch } = useBuscarClientesDeuda(searchQuery)
+  const { clientes: searchResults, isLoading: loadingSearch } = useBuscarClientesDeuda(debouncedSearchQuery)
   const { tasaValor } = useTasaActual()
   const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteConDeuda | null>(null)
   const [filtroSAF, setFiltroSAF] = useState(false)
   const isMobile = useMobile()
 
-  const isSearching = searchQuery.trim().length >= 2
+  const isSearching = debouncedSearchQuery.trim().length >= 2
+  // Intencion de busqueda del usuario (input ya tiene >=2 chars) aunque el
+  // debounce aun no haya disparado la query: cubre la ventana de 300ms con
+  // estado de carga en vez de un flash de la lista completa.
+  const isTypingSearch = searchQuery.trim().length >= 2
   const clientesBase = isSearching ? searchResults : allClientes
   // La busqueda y el filtro SAF operan sobre el arreglo completo. La lista
   // completa filtrada se renderiza entera dentro de un contenedor con scroll
@@ -88,7 +97,11 @@ export function CxcList() {
   // LIMIT (reemplaza el paginado client-side anterior, ver fix
   // cxc-cxp-scroll-altura).
   const clientesFiltrados = filtroSAF ? clientesBase.filter((c) => c.credito_disponible_usd > 0.001) : clientesBase
-  const clientesLoading = isSearching ? loadingSearch : isLoading
+  // Loading mientras se busca O mientras se tipea y el debounce esta pendiente
+  // (searchQuery ya cambio pero debouncedSearchQuery todavia no).
+  const clientesLoading = isTypingSearch
+    ? loadingSearch || searchQuery !== debouncedSearchQuery
+    : isLoading
 
   function toggleFiltroSAF() {
     setFiltroSAF((prev) => {
