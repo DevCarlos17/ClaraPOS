@@ -420,7 +420,15 @@ const movimientos_inventario = new Table(
     // 0068: tipo de salida tipificada (MERMA, EXTRAVIO, CONSUMO_INTERNO)
     tipo_salida: column.text,
   },
-  { indexes: {} }
+  {
+    // Indice para pantalla Kardex (use-kardex.ts): useUltimosMovimientosKardex
+    // y useMovimientosFiltrados escanean este ledger inmutable filtrando por
+    // empresa_id y ordenando por fecha DESC en cada render. Sin indice, cada
+    // una es un full scan de la tabla mas grande de inventario.
+    indexes: {
+      idx_movimientos_inventario_empresa_fecha: ['empresa_id', 'fecha'],
+    },
+  }
 )
 
 const recetas = new Table(
@@ -727,6 +735,12 @@ const ventas = new Table(
     // que este mismo indice sirva el ORDER BY sin sort adicional.
     indexes: {
       idx_ventas_cliente_empresa_fecha: ['cliente_id', 'empresa_id', 'fecha'],
+      // Indice empresa-scoped para la lista Facturas Emitidas
+      // (buildFacturasEmpresaFiltro): filtra empresa_id + rango de fecha y
+      // ordena por fecha DESC. El indice de arriba NO sirve aqui porque lidera
+      // con cliente_id (regla de prefijo izquierdo) y esta query no filtra por
+      // cliente. Se necesita uno que lidere con empresa_id.
+      idx_ventas_empresa_fecha: ['empresa_id', 'fecha'],
     },
   }
 )
@@ -746,7 +760,15 @@ const ventas_det = new Table(
     lote_id: column.text,
     created_at: column.text,
   },
-  { indexes: {} }
+  {
+    // Indice para Detalle de Ventas (useDetalleFactura): filtra venta_id al
+    // abrir cualquier factura (POS, lista, CxC, notas de credito). El result
+    // es chico pero ventas_det crece sin limite, por lo que sin indice SQLite
+    // escanea toda la tabla para cada apertura.
+    indexes: {
+      idx_ventas_det_venta_id: ['venta_id'],
+    },
+  }
 )
 
 const pagos = new Table(
@@ -799,7 +821,15 @@ const notas_credito = new Table(
     liquidacion_modalidad: column.text,
     no_desembolso: column.integer,
   },
-  { indexes: {} }
+  {
+    // Indice para los badges de reverso en Facturas Emitidas
+    // (buildFacturasEmpresaFiltro): 2 subqueries EXISTS por factura filtran
+    // venta_id + tipo ('TOTAL'/'PARCIAL'). Sin indice, cada una es un full
+    // scan de notas_credito por cada fila renderizada de la lista.
+    indexes: {
+      idx_notas_credito_venta_id_tipo: ['venta_id', 'tipo'],
+    },
+  }
 )
 
 const notas_credito_det = new Table(
