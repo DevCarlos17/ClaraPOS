@@ -631,6 +631,7 @@ const clientes = new Table(
     limite_credito_usd: column.text,
     saldo_actual: column.text,
     saf_disponible: column.text,
+    saldo_pendiente_usd: column.text,
     is_active: column.integer,
     created_at: column.text,
     updated_at: column.text,

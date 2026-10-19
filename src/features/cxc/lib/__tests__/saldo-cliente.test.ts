@@ -4,6 +4,7 @@ import {
   esSaldoSafConsistente,
   calcularSafDisponibleNuevo,
   calcularSaldoLoteDespues,
+  calcularSaldoPendienteClienteNuevo,
 } from '../saldo-cliente'
 
 describe('calcularSaldoNuevoMovimientoCuenta', () => {
@@ -188,5 +189,88 @@ describe('calcularSaldoLoteDespues', () => {
 
     expect(resultado.saldoDespues.toString()).toBe('0')
     expect(resultado.status).toBe('AGOTADO')
+  })
+})
+
+describe('calcularSaldoPendienteClienteNuevo', () => {
+  it('venta a credito: FAC suma el monto (aumenta la deuda pendiente)', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('FAC', 0, 100)
+
+    expect(resultado.toString()).toBe('100')
+  })
+
+  it('venta CONTADO: FAC con monto 0 no modifica el saldo pendiente (no-op)', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('FAC', 50, 0)
+
+    expect(resultado.toString()).toBe('50')
+  })
+
+  it('NDB: suma el monto (misma rama que FAC)', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('NDB', 650, 50)
+
+    expect(resultado.toString()).toBe('700')
+  })
+
+  it('pago exacto: PAG deja el saldo pendiente en exactamente 0', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('PAG', 50, 50)
+
+    expect(resultado.toString()).toBe('0')
+  })
+
+  it('pago parcial: PAG resta solo el monto aplicado', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('PAG', 100, 30)
+
+    expect(resultado.toString()).toBe('70')
+  })
+
+  it('sobrepago: PAG nunca deja el saldo pendiente negativo — piso en 0', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('PAG', 20, 50)
+
+    expect(resultado.toString()).toBe('0')
+    expect(resultado.isNegative()).toBe(false)
+  })
+
+  it('NCR: resta el monto (misma rama que PAG)', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('NCR', 300, 100)
+
+    expect(resultado.toString()).toBe('200')
+  })
+
+  it('SAF como metodo de pago: resta el monto (misma rama que PAG/NCR)', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('SAF', 100, 30)
+
+    expect(resultado.toString()).toBe('70')
+  })
+
+  it('abono global FIFO: el total aplicado deja el saldo pendiente en 0 en una sola llamada', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('PAG', 100, 100)
+
+    expect(resultado.toString()).toBe('0')
+  })
+
+  it('reverso: REV restaura el monto revertido (misma rama que FAC/NDB)', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('REV', 0, 40)
+
+    expect(resultado.toString()).toBe('40')
+  })
+
+  it('tipos que no afectan deuda (SAFC/SAL): saldo pendiente queda sin cambios', () => {
+    const resultadoSafc = calcularSaldoPendienteClienteNuevo('SAFC', 100, 50)
+    const resultadoSal = calcularSaldoPendienteClienteNuevo('SAL', 100, 50)
+
+    expect(resultadoSafc.toString()).toBe('100')
+    expect(resultadoSal.toString()).toBe('100')
+  })
+
+  it('acepta instancias de Decimal como entrada', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('FAC', new Decimal(100), new Decimal(50))
+
+    expect(resultado.toString()).toBe('150')
+  })
+
+  it('acepta strings como entrada (formato de almacenamiento PowerSync)', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('PAG', '100.00000000', '100.00000000')
+
+    expect(resultado.toString()).toBe('0')
   })
 })

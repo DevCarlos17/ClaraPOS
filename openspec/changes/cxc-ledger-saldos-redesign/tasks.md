@@ -1,0 +1,129 @@
+# Tasks: CxC Ledger Saldos Redesign (Approach A)
+
+## Review Workload Forecast
+
+| Slice | Content | Est. lines | Budget risk | Chained | Decision-needed |
+|---|---|---|---|---|---|
+| 1a | 0109+0110+0111 migrations, `calcularSaldoPendienteClienteNuevo`, `schema.ts` column | 350-450 | **High** (upper bound >400) | Y | Y — if real diff >400, confirm `size:exception` for this child PR before merge |
+| 1b | Write-site wiring, 4 TS files, 19 call sites (same call sites, no new ones) | 150-250 | Medium | Y | N |
+| 1c | Read-path swap (`use-cxc.ts`, `use-deuda-cliente.ts`) + predicate unification | 80-120 | Low | Y | N |
+| 2 | 0112 migration, `schema.ts`, `connector.ts`, 2 write sites | 150-200 | Low-Med | Y | N |
+| 3a | 0113+0114 migrations, type-union widenings, `schema.ts`+`connector.ts` | 250-320 | Medium | Y | N (watch if combined >400) |
+| 3b-i | `detectarLoteSafDePago` (read-only) + RED tests | 90-130 | Low | Y | N |
+| 3b-ii | `reversarPagoSafEnTx` contra-entry logic + RED tests | 160-220 | Medium | Y | N |
+| 3b-iii | Wiring into `registrarReversoAbono` + integration tests | 90-130 | Low | Y | N |
+
+```text
+Decision needed before apply: No
+Chained PRs recommended: Yes
+Chain strategy: feature-branch-chain
+400-line budget risk: High
+```
+
+Delivery strategy `ask-on-risk` already resolved: user approved chained PRs,
+**feature-branch-chain**. Per-slice exception above (1a) still requires a
+fresh go/no-go at apply time if its real diff exceeds 400.
+
+## Chain Plan (feature-branch-chain)
+
+Tracker branch `feat/cxc-ledger-saldos-redesign` stays **draft/no-merge**.
+
+```
+tracker: feat/cxc-ledger-saldos-redesign (draft)
+ └─ PR1 1a  → PR2 1b → PR3 1c → PR4 2 → PR5 3a → PR6 3b-i → PR7 3b-ii → PR8 3b-iii
+```
+
+PR1 bases on the tracker branch; every later PR bases on the **immediate
+previous** PR's branch. Order is strict per the proposal/design (`1a→1b→1c`,
+then `3a→3b-i→3b-ii→3b-iii`); slice `2` is placed after `1c` (independent of
+1-series, but shares `saldo-cliente.ts`/`schema.ts` with the 3-series, so it
+must land before `3a` to avoid rebase).
+
+## Do NOT Touch
+
+- `movimientos_metodo_cobro` currency ambiguity — confirmed real, separate change.
+- Any front-end / UI (no reversal confirmation modal — future SDD change).
+- SAF consumption flow (`saf_creditos_lotes`/`saf_creditos_aplicaciones` write paths) — stays intact, only additive reads.
+- The ~35 other SAF-consumer files — no edits beyond the explicit additive read/write sites listed below.
+
+---
+
+## Slice 1a — `saldo_pendiente_usd` materialization
+
+- [x] 1a.1 [RED] `saldo-cliente.test.ts`: add failing cases for `calcularSaldoPendienteClienteNuevo` — FAC/NDB/REV → `+monto`; PAG/NCR/SAF → `max(0,-monto)`; else unchanged (mirror spec scenarios: credit sale, cash sale no-op, exact-zero full payment, partial, overpayment floor, reverso restore).
+- [x] 1a.2 [GREEN] `saldo-cliente.ts`: implement `calcularSaldoPendienteClienteNuevo(tipo, anterior, monto)`; widen `TipoMovimientoCuenta` to include `'SAFC'|'SAFR'` (incidental CHECK-vs-TS fix).
+- [x] 1a.3 `migrations/0109_clientes_saldo_pendiente_column.sql`: `ALTER TABLE clientes ADD COLUMN saldo_pendiente_usd NUMERIC(20,8) NOT NULL DEFAULT 0` — mirror 0101 shape, idempotent guard.
+- [x] 1a.4 `migrations/0110_extender_trigger_saldo_pendiente.sql`: `CREATE OR REPLACE actualizar_saldo_cliente()` adds `saldo_pendiente_usd` CASE in the same atomic UPDATE as `saf_disponible` — mirror 0102.
+- [x] 1a.5 `migrations/0111_backfill_saldo_pendiente.sql`: one-time `UPDATE clientes SET saldo_pendiente_usd = GREATEST(0, SUM(ventas.saldo_pend_usd) WHERE estado != 'pago' GROUP BY cliente_id)` — mirror 0103 exactly; append `DO $$` reconciliation `RAISE WARNING` block (0105 Paso-3 shape), tolerance 0.
+- [x] 1a.6 `schema.ts`: add `saldo_pendiente_usd: column.text` to `clientes` Table def — preserve the existing `{ indexes: {} }` literal as-is, no new index.
+- [x] 1a.7 Verify: `yarn test:run src/features/cxc/lib/__tests__/saldo-cliente.test.ts`; confirm `saldo-cliente.ts`+`schema.ts` add 0 new type-check errors; confirm 0109-0111 each idempotent (re-runnable); **manual owner-run**: execute 0111's backfill+reconciliation `DO` block in Supabase SQL editor, confirm 0 `RAISE WARNING`s before trusting the column.
+
+## Slice 1b — write-site wiring (must land after 1a)
+
+- [ ] 1b.1 [RED] `use-cxc.test.ts`: assert `aplicarPagoFacturaEnTx`'s `UPDATE clientes` (~L614) SQL/params include `saldo_pendiente_usd`.
+- [ ] 1b.2 [GREEN] Wire `aplicarPagoFacturaEnTx` (~L614) with `saldo_pendiente_usd` via `calcularSaldoPendienteClienteNuevo('PAG', ...)`.
+- [ ] 1b.3 [RED] `use-cxc.test.ts`: assert `registrarAbonoGlobal`'s SAF pre-step + FIFO-loop + anticipo-promotion `UPDATE clientes` sites (~L837,997,1253) each carry `saldo_pendiente_usd`.
+- [ ] 1b.4 [GREEN] Wire those 3 `registrarAbonoGlobal` sites (~L837,997,1253) with `saldo_pendiente_usd`.
+- [ ] 1b.5 [RED] `use-cxc.test.ts`: assert `registrarReversoAbono`'s `UPDATE clientes` (~L1797) carries `saldo_pendiente_usd` via `tipo='REV'`.
+- [ ] 1b.6 [GREEN] Wire `registrarReversoAbono` (~L1797) with `saldo_pendiente_usd`.
+- [ ] 1b.7 [RED] `use-ventas.test.ts` / `use-notas-credito.test.ts` / `use-importar-cxc.test.ts`: assert their `UPDATE clientes` sites (`use-ventas.ts`:995,1051,1224; `use-notas-credito.ts`:1155,1351,1392,1518; `use-importar-cxc.ts`:248) carry `saldo_pendiente_usd`.
+- [ ] 1b.8 [GREEN] Wire those FAC-creation/NCR sites with `saldo_pendiente_usd` — same call sites, same tx, no new sites.
+- [ ] 1b.9 Verify: `yarn test:run src/features/cxc src/features/ventas`; confirm each of the 4 touched files adds 0 new type-check errors; no SQL in this slice.
+
+## Slice 1c — read-path swap (must land after 1a+1b+manual backfill run)
+
+- [ ] 1c.1 [RED] `use-cxc.test.ts`: `expect(sql).not.toContain` the old `SUM(CAST(v.saldo_pend_usd...` subquery; `expect(sql).toContain('saldo_pendiente_usd')` for `DEUDA_CREDITO_CLIENTE_SELECT`.
+- [ ] 1c.2 [GREEN] Swap `deuda_usd` subquery (~L100) for `CAST(c.saldo_pendiente_usd AS REAL)`; swap `facturas_pendientes` COUNT predicate `saldo_pend_usd > 0` for `estado != 'pago'` (closes predicate-inconsistency vs ~L172).
+- [ ] 1c.3 [RED] `use-deuda-cliente.test.ts`: `expect(sql).not.toContain` the `SUM(CAST(saldo_pend_usd...` form for both hooks; `expect(sql).toContain('saldo_pendiente_usd')`.
+- [ ] 1c.4 [GREEN] Swap `useDeudaFacturasCliente` (~L24) and `useDeudaFacturasClientes` (~L50) to direct `saldo_pendiente_usd` reads.
+- [ ] 1c.5 [RED→GREEN] Add parity test: `saldo_pendiente_usd` equals legacy `SUM(saldo_pend_usd WHERE saldo_pend_usd>0)` for a mixed-ventas fixture, tolerance 0 — proves value parity, not just SQL-shape parity.
+- [ ] 1c.6 Verify: `yarn test:run src/features/cxc/hooks/__tests__/use-cxc.test.ts src/features/cxc/hooks/__tests__/use-deuda-cliente.test.ts`; confirm 0 new type-check errors; **manual note**: deploy only after 1a's 0111 backfill ran in target DB, else reads show `0` for pre-existing debt.
+
+## Slice 2 — `pagos_aplicaciones` (independent of 1-series; land after 1c, before 3a)
+
+- [ ] 2.1 `migrations/0112_pagos_aplicaciones.sql`: table per design column list (empresa_id, cliente_id, pago_id, venta_id, `monto_aplicado_usd CHECK>0`, saldo-antes/despues, fecha, audit), indexes on pago_id/venta_id/empresa_id/cliente_id, RLS SELECT/INSERT-own-empresa only — mirror 0105, **no trigger**.
+- [ ] 2.2 `schema.ts`: add `pagos_aplicaciones` Table (`insertOnly: true`, indexes `pago_id`/`venta_id`/`empresa_id`/`cliente_id`) — new block, preserve all existing table literals untouched.
+- [ ] 2.3 `connector.ts`: add `'pagos_aplicaciones'` to `IMMUTABLE_TABLES` (append-only, same comment style as `saf_creditos_aplicaciones`).
+- [ ] 2.4 [RED] `use-cxc.test.ts`: assert `aplicarPagoFacturaEnTx` inserts exactly 1 `pagos_aplicaciones` row with before/after snapshot (single-invoice $100 scenario).
+- [ ] 2.5 [GREEN] Wire `aplicarPagoFacturaEnTx`: INSERT `pagos_aplicaciones` after the venta-saldo UPDATE, using already-in-scope pre/post `saldo_pend_usd`.
+- [ ] 2.6 [RED] `use-cxc.test.ts`: assert `registrarAbonoGlobal`'s FIFO loop writes 1 row per invoice (2-invoice $30+$70, `SUM(monto_aplicado_usd)`=abono total); assert the SAF-excedente portion produces **no** row.
+- [ ] 2.7 [GREEN] Wire the FIFO loop (~L1025-1110): INSERT 1 `pagos_aplicaciones` row per iteration from `saldoFactura`/`nuevoSaldo` already computed; exclude the anticipo/SAF branch.
+- [ ] 2.8 Verify: `yarn test:run src/features/cxc/hooks/__tests__/use-cxc.test.ts`; confirm 0112 idempotent; confirm touched files add 0 new type-check errors; **manual owner-run**: ships empty (design Q2) — just confirm table exists post-migration, no backfill to verify.
+
+## Slice 3a — `saf_creditos_reversas` + `SAFR` type (must land after 2; shares schema.ts/saldo-cliente.ts)
+
+- [ ] 3a.1 `migrations/0113_saf_creditos_reversas.sql`: table per design column list (`lote_id UNIQUE`, `pago_id`, `movimiento_cuenta_id UNIQUE`, `saldo_disponible_anulado_usd CHECK>0`, lote-saldo antes/despues, audit) + trigger `anular_saf_lote_reversa()` BEFORE INSERT — FOR UPDATE lock lote, assert saldo match (tol 0.005), force `saldo_disponible_usd=0`/`status='AGOTADO'` via `set_config('clarapos.trigger_context','saf_aplicacion',TRUE)` (reuse 0104's guard string).
+- [ ] 3a.2 `migrations/0114_add_safr_tipo_movimientos_cuenta.sql`: widen `movimientos_cuenta_tipo_check` to add `'SAFR'`; `CREATE OR REPLACE actualizar_saldo_cliente()` — `saf_disponible` CASE: `tipo IN ('SAF','SAFR') → GREATEST(0, saf_disponible-monto)`; `saldo_pendiente_usd` CASE copied verbatim from 0110 (SAFR falls to ELSE).
+- [ ] 3a.3 [RED] `saldo-cliente.test.ts`: widen `TipoMovimientoSaf`; assert `calcularSafDisponibleNuevo('SAFR', ...)` is identical to `('SAF', ...)` for the same inputs (parity, zero new branch).
+- [ ] 3a.4 [GREEN] Widen `TipoMovimientoSaf` to `'SAFC'|'SAF'|'SAFR'` in `saldo-cliente.ts` — zero body change.
+- [ ] 3a.5 `schema.ts`+`connector.ts`: add `saf_creditos_reversas` Table (`insertOnly: true`, indexes lote_id/pago_id/venta_id/empresa_id); add to `IMMUTABLE_TABLES` — preserve existing index/table literals.
+- [ ] 3a.6 Verify: `yarn test:run src/features/cxc/lib/__tests__/saldo-cliente.test.ts`; confirm 0113/0114 idempotent (`DROP CONSTRAINT IF EXISTS`); confirm touched files add 0 new type-check errors; **manual owner-run**: insert a throwaway test lote + SAFR row in Supabase SQL editor, confirm trigger forces `saldo_disponible_usd=0`/`AGOTADO` and the widened CHECK accepts `'SAFR'`.
+
+## Slice 3b-i — reversal DETECTION (read-only, must land after 3a)
+
+- [ ] 3b-i.1 [RED] New `src/features/cxc/hooks/__tests__/reversa-pago-saf.test.ts`: cover the 4 spec scenarios for `detectarLoteSafDePago` (no lote; untouched zero-consumption; partial 60/100; fully consumed across 2 ventas 60+40).
+- [ ] 3b-i.2 [GREEN] New `src/features/cxc/hooks/reversa-pago-saf.ts`: implement `detectarLoteSafDePago(empresaId, pagoId)` — read-only, query `saf_creditos_lotes WHERE origen_tipo='PAGO' AND origen_id=? AND empresa_id=?`, then `saf_creditos_aplicaciones WHERE lote_id=? JOIN ventas`; return `DetalleLoteSafDePago` per design interface.
+- [ ] 3b-i.3 [RED] Add cross-empresa isolation test: `pago_id` of empresa A never surfaces empresa B's lote.
+- [ ] 3b-i.4 Verify: `yarn test:run src/features/cxc/hooks/__tests__/reversa-pago-saf.test.ts`; confirm new file adds 0 new type-check errors; no migration, no mutation, no manual-verify step needed.
+
+## Slice 3b-ii — reversal COMPENSATION (contra-entries, must land after 3b-i)
+
+- [ ] 3b-ii.1 [RED] `reversa-pago-saf.test.ts`: fully-consumed-single-venta scenario ($100/1 venta, remainder=0) — assert **no** `saf_creditos_reversas` row, 1 `REV` movimiento for the $100 venta.
+- [ ] 3b-ii.2 [RED] `reversa-pago-saf.test.ts`: partial-consumption scenario ($100 lote, $60 consumed, $40 remainder) — assert `saf_creditos_reversas` row (`saldo_disponible_anulado_usd=40`) + paired `SAFR` movimiento (−40 `saf_disponible`) + 1 `REV` movimiento for the $60 venta.
+- [ ] 3b-ii.3 [RED] `reversa-pago-saf.test.ts`: multi-invoice scenario ($100 consumed $60+$40 across 2 ventas) — assert 2 `REV` movimientos (correct venta+monto each), no `saf_creditos_reversas` row.
+- [ ] 3b-ii.4 [RED] `reversa-pago-saf.test.ts`: assert zero UPDATE/DELETE ever targets `saf_creditos_lotes`/`saf_creditos_aplicaciones` — only INSERT (`saf_creditos_reversas`, `movimientos_cuenta` REV/SAFR) + UPDATE `ventas.saldo_pend_usd`.
+- [ ] 3b-ii.5 [GREEN] Implement `reversarPagoSafEnTx(tx, { pagoId, empresaId, clienteId, reversedBy, now })` in `reversa-pago-saf.ts`: per affected venta — INSERT `REV` movimiento (`doc_origen_id=pagoId`) + `UPDATE ventas.saldo_pend_usd += monto_aplicado_usd` (estado re-derived by existing trigger, never hand-set); if remainder>0 — INSERT `saf_creditos_reversas` + paired `SAFR` movimiento (reuse `calcularSaldoLoteDespues` with `montoAplicado=saldoAntes`, guaranteeing 0 by construction).
+- [ ] 3b-ii.6 Verify: `yarn test:run src/features/cxc/hooks/__tests__/reversa-pago-saf.test.ts`; confirm 0 new type-check errors; **manual owner-run**: run a diagnostic reconciliation query (Q3 shape) against a test reversed pago in Supabase SQL editor, confirm net `saf_disponible`/`saldo_pendiente_usd` match pre-pago values.
+
+## Slice 3b-iii — wiring + integration tests (must land after 3b-ii)
+
+- [ ] 3b-iii.1 [RED] `use-cxc.test.ts` reverso suite: assert a new **Step 4b** calls `reversarPagoSafEnTx` only when the reversed pago's `venta_id IS NULL` (lote-bearing anticipo) — mutually exclusive with Step 3's direct-venta restore.
+- [ ] 3b-iii.2 [GREEN] Wire `registrarReversoAbono` (~L1797, after Step 4's `saldo_actual` restore, before Step 5's pago `REV` row): call `reversarPagoSafEnTx` as Step 4b.
+- [ ] 3b-iii.3 [RED→GREEN] Integration test: reverso of a $130 abono ($100 FIFO + $30 SAF excedente, partially consumed) — assert final `saldo_pendiente_usd`/`saf_disponible`/`saldo_actual` equal pre-abono values (net-zero across the full stack).
+- [ ] 3b-iii.4 Verify: `yarn test:run src/features/cxc/hooks/__tests__/use-cxc.test.ts src/features/cxc/hooks/__tests__/reversa-pago-saf.test.ts`; confirm `use-cxc.ts` adds 0 new type-check errors; **manual owner-run**: reverse a real test $130 abono in a staging empresa (direct SQL sequence, no UI yet), confirm `clientes` row matches pre-abono snapshot.
+
+---
+
+## Cross-slice final task
+
+- [ ] F.1 Update `migrations/README.md`: add 6 rows (0109-0114), same density/voice as existing 0104-0108 rows, cross-referencing `cxc-ledger-saldos-redesign` design.md.
