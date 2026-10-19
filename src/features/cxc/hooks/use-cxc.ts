@@ -80,7 +80,15 @@ export interface AbonoGlobalParams {
 
 // Deuda y credito se calculan por separado, NUNCA neteados entre si (ver
 // openspec/changes/cxc-saldo-favor-modelo/design.md Decision 1/3):
-// - deuda_usd: SUM(ventas.saldo_pend_usd) de facturas realmente pendientes.
+// - deuda_usd: clientes.saldo_pendiente_usd (snapshot mantenido por trigger,
+//   ver migrations/0110). Ya NO agrega SUM(ventas.saldo_pend_usd) por
+//   cliente en cada render (cxc-ledger-saldos-redesign, slice 1c, reemplaza
+//   el SUM correlacionado por la misma fuente confiable que ya usa
+//   `credito_disponible_usd` para saf_disponible, ahora O(1) — el trigger ya
+//   aplica MAX(0,...) al escribir, por lo que la lectura no necesita
+//   repetirlo. Backfill 0111 debe haber corrido en la DB destino antes de
+//   desplegar esta lectura, o se mostrara 0 para deuda preexistente — ver
+//   design.md "Read-path parity proof").
 // - credito_disponible_usd: clientes.saf_disponible (snapshot mantenido por
 //   trigger, ver migrations/0102). Ya NO escanea movimientos_cuenta en cada
 //   render (saf-snapshot-y-trazabilidad, reemplaza el SUM(SAFC)-SUM(SAF) de
@@ -88,17 +96,22 @@ export interface AbonoGlobalParams {
 //   O(1) — el trigger ya aplica MAX(0,...) al escribir, por lo que la lectura
 //   no necesita repetirlo).
 // Se envuelve en subconsulta para poder filtrar/ordenar por los alias calculados.
-// Tolerancia de deuda bajada a 0 exacto (cxc-sync-snapshot-redesign,
-// migrations/0108): en paridad con `estado != 'pago'` (tolerancia 0 en
-// ventas.estado), cualquier saldo_pend_usd > 0 cuenta como deuda real —
-// antes el umbral 0.001 dejaba una banda (0, 0.001] de "deuda fantasma"
-// (factura ya marcada pendiente por `estado` pero invisible en este
-// agregado). `credito_disponible_usd` (SAF) NO es deuda — ese umbral se
-// deja intacto donde se usa (ver WHERE de cada query abajo).
+// facturas_pendientes SIGUE siendo un COUNT por subconsulta (acotado a
+// facturas abiertas, indexado) — no es un agregado de todo el historial, asi
+// que no se materializa; su predicado se unifica al de `useFacturasPendientes`
+// (slice 1c): `status != 'ANULADA' AND estado != 'pago'`. Antes usaba magnitud
+// `saldo_pend_usd > 0` SIN guard de status; ahora usa el MISMO doble guard que
+// `useFacturasPendientes` (~L183) — status (validez fiscal) y estado (cobranza)
+// son columnas independientes, sin CHECK/trigger que las acople, asi que el
+// guard de ANULADA es explicito y no depende de que la anulacion setee
+// estado='pago' en el mismo UPDATE. Tolerancia-0-equivalentes por migrations/0108.
+// `credito_disponible_usd` (SAF)
+// NO es deuda — su umbral 0.001 se deja intacto donde se usa (ver WHERE de
+// cada query abajo).
 const DEUDA_CREDITO_CLIENTE_SELECT = `
   c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
-  (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0) as facturas_pendientes,
-  COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0), 0) as deuda_usd,
+  (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND v.status != 'ANULADA' AND v.estado != 'pago') as facturas_pendientes,
+  CAST(c.saldo_pendiente_usd AS REAL) as deuda_usd,
   CAST(c.saf_disponible AS REAL) as credito_disponible_usd
 `
 

@@ -1534,7 +1534,7 @@ describe('useClientesConDeuda — credito_disponible_usd lee el snapshot saf_dis
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('useClientesConDeuda / useBuscarClientesDeuda — deuda a tolerancia 0, SAF intacto en 0.001', () => {
-  it('useClientesConDeuda: facturas_pendientes y deuda_usd usan > 0 (no > 0.001); credito_disponible_usd conserva > 0.001', () => {
+  it('useClientesConDeuda: credito_disponible_usd conserva > 0.001 en el WHERE externo (SAF, concepto distinto de deuda)', () => {
     mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
 
     renderHook(() => useClientesConDeuda())
@@ -1542,12 +1542,10 @@ describe('useClientesConDeuda / useBuscarClientesDeuda — deuda a tolerancia 0,
     const call = mockedUseQuery.mock.calls.find(([sql]) => String(sql).includes('FROM clientes c'))
     expect(call).toBeDefined()
     const [sql] = call!
-    expect(sql).not.toContain('saldo_pend_usd AS REAL) > 0.001')
-    expect(sql).toContain('saldo_pend_usd AS REAL) > 0)')
     expect(sql).toContain('WHERE deuda_usd > 0 OR credito_disponible_usd > 0.001')
   })
 
-  it('useBuscarClientesDeuda: misma paridad de tolerancia 0 para deuda, SAF intacto en 0.001', () => {
+  it('useBuscarClientesDeuda: misma paridad — credito_disponible_usd intacto en 0.001', () => {
     mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
 
     renderHook(() => useBuscarClientesDeuda('ab'))
@@ -1555,9 +1553,149 @@ describe('useClientesConDeuda / useBuscarClientesDeuda — deuda a tolerancia 0,
     const call = mockedUseQuery.mock.calls.find(([sql]) => String(sql).includes('FROM clientes c'))
     expect(call).toBeDefined()
     const [sql] = call!
-    expect(sql).not.toContain('saldo_pend_usd AS REAL) > 0.001')
-    expect(sql).toContain('saldo_pend_usd AS REAL) > 0)')
     expect(sql).toContain('WHERE deuda_usd > 0 OR credito_disponible_usd > 0.001')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// useClientesConDeuda / useBuscarClientesDeuda — slice 1c (cxc-ledger-saldos-
+// redesign): read-path swap. `deuda_usd` ya NO agrega
+// SUM(ventas.saldo_pend_usd) por cliente en cada render — lee directo
+// `clientes.saldo_pendiente_usd` (snapshot O(1) mantenido por el trigger
+// 0110, backfill 0111 ya corrido en la DB destino — ver design.md
+// "Read-path parity proof"). `facturas_pendientes` unifica su predicado al
+// de `estado != 'pago'` (cierra la inconsistencia de 2 predicados distintos
+// para "pendiente" dentro del mismo SELECT: antes esta subconsulta usaba
+// magnitud `saldo_pend_usd > 0`, mientras `useFacturasPendientes` (arriba,
+// ~L172) ya usaba `estado != 'pago'` — ambos son tolerancia-0-equivalentes
+// por migrations/0108, pero el SQL ahora lo expresa con el MISMO predicado).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('useClientesConDeuda / useBuscarClientesDeuda — slice 1c: deuda_usd lee clientes.saldo_pendiente_usd (O(1)), ya NO agrega SUM(ventas.saldo_pend_usd) en cada render', () => {
+  it('useClientesConDeuda: el SQL lee CAST(c.saldo_pendiente_usd AS REAL) como deuda_usd, sin el SUM correlacionado sobre ventas', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    renderHook(() => useClientesConDeuda())
+
+    const call = mockedUseQuery.mock.calls.find(([sql]) => String(sql).includes('FROM clientes c'))
+    expect(call).toBeDefined()
+    const [sql] = call!
+    expect(sql).not.toContain('SUM(CAST(v.saldo_pend_usd')
+    expect(sql).toContain('CAST(c.saldo_pendiente_usd AS REAL) as deuda_usd')
+  })
+
+  it('useClientesConDeuda: facturas_pendientes unifica el predicado a v.estado != \'pago\' (cierra la inconsistencia de predicados)', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    renderHook(() => useClientesConDeuda())
+
+    const call = mockedUseQuery.mock.calls.find(([sql]) => String(sql).includes('FROM clientes c'))
+    expect(call).toBeDefined()
+    const [sql] = call!
+    expect(sql).toContain("v.estado != 'pago'")
+    expect(sql).not.toContain('CAST(v.saldo_pend_usd AS REAL) > 0) as facturas_pendientes')
+  })
+
+  it("useClientesConDeuda: facturas_pendientes excluye facturas ANULADA con guard status != 'ANULADA' (paridad con useFacturasPendientes, no depende solo de que estado='pago' se setee en la anulacion)", () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    renderHook(() => useClientesConDeuda())
+
+    const call = mockedUseQuery.mock.calls.find(([sql]) => String(sql).includes('FROM clientes c'))
+    expect(call).toBeDefined()
+    const [sql] = call!
+    // El COUNT de facturas_pendientes debe excluir ANULADA explicitamente,
+    // igual que useFacturasPendientes (status y estado son columnas
+    // independientes: validez fiscal vs cobranza).
+    expect(sql).toContain("v.status != 'ANULADA'")
+  })
+
+  it('useBuscarClientesDeuda: misma lectura directa de saldo_pendiente_usd, mismo predicado unificado en facturas_pendientes', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    renderHook(() => useBuscarClientesDeuda('ab'))
+
+    const call = mockedUseQuery.mock.calls.find(([sql]) => String(sql).includes('FROM clientes c'))
+    expect(call).toBeDefined()
+    const [sql] = call!
+    expect(sql).not.toContain('SUM(CAST(v.saldo_pend_usd')
+    expect(sql).toContain('CAST(c.saldo_pendiente_usd AS REAL) as deuda_usd')
+    expect(sql).toContain("v.estado != 'pago'")
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Slice 1c — VALUE-PARITY proof (tolerancia 0, NO solo forma de SQL): la
+// lectura O(1) de `clientes.saldo_pendiente_usd` debe producir EXACTAMENTE
+// el mismo numero que la agregacion legacy `SUM(saldo_pend_usd WHERE
+// saldo_pend_usd > 0)` Y que `SUM(saldo_pend_usd WHERE estado != 'pago')`
+// (migrations/0108: estado='pago' <=> saldo_pend_usd<=0, tolerancia 0). Usa
+// las DOS funciones puras de produccion que realmente gobiernan estos
+// numeros: `calcularEstadoVenta` (deriva `estado` desde `saldo_pend_usd` +
+// `total_usd`, espejo 1:1 del trigger 0108) y
+// `calcularSaldoPendienteClienteNuevo` (espejo 1:1 del trigger 0110 que
+// mantiene `clientes.saldo_pendiente_usd` incrementalmente ante cada
+// movimiento — la misma funcion ya cableada al 100% de los write-sites en
+// slice 1b). Fixture mixto: una venta 100% pendiente (V1), una pagada
+// completamente — saldo EXACTAMENTE 0 (V2), una parcial (V3).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('Slice 1c — value-parity: saldo_pendiente_usd (materializado) === SUM(saldo_pend_usd>0) === SUM(estado!=\'pago\')', () => {
+  it('fixture mixto (pendiente/pagada-en-cero/parcial): las 3 fuentes convergen al mismo numero, tolerancia 0', () => {
+    // V1: factura de $100 a credito, nunca pagada -> sigue 100% pendiente.
+    const v1Total = new Decimal('100')
+    let saldoPendienteCliente = new Decimal('0')
+    saldoPendienteCliente = calcularSaldoPendienteClienteNuevo('FAC', saldoPendienteCliente, v1Total)
+    const v1SaldoPend = v1Total // sin pagos
+    const v1Estado = calcularEstadoVenta(v1SaldoPend, v1Total, null)
+
+    // V2: factura de $50 a credito, pagada en su totalidad -> saldo EXACTAMENTE 0.
+    const v2Total = new Decimal('50')
+    saldoPendienteCliente = calcularSaldoPendienteClienteNuevo('FAC', saldoPendienteCliente, v2Total)
+    let v2SaldoPend = v2Total
+    v2SaldoPend = v2SaldoPend.minus(new Decimal('50')) // pago total
+    saldoPendienteCliente = calcularSaldoPendienteClienteNuevo('PAG', saldoPendienteCliente, new Decimal('50'))
+    const v2Estado = calcularEstadoVenta(v2SaldoPend, v2Total, 'PAG')
+
+    // V3: factura de $80 a credito, pago parcial de $30 -> queda $50 pendiente.
+    const v3Total = new Decimal('80')
+    saldoPendienteCliente = calcularSaldoPendienteClienteNuevo('FAC', saldoPendienteCliente, v3Total)
+    let v3SaldoPend = v3Total
+    v3SaldoPend = v3SaldoPend.minus(new Decimal('30')) // pago parcial
+    saldoPendienteCliente = calcularSaldoPendienteClienteNuevo('PAG', saldoPendienteCliente, new Decimal('30'))
+    const v3Estado = calcularEstadoVenta(v3SaldoPend, v3Total, 'PAG')
+
+    const ventas = [
+      { saldoPend: v1SaldoPend, estado: v1Estado },
+      { saldoPend: v2SaldoPend, estado: v2Estado },
+      { saldoPend: v3SaldoPend, estado: v3Estado },
+    ]
+
+    // Sanidad del fixture: exactamente 1 pendiente, 1 pagada-en-cero, 1 parcial.
+    expect(ventas.map((v) => v.estado)).toEqual(['pendiente', 'pago', 'parcial'])
+    expect(v2SaldoPend.toString()).toBe('0')
+
+    // Fuente legacy: SUM(saldo_pend_usd WHERE saldo_pend_usd > 0).
+    const legacySum = ventas
+      .filter((v) => v.saldoPend.greaterThan(0))
+      .reduce((acc, v) => acc.plus(v.saldoPend), new Decimal(0))
+
+    // Fuente unificada (nuevo predicado de facturas_pendientes, 1c.2): SUM(saldo_pend_usd WHERE estado != 'pago').
+    const estadoSum = ventas
+      .filter((v) => v.estado !== 'pago')
+      .reduce((acc, v) => acc.plus(v.saldoPend), new Decimal(0))
+
+    // Fuente materializada: clientes.saldo_pendiente_usd, mantenida incrementalmente
+    // por el trigger 0110 via calcularSaldoPendienteClienteNuevo en cada movimiento
+    // (misma funcion cableada al 100% de los write-sites, slice 1b) — NO una
+    // nueva agregacion, es el snapshot que 1c.2 ahora lee directo.
+    const materializedSum = saldoPendienteCliente
+
+    expect(legacySum.toString()).toBe('150')
+    expect(estadoSum.toString()).toBe('150')
+    expect(materializedSum.toString()).toBe('150')
+    expect(legacySum.equals(estadoSum)).toBe(true)
+    expect(legacySum.equals(materializedSum)).toBe(true)
   })
 })
 
