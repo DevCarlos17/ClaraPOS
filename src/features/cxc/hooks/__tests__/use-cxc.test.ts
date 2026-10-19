@@ -1863,6 +1863,92 @@ describe('registrarReversoAbono — mutua exclusion con reversarPagoSafEnTx (sli
 })
 
 // ─────────────────────────────────────────────────────────────────────────
+// registrarReversoAbono — deadlock de wa-sqlite por `db.getAll` DENTRO de
+// `db.writeTransaction` (fix/cxc-reverso-deadlock-getall)
+//
+// BUG CONFIRMADO EN STAGING: `detectarLoteSafDePago` (reversa-pago-saf.ts)
+// usa `db.getAll` — una conexion de LECTURA separada de la conexion de
+// ESCRITURA que abre `db.writeTransaction`. Llamar `db.getAll` DESDE DENTRO
+// de un `db.writeTransaction` abierto hace DEADLOCK en wa-sqlite: la tx de
+// escritura tiene el lock, `db.getAll` espera ese lock para su propia
+// conexion de lectura, y la tx espera a que `db.getAll` retorne — espera
+// circular, nunca se resuelve. La UI se queda en "Reversando..." para
+// SIEMPRE, para TODO reverso (SAF o no — la deteccion corre incondicional).
+//
+// Un mock de `db.writeTransaction` NUNCA puede reproducir el hang real (no
+// mantiene locks reales), asi que este test verifica el FIX ESTRUCTURAL:
+// `detectarLoteSafDePago` (via `db.getAll`) debe invocarse ANTES de que
+// `db.writeTransaction` abra su callback, nunca despues. Se rastrea el
+// ORDEN de invocacion de ambos mocks con un array compartido.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('registrarReversoAbono — orden de invocacion: detectarLoteSafDePago ANTES de db.writeTransaction (fix deadlock)', () => {
+  function mockTxOrdenado() {
+    const callOrder: string[] = []
+
+    mockedDb.getAll.mockImplementation(async () => {
+      callOrder.push('db.getAll')
+      return []
+    })
+
+    mockedDb.writeTransaction.mockImplementation(async (callback) => {
+      callOrder.push('db.writeTransaction-abre-callback')
+      const tx = {
+        execute: vi.fn(async (sql: string) => {
+          if (sql.startsWith('SELECT id, venta_id, cliente_id, monto_usd, is_reversed, tasa, monto, moneda_id FROM pagos')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  id: 'pago-1',
+                  venta_id: null,
+                  cliente_id: 'cliente-1',
+                  monto_usd: '20.00000000',
+                  is_reversed: 0,
+                  tasa: null,
+                  monto: null,
+                  moneda_id: null,
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({ saldo_actual: '0.00000000', saldo_pendiente_usd: '20.00000000' }),
+              },
+            }
+          }
+          return { rows: { length: 0, item: () => undefined } }
+        }),
+      } as unknown as Transaction
+      return callback(tx)
+    })
+
+    return callOrder
+  }
+
+  function baseParams() {
+    return {
+      pago_id: 'pago-1',
+      reason: 'Cliente reporto error de cobro',
+      reversed_by: 'user-1',
+      reversed_by_nombre: 'Cajero Test',
+      empresa_id: 'emp-1',
+    }
+  }
+
+  it('la deteccion SAF (db.getAll) corre ANTES de abrir db.writeTransaction — nunca dentro (previene el deadlock de wa-sqlite)', async () => {
+    const callOrder = mockTxOrdenado()
+
+    await registrarReversoAbono(baseParams())
+
+    expect(callOrder).toEqual(['db.getAll', 'db.writeTransaction-abre-callback'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
 // registrarReversoAbono — integracion $130 FIFO+SAF, net-zero
 // pendiente+disponible (slice 3b-iii)
 //
