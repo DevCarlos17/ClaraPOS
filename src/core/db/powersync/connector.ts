@@ -170,6 +170,8 @@ const IMMUTABLE_TABLES = new Set([
   'saf_creditos_aplicaciones',    // 100% append-only (sin policy UPDATE/DELETE) — sin trigger bloqueante de UPDATE,
                                    // pero un PUT reintentado debe converger via ON CONFLICT DO NOTHING, mismo
                                    // motivo que import_log/import_log_det (ver migrations/0105, design-v2.md §4)
+  'pagos_aplicaciones',           // 100% append-only (sin policy UPDATE/DELETE), sin trigger — mismo motivo que
+                                   // saf_creditos_aplicaciones (ver migrations/0112, cxc-ledger-saldos-redesign)
 ])
 
 function convertBooleans(table: string, payload: Record<string, unknown>): Record<string, unknown> {

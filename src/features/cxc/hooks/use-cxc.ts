@@ -598,6 +598,19 @@ export async function aplicarPagoFacturaEnTx(
     toStorageString(nuevoSaldoFactura), estadoFactura, venta_id,
   ])
 
+  // 5b. Auditoria per-invoice append-only (slice 2, cxc-ledger-saldos-redesign,
+  // migrations/0112): reusa EXACTAMENTE el `saldoFactura`/`nuevoSaldoFactura`
+  // ya calculados arriba, nunca un recalculo nuevo.
+  await tx.execute(
+    `INSERT INTO pagos_aplicaciones (id, empresa_id, cliente_id, pago_id, venta_id, monto_aplicado_usd, saldo_venta_antes_usd, saldo_venta_despues_usd, fecha, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      uuidv4(), empresa_id, cliente_id, pagoId, venta_id,
+      toStorageString(montoUsd), toStorageString(saldoFactura), toStorageString(nuevoSaldoFactura),
+      fechaDoc, now, procesado_por,
+    ]
+  )
+
   // 6. Movimiento de cuenta (tipo PAG) + actualizar saldo cliente
   const clienteResult = await tx.execute(
     'SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?',
@@ -1135,6 +1148,21 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           estadoFifo,
           factura.id,
         ])
+
+        // Auditoria per-invoice append-only (slice 2, cxc-ledger-saldos-redesign,
+        // migrations/0112): 1 fila por factura tocada por el FIFO cash — reusa
+        // EXACTAMENTE `saldoFactura`/`nuevoSaldo` ya calculados arriba. El
+        // excedente/anticipo (paso 4, mas abajo) NUNCA entra aqui: eso se
+        // audita via saf_creditos_lotes/saf_creditos_aplicaciones, no aqui.
+        await tx.execute(
+          `INSERT INTO pagos_aplicaciones (id, empresa_id, cliente_id, pago_id, venta_id, monto_aplicado_usd, saldo_venta_antes_usd, saldo_venta_despues_usd, fecha, created_at, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(), empresa_id, cliente_id, pagoId, factura.id,
+            toStorageString(montoAplicar), toStorageString(saldoFactura), toStorageString(nuevoSaldo),
+            now, now, procesado_por,
+          ]
+        )
 
         // Si la factura tiene préstamos vinculados, sincronizar vencimientos_cobrar FIFO
         const vencFifoResult = await tx.execute(

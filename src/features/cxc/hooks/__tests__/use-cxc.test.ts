@@ -735,6 +735,70 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
   // exclusivamente en `registrarAbonoGlobal` via `usarSaf`/`montoSaf` — el
   // gate de credito disponible de este pre-step debe seguir rechazando los
   // mismos 2 casos borde que el modal dedicado ya eliminado cubria.
+  // ───────────────────────────────────────────────────────────────────────
+  // pagos_aplicaciones — FIFO loop (slice 2, cxc-ledger-saldos-redesign).
+  // 1 fila por factura tocada por el FIFO cash (NO por el pre-step SAF,
+  // que usa saf_creditos_aplicaciones — tabla distinta).
+  // ───────────────────────────────────────────────────────────────────────
+
+  it('abono global FIFO de $100 sobre 2 facturas ($30 + $70): escribe 2 filas pagos_aplicaciones, SUM(monto_aplicado_usd) = 100', async () => {
+    const calls = mockTx({
+      saldoActual: '100.00000000',
+      safDisponible: '0.00000000',
+      saldoPendienteUsd: '100.00000000',
+      facturasSaf: [
+        { id: 'fac-a', nro_factura: 'F-A', saldo_pend_usd: '30.00000000' },
+        { id: 'fac-b', nro_factura: 'F-B', saldo_pend_usd: '70.00000000' },
+      ],
+    })
+
+    await registrarAbonoGlobal(baseParams({ aplicarSaf: false, montoSaf: undefined, monto: 100 }))
+
+    const aplicaciones = calls.filter((c) => c.sql.startsWith('INSERT INTO pagos_aplicaciones'))
+    expect(aplicaciones).toHaveLength(2)
+
+    const suma = aplicaciones.reduce((acc, c) => acc + Number(c.params[5]), 0)
+    expect(suma).toBeCloseTo(100, 8)
+
+    // Columnas: id, empresa_id, cliente_id, pago_id, venta_id,
+    // monto_aplicado_usd, saldo_venta_antes_usd, saldo_venta_despues_usd,
+    // fecha, created_at, created_by
+    expect(aplicaciones[0]!.params[4]).toBe('fac-a')
+    expect(aplicaciones[0]!.params[5]).toBe(toStorageString(30))
+    expect(aplicaciones[0]!.params[6]).toBe(toStorageString(30)) // saldo_venta_antes_usd
+    expect(aplicaciones[0]!.params[7]).toBe(toStorageString(0)) // saldo_venta_despues_usd
+
+    expect(aplicaciones[1]!.params[4]).toBe('fac-b')
+    expect(aplicaciones[1]!.params[5]).toBe(toStorageString(70))
+    expect(aplicaciones[1]!.params[6]).toBe(toStorageString(70))
+    expect(aplicaciones[1]!.params[7]).toBe(toStorageString(0))
+
+    // Cada fila lleva su propio pago_id (1 fila `pagos` por factura en el FIFO)
+    const pagoIds = new Set(aplicaciones.map((c) => c.params[3]))
+    expect(pagoIds.size).toBe(2)
+  })
+
+  it('abono global con excedente SAF (bug fix Pregunta 5): la porcion excedente promovida a SAFC/lote NO escribe fila pagos_aplicaciones', async () => {
+    const calls = mockTx({
+      saldoActual: '20.00000000',
+      safDisponible: '0.00000000',
+      saldoPendienteUsd: '20.00000000',
+      facturasSaf: [{ id: 'fac-1', nro_factura: 'F-001', saldo_pend_usd: '20.00000000' }],
+    })
+
+    await registrarAbonoGlobal(baseParams({ aplicarSaf: false, montoSaf: undefined, monto: 50 }))
+
+    const aplicaciones = calls.filter((c) => c.sql.startsWith('INSERT INTO pagos_aplicaciones'))
+    // Solo 1 fila por la factura de $20 realmente aplicada; el excedente de
+    // $30 va a saf_creditos_lotes, NUNCA a pagos_aplicaciones.
+    expect(aplicaciones).toHaveLength(1)
+    expect(aplicaciones[0]!.params[4]).toBe('fac-1')
+    expect(aplicaciones[0]!.params[5]).toBe(toStorageString(20))
+
+    const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
+    expect(loteInsert).toBeDefined()
+  })
+
   it('gate SAF: rechaza cuando montoSaf excede el credito disponible real (saldo_actual negativo = credito), sin importar cuan grande sea el monto solicitado', async () => {
     mockTx({ saldoActual: '-10.00000000', safDisponible: '10.00000000' })
 
@@ -1147,6 +1211,110 @@ describe('aplicarPagoFacturaEnTx — wiring de saldo_pendiente_usd (slice 1b)', 
     const esperado = calcularSaldoPendienteClienteNuevo('PAG', '50.00000000', '10.00000000')
     expect(toStorageString(esperado)).toBe('40.00000000')
     expect(clienteUpdate!.params).toContain(toStorageString(esperado))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// aplicarPagoFacturaEnTx — pagos_aplicaciones (slice 2,
+// cxc-ledger-saldos-redesign). Auditoria per-invoice append-only, mirror de
+// saf_creditos_aplicaciones (migrations/0112). El INSERT va DESPUES del
+// UPDATE ventas, reusando el `saldoFactura`/`nuevoSaldoFactura` ya en
+// scope — nunca un recalculo nuevo.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('aplicarPagoFacturaEnTx — pagos_aplicaciones (slice 2)', () => {
+  function makeTx(opts: { saldoActual: string; saldoPendienteUsd: string; facturaSaldoPend: string }) {
+    const calls: Call[] = []
+    const tx = {
+      execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params })
+        if (sql.startsWith('SELECT id FROM monedas WHERE codigo_iso = ?')) {
+          return { rows: { length: 1, item: () => ({ id: 'moneda-usd-id' }) } }
+        }
+        if (sql.startsWith('SELECT nro_factura, saldo_pend_usd, total_usd, tasa FROM ventas WHERE id = ?')) {
+          return {
+            rows: {
+              length: 1,
+              item: () => ({
+                nro_factura: 'F-001',
+                saldo_pend_usd: opts.facturaSaldoPend,
+                total_usd: '100.00000000',
+                tasa: '40.00000000',
+              }),
+            },
+          }
+        }
+        if (sql.startsWith('SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?')) {
+          return {
+            rows: {
+              length: 1,
+              item: () => ({ saldo_actual: opts.saldoActual, saldo_pendiente_usd: opts.saldoPendienteUsd }),
+            },
+          }
+        }
+        return { rows: { length: 0, item: () => undefined } }
+      }),
+    } as unknown as Transaction
+    return { tx, calls }
+  }
+
+  function baseParams(overrides: Partial<AplicarPagoEnTxParams> = {}): AplicarPagoEnTxParams {
+    return {
+      venta_id: 'venta-1',
+      cliente_id: 'cliente-1',
+      metodo_cobro_id: 'metodo-1',
+      moneda: 'USD',
+      tasa: 40,
+      monto: 100,
+      empresa_id: 'emp-1',
+      procesado_por: 'user-1',
+      skipBankAndAccounting: true,
+      ...overrides,
+    }
+  }
+
+  it('pago de $100 sobre factura con saldo $100 escribe exactamente 1 fila pagos_aplicaciones con snapshot antes=100/despues=0', async () => {
+    const { tx, calls } = makeTx({
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '100.00000000',
+      facturaSaldoPend: '100.00000000',
+    })
+
+    await aplicarPagoFacturaEnTx(tx, baseParams({ monto: 100 }), '2026-10-19T00:00:00-04:00')
+
+    const aplicaciones = calls.filter((c) => c.sql.startsWith('INSERT INTO pagos_aplicaciones'))
+    expect(aplicaciones).toHaveLength(1)
+
+    const pagoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO pagos ('))
+    const pagoId = pagoInsert!.params[0] as string
+
+    // Columnas: id, empresa_id, cliente_id, pago_id, venta_id,
+    // monto_aplicado_usd, saldo_venta_antes_usd, saldo_venta_despues_usd,
+    // fecha, created_at, created_by
+    const row = aplicaciones[0]!
+    expect(row.params[1]).toBe('emp-1')
+    expect(row.params[2]).toBe('cliente-1')
+    expect(row.params[3]).toBe(pagoId)
+    expect(row.params[4]).toBe('venta-1')
+    expect(row.params[5]).toBe(toStorageString(100))
+    expect(row.params[6]).toBe(toStorageString(100)) // saldo_venta_antes_usd
+    expect(row.params[7]).toBe(toStorageString(0)) // saldo_venta_despues_usd
+  })
+
+  it('pago parcial de $40 sobre factura con saldo $100 escribe snapshot antes=100/despues=60', async () => {
+    const { tx, calls } = makeTx({
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '100.00000000',
+      facturaSaldoPend: '100.00000000',
+    })
+
+    await aplicarPagoFacturaEnTx(tx, baseParams({ monto: 40 }), '2026-10-19T00:00:00-04:00')
+
+    const aplicaciones = calls.filter((c) => c.sql.startsWith('INSERT INTO pagos_aplicaciones'))
+    expect(aplicaciones).toHaveLength(1)
+    expect(aplicaciones[0]!.params[5]).toBe(toStorageString(40))
+    expect(aplicaciones[0]!.params[6]).toBe(toStorageString(100))
+    expect(aplicaciones[0]!.params[7]).toBe(toStorageString(60))
   })
 })
 
