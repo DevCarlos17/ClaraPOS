@@ -768,6 +768,39 @@ const saf_creditos_aplicaciones = new Table(
   }
 )
 
+// SAF — Reversos de lote (cxc-ledger-saldos-redesign slice 3a,
+// migrations/0113_saf_creditos_reversas.sql). Capa de "reverso" del modelo
+// open-item: anula el remanente no-consumido de un lote SAF cuyo pago
+// originador fue revertido — evento 100% append-only, trigger-managed igual
+// que saf_creditos_lotes (lote_saldo_antes/despues_usd calculados por
+// anular_saf_lote_reversa(), NO confiados de la app).
+// `insertOnly: true` por el mismo motivo que saf_creditos_aplicaciones:
+// PowerSync nunca necesita sincronizar un PATCH de vuelta para esta tabla.
+const saf_creditos_reversas = new Table(
+  {
+    empresa_id: column.text,
+    cliente_id: column.text,
+    lote_id: column.text,
+    pago_id: column.text,
+    movimiento_cuenta_id: column.text,
+    saldo_disponible_anulado_usd: column.text,
+    lote_saldo_antes_usd: column.text,
+    lote_saldo_despues_usd: column.text,
+    fecha: column.text,
+    created_at: column.text,
+    created_by: column.text,
+  },
+  {
+    insertOnly: true,
+    indexes: {
+      idx_safr_lote: ['lote_id'],
+      idx_safr_pago: ['pago_id'],
+      idx_safr_movimiento: ['movimiento_cuenta_id'],
+      idx_safr_empresa: ['empresa_id'],
+    },
+  }
+)
+
 // Pagos — Aplicaciones por factura (cxc-ledger-saldos-redesign slice 2,
 // migrations/0112_pagos_aplicaciones.sql). Mirror de saf_creditos_aplicaciones
 // (arriba) pero SIN trigger — pura auditoria app-trusted, evento 100%
@@ -1805,6 +1838,7 @@ export const AppSchema = new Schema({
   vencimientos_cobrar,
   saf_creditos_lotes,
   saf_creditos_aplicaciones,
+  saf_creditos_reversas,
   // Ventas
   ventas,
   ventas_det,

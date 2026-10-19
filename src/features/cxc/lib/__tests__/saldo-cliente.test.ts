@@ -147,6 +147,22 @@ describe('calcularSafDisponibleNuevo', () => {
 
     expect(resultado.toString()).toBe('0')
   })
+
+  it('SAFR: anulacion de remanente usa la MISMA formula que SAF — difiere el origen, nunca el calculo (parity)', () => {
+    const resultadoSafr = calcularSafDisponibleNuevo('SAFR', 100, 40)
+    const resultadoSaf = calcularSafDisponibleNuevo('SAF', 100, 40)
+
+    expect(resultadoSafr.toString()).toBe(resultadoSaf.toString())
+    expect(resultadoSafr.toString()).toBe('60')
+  })
+
+  it('SAFR: tambien pisa en 0 (nunca negativo), igual que SAF', () => {
+    const resultadoSafr = calcularSafDisponibleNuevo('SAFR', 10, 40)
+    const resultadoSaf = calcularSafDisponibleNuevo('SAF', 10, 40)
+
+    expect(resultadoSafr.toString()).toBe(resultadoSaf.toString())
+    expect(resultadoSafr.toString()).toBe('0')
+  })
 })
 
 describe('calcularSaldoLoteDespues', () => {
