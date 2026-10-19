@@ -6,7 +6,8 @@ import Decimal from 'decimal.js'
 
 /**
  * Tipos validos de `movimientos_cuenta.tipo` (ver `movimientos_cuenta_tipo_check`
- * en migrations/0057, ampliado por 0090 para `SAFC` y por 0114 para `SAFR`).
+ * en migrations/0057, ampliado por 0090 para `SAFC`, por 0114 para `SAFR`, y
+ * por 0115 para `SAFV` — "SAF aplicado en Venta", debt-neutral en el origen).
  * Espejo del CHECK constraint de Postgres. `SAFC`/`SAFR` ya existian en el
  * CHECK de la base desde 0090; esta union TS no los incluia — fix incidental
  * de paridad CHECK-vs-TS (no cambia ningun comportamiento existente).
@@ -21,6 +22,7 @@ export type TipoMovimientoCuenta =
   | 'SAL'
   | 'SAFC'
   | 'SAFR'
+  | 'SAFV'
 
 type DecimalInput = string | number | Decimal
 
@@ -28,9 +30,13 @@ type DecimalInput = string | number | Decimal
 // valor provisto por la aplicacion (ver migrations/0088_fix_saf_trigger_sign.sql).
 // SAF cubre dos direcciones (reduccion de deuda / consumo de credito) que el
 // trigger no puede distinguir solo con `monto` (siempre positivo). REV/SAL ya
-// tenian este tratamiento desde 0061_restore_trigger_context.sql.
+// tenian este tratamiento desde 0061_restore_trigger_context.sql. SAFV se
+// agrega a la MISMA rama que SAF (migrations/0115): el movimiento de
+// saldo_actual es identico (consumo de credito), misma ambiguedad de signo —
+// nunca un tratamiento nuevo.
 const TIPOS_QUE_CONFIAN_EN_SALDO_PROVISTO: ReadonlySet<TipoMovimientoCuenta> = new Set([
   'SAF',
+  'SAFV',
   'REV',
   'SAL',
 ])
@@ -116,11 +122,12 @@ export function esSaldoSafConsistente(
 /**
  * Tipos que mueven `clientes.saf_disponible` (ver migrations/0102, ampliado
  * por 0114 para incluir 'SAFR' — anulacion del remanente no-consumido de un
- * lote reversado. Misma formula que 'SAF'; difiere solo el ORIGEN
- * semantico, nunca el calculo — ver design.md Q4 de
- * cxc-ledger-saldos-redesign).
+ * lote reversado — y por 0115 para incluir 'SAFV' — SAF aplicado como
+ * metodo de pago en una venta POS. Misma formula que 'SAF' en ambos casos;
+ * difiere solo el ORIGEN semantico, nunca el calculo — ver design.md Q4 de
+ * cxc-ledger-saldos-redesign y migrations/0115, Opcion B1).
  */
-export type TipoMovimientoSaf = 'SAFC' | 'SAF' | 'SAFR'
+export type TipoMovimientoSaf = 'SAFC' | 'SAF' | 'SAFR' | 'SAFV'
 
 /**
  * Calcula el nuevo valor de `clientes.saf_disponible` para una fila
@@ -134,6 +141,10 @@ export type TipoMovimientoSaf = 'SAFC' | 'SAF' | 'SAFR'
  *           consumido, migrations/0114 — MISMA formula que SAF, cae en la
  *           misma rama de abajo sin cambio de codigo: difiere el ORIGEN,
  *           nunca el calculo)
+ *   SAFV -> MAX(0, disponibleAnterior - monto)  (SAF aplicado en una venta
+ *           POS, migrations/0115 — MISMA formula que SAF/SAFR, misma rama:
+ *           difiere el ORIGEN (venta vs. pago de CxC vs. anulacion de
+ *           remanente), nunca el calculo)
  *
  * A diferencia de `calcularSaldoNuevoMovimientoCuenta` (que para SAF confia
  * en un `saldoNuevoProvisto` por la app, porque esa direccion es ambigua),
@@ -156,8 +167,9 @@ export function calcularSafDisponibleNuevo(
     return anterior.plus(montoD)
   }
 
-  // tipo === 'SAF' | 'SAFR' — misma formula de consumo para ambos (zero
-  // cambio de codigo: SAFR cae aqui por diseno, difiere solo el ORIGEN).
+  // tipo === 'SAF' | 'SAFR' | 'SAFV' — misma formula de consumo para los
+  // tres (zero cambio de codigo: SAFR/SAFV caen aqui por diseno, difiere
+  // solo el ORIGEN).
   return Decimal.max(new Decimal(0), anterior.minus(montoD))
 }
 
@@ -224,10 +236,20 @@ export function calcularSaldoLoteDespues(
  *                  una factura)
  *   PAG/NCR/SAF -> MAX(0, anterior - monto)    (reduce deuda pendiente:
  *                  pago/abono, nota de credito, o SAF usado como metodo de
- *                  pago — piso en cero, nunca negativo)
- *   resto       -> anterior sin cambios        (SAFC/SAFR/SAL no tocan la
- *                  deuda pendiente — mueven saldo a favor standing o
- *                  importan saldo inicial, no facturas)
+ *                  pago de una factura/vencimiento PREEXISTENTE bruta
+ *                  (flujo CxC) — piso en cero, nunca negativo)
+ *   resto       -> anterior sin cambios        (SAFC/SAFR/SAL/SAFV no tocan
+ *                  la deuda pendiente. SAFV (migrations/0115, Opcion B1) es
+ *                  el caso CENTRAL de este grupo: SAF aplicado como metodo
+ *                  de pago en una VENTA POS — la factura FAC asociada YA
+ *                  nacio neta del SAF (invariante FAC-es-neto,
+ *                  `calcularCierreVentaConSaf` en use-ventas.ts), por lo
+ *                  que la fila SAFV emparejada JAMAS debe volver a tocar la
+ *                  deuda pendiente. Antes de 0115, este caso usaba el
+ *                  mismo tipo 'SAF' que el flujo CxC y corrompia los datos
+ *                  de staging (CLIENTE TEST 3) porque el trigger no podia
+ *                  distinguir ambos origenes — ver migrations/0115 para el
+ *                  analisis completo.)
  *
  * A diferencia de `calcularSaldoNuevoMovimientoCuenta` (que para SAF/REV/SAL
  * confia en un `saldoNuevoProvisto` por la app, porque esa direccion es

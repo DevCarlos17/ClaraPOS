@@ -1028,7 +1028,20 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         const saldoDespuesSaf = saldoAntesSaf.plus(safAplicadoUsd)
         const saldoPendienteAntesSafVenta = new Decimal(clienteSafRow.saldo_pendiente_usd || '0')
 
-        // INSERT movimiento_cuenta tipo='SAF' — referencia de trazabilidad apunta a esta venta
+        // INSERT movimiento_cuenta tipo='SAFV' ("SAF aplicado en Venta",
+        // migrations/0115) — referencia de trazabilidad apunta a esta venta.
+        // ANTES (PR #249, fix/cxc-ledger-saf-venta-doble-descuento) este
+        // INSERT usaba tipo='SAF', el MISMO tipo que el flujo CxC
+        // (`aplicarPagoFacturaEnTx` en use-cxc.ts, donde el SAF SI paga una
+        // factura PREEXISTENTE bruta). El trigger servidor
+        // `actualizar_saldo_cliente()` no podia distinguir ambos origenes y
+        // trataba CUALQUIER fila tipo='SAF' como reduccion de deuda — datos
+        // reales de staging (CLIENTE TEST 3, venta C01-000021, POSTERIOR al
+        // merge de #249) confirmaron que esto corrompia saldo_pendiente_usd
+        // a 0 en servidor sin importar el pass-through app-side de #249.
+        // 'SAFV' elimina la ambiguedad EN EL ORIGEN: el trigger (0115) lo
+        // trata como debt-neutral para TODA fila de este tipo, sin depender
+        // de que ningun PATCH posterior gane una carrera.
         const safOrigenRefsWithVenta = safOrigenRefs.length > 0 ? safOrigenRefs : [ventaId]
         const safMovIdVenta = uuidv4()
         await tx.execute(
@@ -1036,7 +1049,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
              (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
               observacion, venta_id, fecha, created_at, created_by,
               moneda_pago, monto_moneda, tasa_pago, saf_origen_refs, sesion_caja_id)
-           VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'SAFV', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?)`,
           [
             safMovIdVenta, empresa_id, safClienteId,
             `SAF-VTA-${nroFactura}`,
@@ -1054,55 +1067,40 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         )
 
         // Consumir credito SAF: actualizar clientes.saldo_actual. Escritura
-        // optimista pareada de saf_disponible (SAF resta) — mismo
-        // writeTransaction, el trigger del servidor (migration 0102) es la
-        // autoridad final al reconectar.
-        const safDisponibleDespues = calcularSafDisponibleNuevo('SAF', safDisponibleAntes, safAplicadoUsd)
-        // FIX (fix/cxc-ledger-saf-venta-doble-descuento, bug de staging):
-        // saldo_pendiente_usd NO se vuelve a restar aqui. El bloque FAC de
-        // arriba (linea ~977) ya escribe la deuda NETA del SAF — `saldoPend`
-        // (monto del FAC) es `cierre.saldoPendUsd`, que `calcularCierreVentaConSaf`
-        // calcula DESPUES de descontar `safAplicadoUsd` del total (invariante
-        // FAC-es-neto: monto FAC = total - safAplicadoUsd). La deuda real del
-        // cliente YA nacio en su valor final ($50 en el caso de staging: $100
-        // total - $50 SAF) en el UPDATE del bloque FAC.
+        // optimista pareada de saf_disponible — 'SAFV' consume credito
+        // standing EXACTAMENTE igual que 'SAF' (misma formula, migrations/0115)
+        // — mismo writeTransaction, el trigger del servidor (migration 0102,
+        // extendido por 0115 para SAFV) es la autoridad final al reconectar.
+        const safDisponibleDespues = calcularSafDisponibleNuevo('SAFV', safDisponibleAntes, safAplicadoUsd)
+        // FIX DE RAIZ (fix/cxc-saf-venta-tipo-safv, migrations/0115):
+        // saldo_pendiente_usd es DEBT-NEUTRAL para tipo='SAFV' — tanto en la
+        // app (via `calcularSaldoPendienteClienteNuevo`, que cae al ELSE
+        // para 'SAFV') como en el trigger servidor (mismo ELSE, 0115). El
+        // bloque FAC de arriba (linea ~977) ya escribe la deuda NETA del SAF
+        // — `saldoPend` (monto del FAC) es `cierre.saldoPendUsd`, que
+        // `calcularCierreVentaConSaf` calcula DESPUES de descontar
+        // `safAplicadoUsd` del total (invariante FAC-es-neto: monto FAC =
+        // total - safAplicadoUsd). La deuda real del cliente YA nacio en su
+        // valor final ($50 en el caso de staging: $100 total - $50 SAF) en
+        // el UPDATE del bloque FAC — la fila SAFV emparejada JAMAS debe
+        // volver a tocarla, ni en la app ni en el trigger.
         //
-        // El codigo anterior volvia a aplicar `calcularSaldoPendienteClienteNuevo('SAF', ...)`
-        // aqui, que espeja el trigger Postgres (`actualizar_saldo_cliente`,
-        // migrations/0110/0114) tratando CUALQUIER fila tipo='SAF' como una
-        // reduccion de deuda — correcto para el flujo de CxC
-        // (`aplicarPagoFacturaEnTx` en use-cxc.ts, donde el SAF paga una
-        // factura PREEXISTENTE que SI carga su deuda completa), pero
-        // INCORRECTO aqui: restaba los mismos $50 una SEGUNDA vez sobre una
-        // deuda que nunca llego a nacer en $100 (0 -> 50 por FAC -> 0 por este
-        // bloque, en vez de quedar en 50). Ver analisis de sync en el reporte
-        // de esta sesion: el trigger del servidor SI reaplica la resta cuando
-        // esta fila SAF sincroniza, pero `saldo_pendiente_usd` esta
-        // deliberadamente EXCLUIDO de `TRIGGER_MANAGED_PATCH_COLUMNS.clientes`
-        // (connector.ts) — el UPDATE clientes explicito de este mismo bloque,
-        // que sube DESPUES en el mismo orden de la cola CRUD, sobreescribe el
-        // valor erroneo del trigger con el valor correcto (pass-through) una
-        // vez que la transaccion local termina de subir completa.
-        //
-        // `saldoPendienteAntesSafVenta` ya es el valor post-FAC (se releyo la
-        // fila `clientes` DESPUES de que el bloque FAC committeara su UPDATE,
-        // linea ~1029) — pasarlo sin cambios es exactamente "no tocar la
-        // deuda pendiente aqui".
-        //
-        // TODO / FOLLOW-UP (riesgo residual conocido, aun SIN ticket formal):
-        // existe una ventana transitoria durante la sincronizacion en la que
-        // un lector DIRECTO de Postgres (reportes, otro dispositivo) veria
-        // `saldo_pendiente_usd` en 0 entre que sube la fila SAF (dispara el
-        // trigger que resta) y que sube el PATCH de `clientes` (que lo
-        // corrige). Converge al valor correcto, pero la correctitud depende
-        // del ORDEN de subida de la cola CRUD + la exclusion en connector.ts
-        // (`TRIGGER_MANAGED_PATCH_COLUMNS`), lo cual es fragil ante refactors.
-        // Correccion REAL (Opcion B, evaluar al cierre del ciclo): un tipo de
-        // movimiento distinto (p.ej. 'SAFV') que el trigger trate como
-        // neutral para la deuda en el origen — requiere migracion (ampliar
-        // CHECK + CASE del trigger) + espejo en saldo-cliente.ts. No se hace
-        // en este fix por decision del owner (Opcion A).
-        const saldoPendienteDespuesSafVenta = saldoPendienteAntesSafVenta
+        // Historia: PR #249 corrigio esto SOLO en la app (pass-through
+        // literal, `saldoPendienteDespuesSafVenta = saldoPendienteAntesSafVenta`),
+        // dejando el tipo='SAF' sin cambiar — el trigger servidor seguia
+        // restando, y solo convergia al valor correcto SI el PATCH de la app
+        // ganaba la carrera contra el trigger (fragil, roto en datos reales
+        // de staging). Esta migracion (0115) elimina la carrera por completo:
+        // ahora se llama a `calcularSaldoPendienteClienteNuevo('SAFV', ...)`
+        // (la pairing optimista NORMAL, sin hack de pass-through), que
+        // devuelve el anterior SIN CAMBIOS por construccion (SAFV cae al
+        // ELSE) — exactamente lo mismo que antes computaba el hack, pero
+        // ahora respaldado por un trigger que coincide, no por una carrera.
+        const saldoPendienteDespuesSafVenta = calcularSaldoPendienteClienteNuevo(
+          'SAFV',
+          saldoPendienteAntesSafVenta,
+          safAplicadoUsd
+        )
         await tx.execute(
           'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
           [

@@ -1099,7 +1099,7 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
 
       const ventaInsertIdx = calls.findIndex((c) => c.sql.startsWith('INSERT INTO ventas ('))
       const safConsumoIdx = calls.findIndex(
-        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAF',")
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFV',")
       )
       expect(safConsumoIdx).toBeGreaterThan(-1)
       expect(safConsumoIdx).toBeGreaterThan(ventaInsertIdx)
@@ -1152,7 +1152,7 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       )
 
       const safConsumo = calls.find(
-        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAF',")
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFV',")
       )
       expect(safConsumo).toBeDefined()
       const safMovId = safConsumo!.params[0] as string
@@ -1268,7 +1268,7 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
     })
   })
 
-  describe('BUG staging — crearVenta CREDITO + SAF duplica el descuento de saldo_pendiente_usd (fix/cxc-ledger-saf-venta-doble-descuento)', () => {
+  describe('BUG staging — crearVenta CREDITO + SAF duplica el descuento de saldo_pendiente_usd (fix/cxc-ledger-saf-venta-doble-descuento, CORREGIDO DE RAIZ via SAFV en fix/cxc-saf-venta-tipo-safv)', () => {
     // Escenario exacto de staging: factura CREDITO de $100, SAF aplicado
     // $50 como metodo de pago, cliente arranca con saldo_pendiente_usd=0.
     // tasa=1 para que usdToBs/bsToUsd sean identidad (sin ruido de
@@ -1281,8 +1281,21 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
     // Bloque FAC (linea ~960 de use-ventas.ts) YA escribe la deuda NETA del
     // SAF (el POS prededuce el SAF del total facturable antes de llegar
     // aqui, via calcularCierreVentaConSaf): FAC monto=$50, no $100. El
-    // bloque SAF (linea ~1014) NO debe volver a restar esos mismos $50 de
-    // saldo_pendiente_usd — la deuda ya nacio neta en el FAC.
+    // bloque SAFV (linea ~1014, ANTES tipo='SAF') NO debe volver a restar
+    // esos mismos $50 de saldo_pendiente_usd — la deuda ya nacio neta en el
+    // FAC.
+    //
+    // HISTORIA: PR #249 (fix/cxc-ledger-saf-venta-doble-descuento) corrigio
+    // esto SOLO en la app (pass-through local), pero datos reales de
+    // staging (CLIENTE TEST 3, venta C01-000021, POSTERIOR al merge de
+    // #249) confirmaron que el trigger SERVIDOR seguia corrompiendo el
+    // valor: trataba CUALQUIER fila tipo='SAF' como resta de deuda, sin
+    // distinguir "SAF como metodo de pago en una venta que ya nacio neta"
+    // de "SAF paga una factura preexistente bruta" (flujo CxC). Este
+    // archivo (fix/cxc-saf-venta-tipo-safv, migrations/0115) corrige la
+    // causa raiz: el INSERT ahora usa tipo='SAFV', que el trigger trata
+    // como neutral para saldo_pendiente_usd EN EL ORIGEN — ya no hay
+    // carrera entre el PATCH de la app y el trigger que ganar.
     function stockFixture() {
       return {
         cajaDepositoRow: null as { deposito_id: string | null } | null,
@@ -1322,12 +1335,24 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       expect(facInsert!.params).not.toContain('100.00000000')
 
       // El SAF SI se consume como metodo de pago (saf_disponible: 50 -> 0) —
-      // esta parte del ledger ya funciona correctamente hoy.
+      // esta parte del ledger ya funciona correctamente hoy. FIX (SAFV,
+      // migrations/0115): el INSERT ahora usa tipo='SAFV', NO 'SAF' — el
+      // trigger servidor trata 'SAFV' como neutral para saldo_pendiente_usd
+      // en el origen (nunca resta), eliminando la ambiguedad de origen que
+      // corrompia los datos de staging (CLIENTE TEST 3) a pesar del
+      // pass-through app-side de PR #249.
       const safInsert = calls.find(
-        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAF',")
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFV',")
       )
       expect(safInsert).toBeDefined()
       expect(safInsert!.params).toContain('50.00000000')
+
+      // Ningun INSERT de este bloque usa el tipo legado 'SAF' — confirma
+      // que la migracion de tipo fue completa, no un agregado parcial.
+      const safLegadoInsert = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAF',")
+      )
+      expect(safLegadoInsert).toBeUndefined()
 
       const safClienteUpdate = calls.find(
         (c) => c.sql.startsWith('UPDATE clientes SET saldo_actual') && c.sql.includes('saf_disponible')
@@ -1372,11 +1397,14 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       )
 
       // SAF cubre el 100% -> saldoPend (cierre) = 0 -> cierre.tipo='CONTADO'
-      // -> el bloque FAC (gateado sobre cierre.tipo==='CREDITO') NUNCA corre.
-      // El bloque SAF SI corre (gateado solo sobre safAplicadoUsd > 0, no
-      // sobre cierre.tipo) y escribe saldo_pendiente_usd = GREATEST(0, 0-100)
-      // = 0 — mismo resultado con o sin el fix (nada que sobre-restar desde
-      // 0), pero sigue siendo necesario que el piso en 0 se preserve.
+      // -> el bloque FAC (gateado sobre cierre.tipo==='CREDITO') NUNCA corre
+      // -> saldoPendienteAntesSafVenta se queda en el fixture inicial (0).
+      // El bloque SAFV SI corre (gateado solo sobre safAplicadoUsd > 0, no
+      // sobre cierre.tipo) y es debt-neutral (calcularSaldoPendienteClienteNuevo
+      // cae al ELSE para 'SAFV' — ver migrations/0115): escribe el mismo
+      // valor anterior (0) SIN CAMBIOS, nunca resta. Mismo resultado final
+      // (0) que antes del fix, pero ahora por neutralidad de origen, no por
+      // un piso-en-0 de una resta que nunca debio ocurrir.
       expect(clienteState.saldo_pendiente_usd).toBe('0.00000000')
       expect(clienteState.saf_disponible).toBe('0.00000000')
     })
@@ -1400,9 +1428,9 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       )
 
       const safInsert = calls.find(
-        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAF',")
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFV',")
       )
-      expect(safInsert).toBeUndefined() // sin safEntry, no hay bloque SAF
+      expect(safInsert).toBeUndefined() // sin safEntry, no hay bloque SAFV
 
       const facClienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET saldo_actual'))
       expect(facClienteUpdate).toBeDefined()

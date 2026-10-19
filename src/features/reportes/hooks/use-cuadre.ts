@@ -1674,7 +1674,7 @@ export function useSafDiario(filters: CuadreFilters | null): SafDiarioResult {
     filters
       ? `SELECT COALESCE(SUM(CAST(mc.monto AS REAL)), 0) as total_saf
          FROM movimientos_cuenta mc
-         WHERE mc.tipo = 'SAF'
+         WHERE mc.tipo IN ('SAF', 'SAFV')
            AND mc.sesion_caja_id IS NOT NULL
            AND ${whereMc}`
       : '',
@@ -1698,12 +1698,12 @@ export function useSafDiario(filters: CuadreFilters | null): SafDiarioResult {
          LEFT JOIN pagos pg ON pg.venta_id = mc.venta_id
            AND pg.empresa_id = mc.empresa_id
            AND pg.is_reversed = 0
-         LEFT JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
-         WHERE mc.tipo = 'SAF'
-           AND mc.sesion_caja_id IS NOT NULL
-           AND ${whereMc}
-         GROUP BY mc.id, mc.venta_id, mc.monto, mc.tasa_pago,
-                  v.nro_factura, v.total_usd, c.nombre
+          LEFT JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
+          WHERE mc.tipo IN ('SAF', 'SAFV')
+            AND mc.sesion_caja_id IS NOT NULL
+            AND ${whereMc}
+          GROUP BY mc.id, mc.venta_id, mc.monto, mc.tasa_pago,
+                   v.nro_factura, v.total_usd, c.nombre
          ORDER BY mc.fecha DESC`
       : '',
     filters ? paramsMc : []
