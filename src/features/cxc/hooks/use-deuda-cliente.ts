@@ -2,8 +2,14 @@ import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 /**
- * Deuda real de facturas de UN cliente: SUM(ventas.saldo_pend_usd) de
- * facturas realmente pendientes, filtrado por empresa_id.
+ * Deuda real de facturas de UN cliente: lee `clientes.saldo_pendiente_usd`
+ * directo (snapshot O(1) mantenido por trigger, ver migrations/0110). Ya NO
+ * agrega SUM(ventas.saldo_pend_usd) en cada render (cxc-ledger-saldos-
+ * redesign, slice 1c — ver design.md "Read-path parity proof": el trigger
+ * mantiene esta columna matematicamente identica a
+ * SUM(ventas.saldo_pend_usd WHERE estado != 'pago') en todo momento,
+ * tolerancia 0, migrations/0108). Requiere que el backfill 0111 haya
+ * corrido en la DB destino, o se mostrara 0 para deuda preexistente.
  *
  * Fuente dedicada para el GATE de limite de credito en POS (cobro-modal.tsx,
  * pos-terminal.tsx, cliente-selector.tsx) — deliberadamente NO consulta
@@ -21,9 +27,9 @@ export function useDeudaFacturasCliente(clienteId: string | null): {
 
   const { data, isLoading } = useQuery(
     shouldQuery
-      ? `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0) as deuda_usd
-         FROM ventas
-         WHERE cliente_id = ? AND empresa_id = ? AND CAST(saldo_pend_usd AS REAL) > 0`
+      ? `SELECT CAST(saldo_pendiente_usd AS REAL) as deuda_usd
+         FROM clientes
+         WHERE id = ? AND empresa_id = ?`
       : '',
     shouldQuery ? [clienteId, empresaId] : []
   )
@@ -35,8 +41,11 @@ export function useDeudaFacturasCliente(clienteId: string | null): {
 /**
  * Deuda real de facturas para un LOTE de clientes (una sola query con IN),
  * usado en listas/dropdowns donde se muestran varios clientes candidatos a
- * la vez (ej. resultados de busqueda en cliente-selector.tsx). Retorna un
- * mapa `clienteId -> deudaFacturasUsd` (ausente = 0).
+ * la vez (ej. resultados de busqueda en cliente-selector.tsx). Lee
+ * `clientes.saldo_pendiente_usd` directo (mismo swap O(1) que la version
+ * singular, ver JSDoc de `useDeudaFacturasCliente` arriba — slice 1c de
+ * cxc-ledger-saldos-redesign). Retorna un mapa `clienteId -> deudaFacturasUsd`
+ * (ausente = 0).
  */
 export function useDeudaFacturasClientes(clienteIds: string[]): Record<string, number> {
   const { user } = useCurrentUser()
@@ -47,10 +56,9 @@ export function useDeudaFacturasClientes(clienteIds: string[]): Record<string, n
 
   const { data } = useQuery(
     shouldQuery
-      ? `SELECT cliente_id, COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0) as deuda_usd
-         FROM ventas
-         WHERE empresa_id = ? AND cliente_id IN (${placeholders}) AND CAST(saldo_pend_usd AS REAL) > 0
-         GROUP BY cliente_id`
+      ? `SELECT id as cliente_id, CAST(saldo_pendiente_usd AS REAL) as deuda_usd
+         FROM clientes
+         WHERE empresa_id = ? AND id IN (${placeholders})`
       : '',
     shouldQuery ? [empresaId, ...ids] : []
   )

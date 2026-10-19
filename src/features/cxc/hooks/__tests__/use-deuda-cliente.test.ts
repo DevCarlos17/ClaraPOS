@@ -40,8 +40,8 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('useDeudaFacturasCliente — fuente del gate de limite de credito (SUM(ventas.saldo_pend_usd), NO saldo_actual)', () => {
-  it('consulta SUM(ventas.saldo_pend_usd) escopeado por cliente_id Y empresa_id, nunca clientes.saldo_actual', () => {
+describe('useDeudaFacturasCliente — slice 1c (cxc-ledger-saldos-redesign): lee clientes.saldo_pendiente_usd (O(1)), ya NO agrega SUM(ventas.saldo_pend_usd) en cada render', () => {
+  it('consulta CAST(saldo_pendiente_usd AS REAL) desde clientes, escopeado por id Y empresa_id, nunca saldo_actual ni SUM sobre ventas', () => {
     setCurrentUser('emp-1')
     let capturedSql = ''
     let capturedParams: unknown[] = []
@@ -53,26 +53,15 @@ describe('useDeudaFacturasCliente — fuente del gate de limite de credito (SUM(
 
     const { result } = renderHook(() => useDeudaFacturasCliente('cliente-1'))
 
-    expect(capturedSql).toContain('FROM ventas')
-    expect(capturedSql).toContain('cliente_id = ?')
+    expect(capturedSql).toContain('FROM clientes')
+    expect(capturedSql).toContain('saldo_pendiente_usd')
+    expect(capturedSql).toContain('id = ?')
     expect(capturedSql).toContain('empresa_id = ?')
     expect(capturedSql).not.toContain('saldo_actual')
+    expect(capturedSql).not.toContain('SUM(CAST(saldo_pend_usd')
+    expect(capturedSql).not.toContain('FROM ventas')
     expect(capturedParams).toEqual(['cliente-1', 'emp-1'])
     expect(result.current.deudaFacturasUsd).toBe(350.5)
-  })
-
-  it('usa tolerancia 0 (saldo_pend_usd > 0), ya NO 0.001 — paridad con estado != \'pago\' (cxc-sync-snapshot-redesign, migrations/0108)', () => {
-    setCurrentUser('emp-1')
-    let capturedSql = ''
-    mockedUseQuery.mockImplementation(((sql: string) => {
-      capturedSql = sql
-      return { data: [{ deuda_usd: 0 }], isLoading: false }
-    }) as unknown as typeof useQuery)
-
-    renderHook(() => useDeudaFacturasCliente('cliente-1'))
-
-    expect(capturedSql).toContain('saldo_pend_usd AS REAL) > 0')
-    expect(capturedSql).not.toContain('saldo_pend_usd AS REAL) > 0.001')
   })
 
   it('sin clienteId: no ejecuta query (string vacio, params vacios) y retorna deuda 0', () => {
@@ -89,12 +78,16 @@ describe('useDeudaFacturasCliente — fuente del gate de limite de credito (SUM(
   })
 })
 
-describe('useDeudaFacturasClientes — batch (IN clause), misma fuente que la version singular', () => {
-  it('agrupa por cliente_id, escopeado por empresa_id, retorna mapa clienteId -> deudaFacturasUsd', () => {
+describe('useDeudaFacturasClientes — batch (IN clause): slice 1c, misma lectura directa de clientes.saldo_pendiente_usd que la version singular', () => {
+  it('agrupa por id (cliente_id), escopeado por empresa_id, lee CAST(saldo_pendiente_usd AS REAL), ya NO SUM sobre ventas', () => {
     setCurrentUser('emp-1')
     mockedUseQuery.mockImplementation(((sql: string, params: unknown[] = []) => {
-      expect(sql).toContain('empresa_id = ? AND cliente_id IN (?,?)')
+      expect(sql).toContain('FROM clientes')
+      expect(sql).toContain('saldo_pendiente_usd')
+      expect(sql).toContain('empresa_id = ? AND id IN (?,?)')
       expect(sql).not.toContain('saldo_actual')
+      expect(sql).not.toContain('SUM(CAST(saldo_pend_usd')
+      expect(sql).not.toContain('FROM ventas')
       expect(params).toEqual(['emp-1', 'cliente-1', 'cliente-2'])
       return {
         data: [
@@ -108,20 +101,6 @@ describe('useDeudaFacturasClientes — batch (IN clause), misma fuente que la ve
     const { result } = renderHook(() => useDeudaFacturasClientes(['cliente-1', 'cliente-2']))
 
     expect(result.current).toEqual({ 'cliente-1': 100, 'cliente-2': 0 })
-  })
-
-  it('usa tolerancia 0 (saldo_pend_usd > 0), ya NO 0.001 — paridad con estado != \'pago\' (cxc-sync-snapshot-redesign, migrations/0108)', () => {
-    setCurrentUser('emp-1')
-    let capturedSql = ''
-    mockedUseQuery.mockImplementation(((sql: string) => {
-      capturedSql = sql
-      return { data: [], isLoading: false }
-    }) as unknown as typeof useQuery)
-
-    renderHook(() => useDeudaFacturasClientes(['cliente-1']))
-
-    expect(capturedSql).toContain('saldo_pend_usd AS REAL) > 0')
-    expect(capturedSql).not.toContain('saldo_pend_usd AS REAL) > 0.001')
   })
 
   it('lista vacia: no ejecuta query, retorna mapa vacio', () => {
