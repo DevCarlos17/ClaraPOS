@@ -55,6 +55,8 @@ import type { Transaction } from '@powersync/common'
 import { renderHook } from '@testing-library/react'
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
+import { toStorageString } from '@/lib/currency'
+import { calcularSaldoPendienteClienteNuevo } from '@/features/cxc/lib/saldo-cliente'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import {
   crearNotaCredito,
@@ -129,6 +131,8 @@ interface NcrTxFixtures {
   clienteSaldoActual?: string
   /** saf-snapshot-y-trazabilidad: saf_disponible del cliente ANTES de liquidar el remanente (SAFC). Default '0'. */
   clienteSafDisponible?: string
+  /** `clientes.saldo_pendiente_usd` anterior (slice 1b, cxc-ledger-saldos-redesign). Default '0'. */
+  clienteSaldoPendienteUsd?: string
   /** Slice 4b: SUM(cantidad) ya acreditado por venta_det_id — alimenta el guard de doble-credito (`buildSumCantidadYaAcreditadaQuery`). */
   yaAcreditadoPorLinea?: Record<string, string>
   /** Slice 5a-2a: si `false`, la validacion del override de deposito falla (inactivo/otra empresa). Default `true` (valido) cuando no se especifica. */
@@ -286,19 +290,31 @@ function mockCrearNcrTx(opts: NcrTxFixtures) {
         if (sql.startsWith('INSERT INTO movimientos_metodo_cobro')) {
           return { rows: { length: 0, item: () => undefined } }
         }
-        if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?')) {
+        // Matchea con o sin `saldo_pendiente_usd` en la lista de columnas
+        // (slice 1b, cxc-ledger-saldos-redesign) via includes en vez de
+        // startsWith exacto, para no acoplar el test al orden literal.
+        if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('saf_disponible') && sql.includes('FROM clientes WHERE id = ?')) {
           return {
             rows: {
               length: 1,
               item: () => ({
                 saldo_actual: opts.clienteSaldoActual ?? '0.00',
                 saf_disponible: opts.clienteSafDisponible ?? '0',
+                saldo_pendiente_usd: opts.clienteSaldoPendienteUsd ?? '0',
               }),
             },
           }
         }
-        if (sql.startsWith('SELECT saldo_actual FROM clientes WHERE id = ?')) {
-          return { rows: { length: 1, item: () => ({ saldo_actual: opts.clienteSaldoActual ?? '0.00' }) } }
+        if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('FROM clientes WHERE id = ?')) {
+          return {
+            rows: {
+              length: 1,
+              item: () => ({
+                saldo_actual: opts.clienteSaldoActual ?? '0.00',
+                saldo_pendiente_usd: opts.clienteSaldoPendienteUsd ?? '0',
+              }),
+            },
+          }
         }
         if (sql.startsWith('INSERT INTO movimientos_cuenta')) {
           return { rows: { length: 0, item: () => undefined } }
@@ -908,7 +924,7 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
   })
 
   it('AJUSTE_CXC: reduce clientes.saldo_actual via movimientos_cuenta (Step B), CERO escritura de caja', async () => {
-    const calls = mockCrearNcrTx(fixturesModalidad())
+    const calls = mockCrearNcrTx({ ...fixturesModalidad(), clienteSaldoPendienteUsd: '50.00' })
 
     await crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL', modalidad: 'AJUSTE_CXC' }))
 
@@ -923,6 +939,14 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
 
     const egresoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro'))
     expect(egresoInsert).toBeUndefined()
+
+    // wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign):
+    // AJUSTE_CXC cancela deuda real igual que NCR/PAG.
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    // 50 (anterior) - 30 (remanente aplicado) = 20
+    expect(clienteUpdate!.params).toContain(toStorageString(20))
   })
 
   it('AJUSTE_CXC nunca deja el saldo del cliente negativo — tope en 0 aunque el remanente exceda la deuda existente', async () => {
@@ -1157,7 +1181,10 @@ describe('crearNotaCredito — Slice 4 (REFUND_TESORERIA: motor de egreso real d
     const calls = mockCrearNcrTx(
       fixturesRefund(
         { total_usd: '100.00', total_bs: '4000.00' },
-        { cuentasTesoreria: { 'banco-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' } } }
+        {
+          cuentasTesoreria: { 'banco-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' } },
+          clienteSaldoPendienteUsd: '60.00',
+        }
       )
     )
 
@@ -1196,6 +1223,13 @@ describe('crearNotaCredito — Slice 4 (REFUND_TESORERIA: motor de egreso real d
     )
     expect(clienteUpdate).toBeDefined()
     expect(clienteUpdate!.params).toContain('40.00000000')
+
+    // wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign):
+    // SAFC del remanente REFUND_TESORERIA es no-op para deuda pendiente.
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    const esperado = calcularSaldoPendienteClienteNuevo('SAFC', '60.00', '40.00000000')
+    expect(toStorageString(esperado)).toBe('60.00000000')
+    expect(clienteUpdate!.params).toContain(toStorageString(esperado))
   })
 
   it('PR3 (saf-snapshot-y-trazabilidad): REFUND_TESORERIA remanente inserta UN lote saf_creditos_lotes anclado al SAFC del remanente, origen_tipo=NOTA_CREDITO, saldo_disponible_usd=monto_original_usd=remanenteSafc', async () => {
@@ -1859,6 +1893,7 @@ describe('crearNotaCredito — Slice 4b (wiring PARCIAL en la tx atomica: notas_
       productos: { 'prod-A': { tipo: 'P', stock: '50.000', nombre: 'Producto A' } },
       inventarioStock: { 'prod-A::dep-B': '10.000' },
       clienteSaldoActual: '0.00',
+      clienteSaldoPendienteUsd: '10.00',
     })
 
     await crearNotaCredito(
@@ -1895,6 +1930,25 @@ describe('crearNotaCredito — Slice 4b (wiring PARCIAL en la tx atomica: notas_
     const ventaUpdate = calls.find((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
     expect(ventaUpdate).toBeDefined()
     expect(ventaUpdate!.params).toContain('0.00000000')
+
+    // wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign):
+    // Step A (NCR) reduce deuda pendiente por el monto realmente aplicado
+    // (10.00, topeado por saldoPend — NO por totalUsdNc 23.20).
+    const clienteUpdates = calls.filter((c) => c.sql.startsWith('UPDATE clientes SET'))
+    const stepAClienteUpdate = clienteUpdates.find((c) => !c.sql.includes('saf_disponible'))
+    expect(stepAClienteUpdate).toBeDefined()
+    expect(stepAClienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    const esperadoStepA = calcularSaldoPendienteClienteNuevo('NCR', '10.00', '10.00000000')
+    expect(toStorageString(esperadoStepA)).toBe('0.00000000')
+    expect(stepAClienteUpdate!.params).toContain(toStorageString(esperadoStepA))
+
+    // Step B (SAFC) es no-op para deuda pendiente — se escribe igual, sin
+    // cambio (misma lectura fresca del fixture, no encadenada con Step A).
+    const stepBClienteUpdate = clienteUpdates.find((c) => c.sql.includes('saf_disponible'))
+    expect(stepBClienteUpdate).toBeDefined()
+    expect(stepBClienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    const esperadoStepB = calcularSaldoPendienteClienteNuevo('SAFC', '10.00', '13.20000000')
+    expect(stepBClienteUpdate!.params).toContain(toStorageString(esperadoStepB))
   })
 })
 

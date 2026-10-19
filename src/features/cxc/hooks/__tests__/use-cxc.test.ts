@@ -44,6 +44,9 @@ import {
   registrarAbonoPrestamo,
   registrarReversoAbono,
   consumirSafLotesEnTx,
+  aplicarPagoFacturaEnTx,
+  reversarDiferencialEnTx,
+  registrarDiferencialCxC,
   useDetalleFactura,
   useAfectacionCxc,
   useEvolucionFactura,
@@ -56,7 +59,11 @@ import {
   type AbonoGlobalParams,
   type AbonoPrestamoParams,
   type ConsumirSafLotesEnTxParams,
+  type AplicarPagoEnTxParams,
+  type ReversoDiferencialCxCParams,
+  type DiferencialCxCParams,
 } from '../use-cxc'
+import { calcularSaldoPendienteClienteNuevo } from '@/features/cxc/lib/saldo-cliente'
 
 const mockedDb = vi.mocked(db, true)
 const mockedUseQuery = vi.mocked(useQuery)
@@ -75,7 +82,7 @@ beforeEach(() => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no SAF/PAG)', () => {
-  function mockTx(opts: { saldoActual: string; safDisponible?: string }) {
+  function mockTx(opts: { saldoActual: string; safDisponible?: string; saldoPendienteUsd?: string }) {
     const calls: Call[] = []
     mockedDb.writeTransaction.mockImplementation(async (callback) => {
       const tx = {
@@ -90,11 +97,15 @@ describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no 
               },
             }
           }
-          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?')) {
+          if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('saf_disponible') && sql.includes('FROM clientes WHERE id = ?')) {
             return {
               rows: {
                 length: 1,
-                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible ?? '0' }),
+                item: () => ({
+                  saldo_actual: opts.saldoActual,
+                  saf_disponible: opts.safDisponible ?? '0',
+                  saldo_pendiente_usd: opts.saldoPendienteUsd ?? '0',
+                }),
               },
             }
           }
@@ -210,6 +221,19 @@ describe('registrarSafExcedente — creacion de credito standing (tipo SAFC, no 
     expect(loteInsert!.params).toContain(toStorageString(36.5))
   })
 
+  it('wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign): el UPDATE clientes incluye saldo_pendiente_usd sin cambio (tipo SAFC es no-op para deuda pendiente, migrations/0110 ELSE branch)', async () => {
+    const calls = mockTx({ saldoActual: '0.00000000', saldoPendienteUsd: '45.00000000' })
+
+    await registrarSafExcedente(baseParams({ excedenteUsd: 25 }))
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    const esperado = calcularSaldoPendienteClienteNuevo('SAFC', '45.00000000', 25)
+    expect(toStorageString(esperado)).toBe('45.00000000')
+    expect(clienteUpdate!.params).toContain(toStorageString(esperado))
+  })
+
   it('Fix B3.1a (PR7): moneda_origen del lote y moneda_pago del SAFC reflejan la moneda real del metodo de cobro (BS), no USD hardcodeado', async () => {
     const calls = mockTx({ saldoActual: '0.00000000' })
 
@@ -265,6 +289,8 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.s
     facturaSaldoPend: string
     nroFactura?: string
     totalUsd?: string
+    /** `clientes.saldo_pendiente_usd` anterior (slice 1b, cxc-ledger-saldos-redesign). Default '0'. */
+    saldoPendienteUsd?: string
     /** Lotes SAF activos para `consumirSafLotesEnTx` (PR4). Default: un lote con saldo = safDisponible. */
     lotes?: Array<{ id: string; saldo_disponible_usd: string }>
   }) {
@@ -275,11 +301,15 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.s
       const tx = {
         execute: vi.fn(async (sql: string, params: unknown[] = []) => {
           calls.push({ sql, params })
-          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1')) {
+          if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('saf_disponible') && sql.includes('FROM clientes WHERE id = ? LIMIT 1')) {
             return {
               rows: {
                 length: 1,
-                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible }),
+                item: () => ({
+                  saldo_actual: opts.saldoActual,
+                  saf_disponible: opts.safDisponible,
+                  saldo_pendiente_usd: opts.saldoPendienteUsd ?? '0',
+                }),
               },
             }
           }
@@ -404,6 +434,23 @@ describe('registrarPagoFactura — rama SAF inline: gate re-sourced a clientes.s
     expect(aplicaciones[0]!.params[5]).toBe(safMovId)
     expect(aplicaciones[1]!.params[5]).toBe(safMovId)
   })
+
+  it('wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign): el UPDATE clientes de la rama SAF inline incluye saldo_pendiente_usd = calcularSaldoPendienteClienteNuevo(SAF, anterior, montoSaf)', async () => {
+    const calls = mockTx({
+      saldoActual: '0.00000000',
+      safDisponible: '80.00000000',
+      facturaSaldoPend: '50.00000000',
+      saldoPendienteUsd: '90.00000000',
+    })
+
+    await registrarPagoFactura(baseParams({ montoSaf: 50 }))
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    // 90 (anterior) - 50 (SAF) = 40
+    expect(clienteUpdate!.params).toContain(toStorageString(40))
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -418,6 +465,8 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
   function mockTx(opts: {
     saldoActual: string
     safDisponible: string
+    /** `clientes.saldo_pendiente_usd` anterior (slice 1b, cxc-ledger-saldos-redesign). Default '0'. */
+    saldoPendienteUsd?: string
     /** Facturas pendientes que el pre-step SAF distribuye FIFO. Default: ninguna (comportamiento pre-existente). */
     facturasSaf?: Array<{ id: string; nro_factura: string; saldo_pend_usd: string }>
     /** Lotes SAF activos para la cascada 2D (`consumirSafLotesEnTx`, PR4). Default: un lote con saldo = safDisponible. */
@@ -434,11 +483,18 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
           // Prefijo comun a ambas lecturas de cliente de esta funcion: el gate del
           // SAF pre-step ('...WHERE id = ? LIMIT 1') y el nuevo paso 5 (bug fix,
           // PR4, '...WHERE id = ?' sin LIMIT) — mismo shape de fila para ambas.
-          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?')) {
+          // Matchea con o sin `saldo_pendiente_usd` en la lista de columnas
+          // (slice 1b, cxc-ledger-saldos-redesign) via includes en vez de
+          // startsWith exacto, para no acoplar el test al orden literal.
+          if (sql.includes('saldo_actual') && sql.includes('saf_disponible') && sql.startsWith('SELECT') && sql.includes('FROM clientes WHERE id = ?')) {
             return {
               rows: {
                 length: 1,
-                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible }),
+                item: () => ({
+                  saldo_actual: opts.saldoActual,
+                  saf_disponible: opts.safDisponible,
+                  saldo_pendiente_usd: opts.saldoPendienteUsd ?? '0',
+                }),
               },
             }
           }
@@ -491,6 +547,24 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
     expect(clienteUpdate!.sql).toContain('saf_disponible')
     // 80 (anterior) - 50 (montoSaf) = 30
     expect(clienteUpdate!.params).toContain(toStorageString(30))
+  })
+
+  // slice 1b (cxc-ledger-saldos-redesign): el pre-step SAF reduce deuda
+  // pendiente igual que un PAG — mismo UPDATE clientes de arriba.
+  it('wiring saldo_pendiente_usd (slice 1b): el UPDATE clientes del pre-step SAF incluye saldo_pendiente_usd = calcularSaldoPendienteClienteNuevo(SAF, anterior, montoSaf)', async () => {
+    const calls = mockTx({
+      saldoActual: '-80.00000000',
+      safDisponible: '80.00000000',
+      saldoPendienteUsd: '50.00000000',
+    })
+
+    await registrarAbonoGlobal(baseParams({ montoSaf: 50 }))
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    // 50 (anterior) - 50 (SAF) = 0, piso en 0
+    expect(clienteUpdate!.params).toContain(toStorageString(0))
   })
 
   it('cascada 2D (tasks-v2.md 5.1, PR4): 2 lotes x 3 facturas — SUM(aplicaciones.monto_aplicado_usd) = monto SAF total, split exacto por combo lote x factura, FIFO de lotes dentro de cada factura', async () => {
@@ -549,6 +623,7 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
     const calls = mockTx({
       saldoActual: '50.00000000',
       safDisponible: '0.00000000',
+      saldoPendienteUsd: '90.00000000',
       facturasSaf: [
         { id: 'fac-1', nro_factura: 'F-001', saldo_pend_usd: '30.00000000' },
         { id: 'fac-2', nro_factura: 'F-002', saldo_pend_usd: '20.00000000' },
@@ -589,6 +664,19 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
     const ultimoUpdate = clienteUpdates[clienteUpdates.length - 1]!
     expect(ultimoUpdate.sql).toContain('saf_disponible')
     expect(ultimoUpdate.params).toContain(toStorageString(20)) // 0 (antes) + 20 (excedente)
+
+    // wiring saldo_pendiente_usd (slice 1b): el UPDATE del FIFO-aggregate PAG
+    // (primer UPDATE clientes) reduce la deuda pendiente por lo APLICADO a
+    // facturas reales (50), NO por el total pagado (70).
+    expect(clienteUpdates).toHaveLength(2)
+    const primerUpdate = clienteUpdates[0]!
+    expect(primerUpdate.sql).toContain('saldo_pendiente_usd')
+    expect(primerUpdate.params).toContain(toStorageString(40)) // 90 (anterior) - 50 (aplicado a facturas)
+
+    // El UPDATE del anticipo SAFC (no-op para deuda pendiente) preserva el
+    // mismo valor post-PAG (40), encadenado — NO vuelve al valor pre-abono (90).
+    expect(ultimoUpdate.sql).toContain('saldo_pendiente_usd')
+    expect(ultimoUpdate.params).toContain(toStorageString(40))
   })
 
   it('regresion (comportamiento default sin cambios): monto cash == deuda exacta, sin excedente -> NO crea SAFC/lote', async () => {
@@ -615,6 +703,7 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
     const calls = mockTx({
       saldoActual: '0.00000000',
       safDisponible: '0.00000000',
+      saldoPendienteUsd: '0.00000000',
       facturasSaf: [], // sin facturas pendientes
     })
 
@@ -631,6 +720,14 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
 
     const loteInsert = calls.find((c) => c.sql.startsWith('INSERT INTO saf_creditos_lotes'))
     expect(loteInsert).toBeDefined()
+
+    // wiring saldo_pendiente_usd (slice 1b): el PAG (site C) se saltea
+    // enteramente (igual que su INSERT), por lo que la UNICA UPDATE clientes
+    // es la del anticipo SAFC (site D) — no-op, preserva 0 sin tocar.
+    const clienteUpdates = calls.filter((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdates).toHaveLength(1)
+    expect(clienteUpdates[0]!.sql).toContain('saldo_pendiente_usd')
+    expect(clienteUpdates[0]!.params).toContain(toStorageString(0))
   })
 
   // Coverage migrada desde el describe eliminado de `aplicarSaldoFavor`
@@ -692,7 +789,18 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('registrarAbonoPrestamo (SAF pre-step) — gate corregido a saf_disponible (PR13)', () => {
-  function mockTx(opts: { saldoActual: string; safDisponible: string; saldoPendienteVenc?: string }) {
+  function mockTx(opts: {
+    saldoActual: string
+    safDisponible: string
+    saldoPendienteVenc?: string
+    /** `clientes.saldo_pendiente_usd` anterior (slice 1b, cxc-ledger-saldos-redesign). Default '0'. */
+    clienteSaldoPendienteUsd?: string
+    /** `venc.venta_id` — cuando se provee, ejercita el branch 7e (PAG) de factura vinculada. */
+    ventaId?: string | null
+    /** `ventas.saldo_pend_usd/total_usd` del `venc.venta_id` vinculado. */
+    ventaSaldoPend?: string
+    ventaTotalUsd?: string
+  }) {
     const calls: Call[] = []
     mockedDb.writeTransaction.mockImplementation(async (callback) => {
       const tx = {
@@ -707,17 +815,47 @@ describe('registrarAbonoPrestamo (SAF pre-step) — gate corregido a saf_disponi
                   saldo_pendiente_usd: opts.saldoPendienteVenc ?? '100.00000000',
                   monto_pagado_usd: '0.00000000',
                   status: 'PENDIENTE',
-                  venta_id: null,
+                  venta_id: opts.ventaId ?? null,
                   cliente_id: 'cliente-1',
                 }),
               },
             }
           }
-          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1')) {
+          if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('saf_disponible') && sql.includes('FROM clientes WHERE id = ? LIMIT 1')) {
             return {
               rows: {
                 length: 1,
-                item: () => ({ saldo_actual: opts.saldoActual, saf_disponible: opts.safDisponible }),
+                item: () => ({
+                  saldo_actual: opts.saldoActual,
+                  saf_disponible: opts.safDisponible,
+                  saldo_pendiente_usd: opts.clienteSaldoPendienteUsd ?? '0',
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT id FROM monedas WHERE codigo_iso = ?')) {
+            const codigo = params[0] as string
+            return { rows: { length: 1, item: () => ({ id: codigo === 'VES' ? 'moneda-bs' : 'moneda-usd' }) } }
+          }
+          if (sql.startsWith('SELECT saldo_pend_usd, total_usd FROM ventas WHERE id = ?')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  saldo_pend_usd: opts.ventaSaldoPend ?? '0.00000000',
+                  total_usd: opts.ventaTotalUsd ?? '0.00000000',
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('FROM clientes WHERE id = ?') && !sql.includes('saf_disponible')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  saldo_actual: opts.saldoActual,
+                  saldo_pendiente_usd: opts.clienteSaldoPendienteUsd ?? '0',
+                }),
               },
             }
           }
@@ -766,6 +904,47 @@ describe('registrarAbonoPrestamo (SAF pre-step) — gate corregido a saf_disponi
     await expect(
       registrarAbonoPrestamo(baseParams({ montoSaf: 2 }))
     ).rejects.toThrow(/no tiene saldo a favor disponible/i)
+  })
+
+  it('wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign): el UPDATE clientes del SAF pre-step incluye saldo_pendiente_usd = calcularSaldoPendienteClienteNuevo(SAF, anterior, montoSafNum)', async () => {
+    const calls = mockTx({
+      saldoActual: '-1.30000000',
+      safDisponible: '1.30000000',
+      saldoPendienteVenc: '1.30000000',
+      clienteSaldoPendienteUsd: '60.00000000',
+    })
+
+    await registrarAbonoPrestamo(baseParams({ montoSaf: 1.3 }))
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    // 60 (anterior) - 1.3 (SAF) = 58.7
+    expect(clienteUpdate!.params).toContain(toStorageString(58.7))
+  })
+
+  it('wiring saldo_pendiente_usd (slice 1b): prestamo vinculado a una factura (venc.venta_id) — el UPDATE clientes del paso 7e (tipo PAG) incluye saldo_pendiente_usd = calcularSaldoPendienteClienteNuevo(PAG, anterior, montoUsd)', async () => {
+    const calls = mockTx({
+      saldoActual: '0.00000000',
+      safDisponible: '0.00000000',
+      saldoPendienteVenc: '50.00000000',
+      clienteSaldoPendienteUsd: '70.00000000',
+      ventaId: 'venta-vinc-1',
+      ventaSaldoPend: '50.00000000',
+      ventaTotalUsd: '100.00000000',
+    })
+
+    await registrarAbonoPrestamo(baseParams({ monto: 20, aplicarSaf: false }))
+
+    // El paso 7e inserta un segundo movimiento_cuenta tipo PAG (ligado a la
+    // venta), con su propio UPDATE clientes — distinto del paso 6
+    // (movimientos_metodo_cobro) y sin saf_disponible (no es rama SAF).
+    const clienteUpdates = calls.filter((c) => c.sql.startsWith('UPDATE clientes SET'))
+    const pagLigadoUpdate = clienteUpdates.find((c) => !c.sql.includes('saf_disponible'))
+    expect(pagLigadoUpdate).toBeDefined()
+    expect(pagLigadoUpdate!.sql).toContain('saldo_pendiente_usd')
+    // 70 (anterior) - 20 (PAG por metodo) = 50
+    expect(pagLigadoUpdate!.params).toContain(toStorageString(50))
   })
 })
 
@@ -878,6 +1057,282 @@ describe('consumirSafLotesEnTx — cascada FIFO de lotes (PR4)', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────
+// aplicarPagoFacturaEnTx — wiring de saldo_pendiente_usd (slice 1b,
+// cxc-ledger-saldos-redesign). Mismo patron de escritura optimista pareada
+// que saf_disponible (migrations/0102) — aqui el espejo es
+// calcularSaldoPendienteClienteNuevo + migrations/0110. Test directo sobre
+// la funcion exportada (mismo patron que consumirSafLotesEnTx: el llamador
+// ya provee `tx`, sin pasar por `db.writeTransaction`).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('aplicarPagoFacturaEnTx — wiring de saldo_pendiente_usd (slice 1b)', () => {
+  function makeTx(opts: { saldoActual: string; saldoPendienteUsd: string; facturaSaldoPend: string }) {
+    const calls: Call[] = []
+    const tx = {
+      execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params })
+        if (sql.startsWith('SELECT id FROM monedas WHERE codigo_iso = ?')) {
+          return { rows: { length: 1, item: () => ({ id: 'moneda-usd-id' }) } }
+        }
+        if (sql.startsWith('SELECT nro_factura, saldo_pend_usd, total_usd, tasa FROM ventas WHERE id = ?')) {
+          return {
+            rows: {
+              length: 1,
+              item: () => ({
+                nro_factura: 'F-001',
+                saldo_pend_usd: opts.facturaSaldoPend,
+                total_usd: '100.00000000',
+                tasa: '40.00000000',
+              }),
+            },
+          }
+        }
+        if (sql.startsWith('SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?')) {
+          return {
+            rows: {
+              length: 1,
+              item: () => ({ saldo_actual: opts.saldoActual, saldo_pendiente_usd: opts.saldoPendienteUsd }),
+            },
+          }
+        }
+        return { rows: { length: 0, item: () => undefined } }
+      }),
+    } as unknown as Transaction
+    return { tx, calls }
+  }
+
+  function baseParams(overrides: Partial<AplicarPagoEnTxParams> = {}): AplicarPagoEnTxParams {
+    return {
+      venta_id: 'venta-1',
+      cliente_id: 'cliente-1',
+      metodo_cobro_id: 'metodo-1',
+      moneda: 'USD',
+      tasa: 40,
+      monto: 30,
+      empresa_id: 'emp-1',
+      procesado_por: 'user-1',
+      skipBankAndAccounting: true,
+      ...overrides,
+    }
+  }
+
+  it('el UPDATE clientes final incluye saldo_pendiente_usd = calcularSaldoPendienteClienteNuevo(PAG, anterior, montoUsd)', async () => {
+    const { tx, calls } = makeTx({
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '80.00000000',
+      facturaSaldoPend: '30.00000000',
+    })
+
+    await aplicarPagoFacturaEnTx(tx, baseParams({ monto: 30 }), '2026-10-19T00:00:00-04:00')
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    const esperado = calcularSaldoPendienteClienteNuevo('PAG', '80.00000000', '30.00000000')
+    expect(clienteUpdate!.params).toContain(toStorageString(esperado))
+  })
+
+  it('triangulacion: pago parcial ($10 sobre deuda pendiente $50) reduce saldo_pendiente_usd por EXACTAMENTE el monto aplicado, piso en 0', async () => {
+    const { tx, calls } = makeTx({
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '50.00000000',
+      facturaSaldoPend: '10.00000000',
+    })
+
+    await aplicarPagoFacturaEnTx(tx, baseParams({ monto: 10 }), '2026-10-19T00:00:00-04:00')
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    // 50 (anterior) - 10 (pago) = 40
+    const esperado = calcularSaldoPendienteClienteNuevo('PAG', '50.00000000', '10.00000000')
+    expect(toStorageString(esperado)).toBe('40.00000000')
+    expect(clienteUpdate!.params).toContain(toStorageString(esperado))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// reversarDiferencialEnTx — wiring de saldo_pendiente_usd (slice 1b,
+// cxc-ledger-saldos-redesign). tipo='REV': reversar un diferencial cambiario
+// reabre deuda pendiente igual que cualquier otro reverso. Test directo
+// sobre la funcion exportada (el llamador ya provee `tx`, sin pasar por
+// `db.writeTransaction` — mismo patron que consumirSafLotesEnTx).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('reversarDiferencialEnTx — wiring de saldo_pendiente_usd (slice 1b)', () => {
+  function makeTx(opts: {
+    difeMontoUsd: string
+    saldoActual: string
+    saldoPendienteUsd: string
+    totalUsd?: string
+    yaReversado?: boolean
+  }) {
+    const calls: Call[] = []
+    const tx = {
+      execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params })
+        if (sql.startsWith('SELECT id, monto FROM movimientos_cuenta')) {
+          return { rows: { length: 1, item: () => ({ id: 'dife-1', monto: opts.difeMontoUsd }) } }
+        }
+        if (sql.startsWith('SELECT id FROM movimientos_cuenta WHERE venta_id = ? AND referencia = ? LIMIT 1')) {
+          return opts.yaReversado
+            ? { rows: { length: 1, item: () => ({ id: 'rev-ya-existe' }) } }
+            : { rows: { length: 0, item: () => undefined } }
+        }
+        if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('FROM clientes WHERE id = ? AND empresa_id = ?')) {
+          return {
+            rows: {
+              length: 1,
+              item: () => ({ saldo_actual: opts.saldoActual, saldo_pendiente_usd: opts.saldoPendienteUsd }),
+            },
+          }
+        }
+        if (sql.startsWith('SELECT total_usd FROM ventas WHERE id = ?')) {
+          return { rows: { length: 1, item: () => ({ total_usd: opts.totalUsd ?? '100.00000000' }) } }
+        }
+        return { rows: { length: 0, item: () => undefined } }
+      }),
+    } as unknown as Transaction
+    return { tx, calls }
+  }
+
+  function baseParams(overrides: Partial<ReversoDiferencialCxCParams> = {}): ReversoDiferencialCxCParams {
+    return {
+      ventaId: 'venta-1',
+      clienteId: 'cliente-1',
+      nroFactura: 'F-001',
+      empresaId: 'emp-1',
+      procesadoPor: 'user-1',
+      ...overrides,
+    }
+  }
+
+  it('el UPDATE clientes incluye saldo_pendiente_usd = calcularSaldoPendienteClienteNuevo(REV, anterior, montoUsd) — tipo REV reabre deuda', async () => {
+    const { tx, calls } = makeTx({
+      difeMontoUsd: '0.005',
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '20.00000000',
+    })
+
+    await reversarDiferencialEnTx(tx, baseParams(), '2026-10-19T00:00:00-04:00')
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    const esperado = calcularSaldoPendienteClienteNuevo('REV', '20.00000000', '0.005')
+    expect(toStorageString(esperado)).toBe('20.00500000')
+    expect(clienteUpdate!.params).toContain(toStorageString(esperado))
+  })
+
+  it('triangulacion: monto DIFE distinto (1.25) sobre un anterior distinto (50) produce 51.25 — no un literal fijo', async () => {
+    const { tx, calls } = makeTx({
+      difeMontoUsd: '1.25000000',
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '50.00000000',
+    })
+
+    await reversarDiferencialEnTx(tx, baseParams(), '2026-10-19T00:00:00-04:00')
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate!.params).toContain(toStorageString(51.25))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// registrarDiferencialCxC — wiring de saldo_pendiente_usd (slice 1b,
+// cxc-ledger-saldos-redesign). tipo='PAG': cerrar el saldo sub-centavo
+// residual via diferencial cambiario reduce deuda pendiente igual que PAG.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('registrarDiferencialCxC — wiring de saldo_pendiente_usd (slice 1b)', () => {
+  function mockTx(opts: {
+    saldoPendVenta: string
+    totalUsd?: string
+    saldoActual: string
+    saldoPendienteUsd: string
+  }) {
+    const calls: Call[] = []
+    mockedDb.writeTransaction.mockImplementation(async (callback) => {
+      const tx = {
+        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params })
+          if (sql.startsWith('SELECT nro_factura, saldo_pend_usd, total_usd FROM ventas WHERE id = ? AND empresa_id = ?')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  nro_factura: 'F-001',
+                  saldo_pend_usd: opts.saldoPendVenta,
+                  total_usd: opts.totalUsd ?? '100.00000000',
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('FROM clientes WHERE id = ? AND empresa_id = ?')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({ saldo_actual: opts.saldoActual, saldo_pendiente_usd: opts.saldoPendienteUsd }),
+              },
+            }
+          }
+          return { rows: { length: 0, item: () => undefined } }
+        }),
+      } as unknown as Transaction
+      return callback(tx)
+    })
+    return calls
+  }
+
+  function baseParams(overrides: Partial<DiferencialCxCParams> = {}): DiferencialCxCParams {
+    return {
+      ventaId: 'venta-1',
+      clienteId: 'cliente-1',
+      empresaId: 'emp-1',
+      procesadoPor: 'user-1',
+      tasa: 40,
+      ...overrides,
+    }
+  }
+
+  it('el UPDATE clientes incluye saldo_pendiente_usd = calcularSaldoPendienteClienteNuevo(PAG, anterior, saldoUsd) — tipo PAG reduce deuda, floor 0', async () => {
+    const calls = mockTx({
+      saldoPendVenta: '0.005',
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '20.00000000',
+    })
+
+    await registrarDiferencialCxC(baseParams())
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    const esperado = calcularSaldoPendienteClienteNuevo('PAG', '20.00000000', '0.005')
+    expect(toStorageString(esperado)).toBe('19.99500000')
+    expect(clienteUpdate!.params).toContain(toStorageString(esperado))
+  })
+
+  it('triangulacion: cuando el residual DIFE excede el saldo_pendiente_usd anterior, el resultado se topa en 0 (piso), nunca negativo — saldo_actual distinto para evitar colision numerica con saldo_pendiente_usd', async () => {
+    const calls = mockTx({
+      saldoPendVenta: '0.009',
+      saldoActual: '5.00000000',
+      saldoPendienteUsd: '0.003',
+    })
+
+    await registrarDiferencialCxC(baseParams())
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    // saldo_actual (clientes): max(0, 5 - 0.009) = 4.991 — distinto de saldo_pendiente_usd (0),
+    // para que la aserticion de abajo no pueda pasar por coincidencia con otro parametro.
+    expect(clienteUpdate!.params).toContain(toStorageString(4.991))
+    const esperado = calcularSaldoPendienteClienteNuevo('PAG', '0.003', '0.009')
+    expect(toStorageString(esperado)).toBe('0.00000000')
+    expect(clienteUpdate!.params).toContain(toStorageString(esperado))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
 // registrarReversoAbono — saldo acotado a total_usd (bugfix-reversa-cxc)
 //
 // Regresion para el bug P0001 en CxC: el trigger vivo `prevent_venta_mutation`
@@ -903,6 +1358,8 @@ describe('registrarReversoAbono — saldo acotado a total_usd', () => {
     totalUsd: string
     saldoClienteActual: string
     ventaId?: string | null
+    /** `clientes.saldo_pendiente_usd` anterior (slice 1b, cxc-ledger-saldos-redesign). Default '0'. */
+    saldoPendienteClienteActual?: string
   }) {
     const calls: Call[] = []
     mockedDb.writeTransaction.mockImplementation(async (callback) => {
@@ -938,8 +1395,16 @@ describe('registrarReversoAbono — saldo acotado a total_usd', () => {
               },
             }
           }
-          if (sql.startsWith('SELECT saldo_actual FROM clientes WHERE id = ?')) {
-            return { rows: { length: 1, item: () => ({ saldo_actual: opts.saldoClienteActual }) } }
+          if (sql.startsWith('SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  saldo_actual: opts.saldoClienteActual,
+                  saldo_pendiente_usd: opts.saldoPendienteClienteActual ?? '0',
+                }),
+              },
+            }
           }
           if (sql.startsWith('SELECT id FROM libro_contable WHERE')) {
             return { rows: { length: 0, item: () => undefined } }
@@ -991,6 +1456,24 @@ describe('registrarReversoAbono — saldo acotado a total_usd', () => {
     expect(ventaUpdates).toHaveLength(1)
     // 90 + 30 = 120, pero nunca puede exceder total_usd = 100
     expect(ventaUpdates[0]!.params).toEqual([toStorageString(100), 'reversado', 'venta-1'])
+  })
+
+  it('wiring saldo_pendiente_usd (slice 1b): el UPDATE clientes incluye saldo_pendiente_usd = anterior + monto (tipo REV reabre deuda)', async () => {
+    const calls = mockTx({
+      pagoMontoUsd: '20.00000000',
+      saldoPendActual: '30.00000000',
+      totalUsd: '100.00000000',
+      saldoClienteActual: '0.00000000',
+      saldoPendienteClienteActual: '70.00000000',
+    })
+
+    await registrarReversoAbono(baseParams())
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    // 70 (anterior) + 20 (monto reversado) = 90
+    expect(clienteUpdate!.params).toContain(toStorageString(90))
   })
 })
 
