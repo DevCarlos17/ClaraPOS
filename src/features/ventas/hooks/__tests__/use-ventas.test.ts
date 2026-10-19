@@ -316,6 +316,177 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
     return calls
   }
 
+  /**
+   * Variante STATEFUL de `mockCrearVentaTx` para el bug de doble descuento
+   * de `saldo_pendiente_usd` (fix/cxc-ledger-saf-venta-doble-descuento).
+   *
+   * `mockCrearVentaTx` es un fixture ESTATICO: cada SELECT sobre `clientes`
+   * devuelve siempre el mismo valor de `opts.clienteSaldoPendienteUsd`, sin
+   * importar cuantos UPDATE clientes hayan corrido antes dentro de la MISMA
+   * writeTransaction. Eso oculta el bug de staging: el bloque FAC (linea
+   * ~960) escribe `saldo_pendiente_usd` neto del SAF, y el bloque SAF
+   * (linea ~1014) vuelve a LEER esa misma columna — con un mock estatico,
+   * el bloque SAF lee el valor ANTERIOR a la venta en vez del valor
+   * recien escrito por FAC, y el doble descuento nunca se manifiesta en el
+   * test.
+   *
+   * Esta variante mantiene un `clienteState` mutable que CADA `UPDATE
+   * clientes SET ...` modifica, y que CADA `SELECT ... FROM clientes`
+   * posterior lee — reproduciendo la continuidad de estado real dentro de
+   * una transaccion SQLite. El resto de las ramas (productos, depositos,
+   * lotes SAF, cuentas_config, etc.) son identicas a `mockCrearVentaTx`.
+   */
+  function mockCrearVentaTxStatefulCliente(opts: VentaTxFixtures) {
+    const calls: { sql: string; params: unknown[] }[] = []
+    const { creado: safCreado = 0, consumido: safConsumido = 0 } = opts.safCredito ?? {}
+    const safLotesIniciales =
+      opts.safLotes ?? [{ id: 'lote-default', saldo_disponible_usd: String(Math.max(0, safCreado - safConsumido)) }]
+    const safLotesState = new Map(safLotesIniciales.map((l) => [l.id, l.saldo_disponible_usd]))
+
+    const clienteState = {
+      saldo_actual: opts.clienteSaldoActual ?? '0',
+      saf_disponible: String(Math.max(0, safCreado - safConsumido)),
+      saldo_pendiente_usd: opts.clienteSaldoPendienteUsd ?? '0',
+    }
+
+    vi.mocked(db, true).writeTransaction.mockImplementation(async (callback) => {
+      const tx = {
+        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params })
+          if (sql.startsWith('SELECT id, saldo_disponible_usd FROM saf_creditos_lotes')) {
+            const rows = safLotesIniciales
+              .filter((l) => Number(safLotesState.get(l.id) ?? '0') > 0.0000001)
+              .map((l) => ({ id: l.id, saldo_disponible_usd: safLotesState.get(l.id) ?? '0' }))
+            return { rows: { length: rows.length, item: (i: number) => rows[i] } }
+          }
+          if (sql.startsWith('UPDATE saf_creditos_lotes SET saldo_disponible_usd')) {
+            safLotesState.set(params[3] as string, params[0] as string)
+          }
+
+          if (sql.startsWith('SELECT c.deposito_id')) {
+            if (!opts.cajaDepositoRow) return { rows: { length: 0, item: () => undefined } }
+            return { rows: { length: 1, item: () => opts.cajaDepositoRow } }
+          }
+          if (sql.startsWith('SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1')) {
+            return { rows: { length: 1, item: () => ({ id: opts.principalDepositoId }) } }
+          }
+          if (sql.startsWith('SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1')) {
+            return { rows: { length: 1, item: () => ({ id: opts.principalDepositoId }) } }
+          }
+          if (sql.includes("codigo_iso = 'USD'")) {
+            return { rows: { length: 1, item: () => ({ id: 'moneda-usd' }) } }
+          }
+          if (sql.includes("codigo_iso = 'VES'")) {
+            return { rows: { length: 1, item: () => ({ id: 'moneda-bs' }) } }
+          }
+          if (sql.startsWith('SELECT caja_id FROM sesiones_caja')) {
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('SELECT COUNT(*) as cnt FROM ventas WHERE empresa_id')) {
+            return { rows: { length: 1, item: () => ({ cnt: 0 }) } }
+          }
+          if (sql.startsWith('SELECT tipo, stock, nombre, maneja_lotes FROM productos')) {
+            const productoId = params[0] as string
+            const p = opts.productos[productoId]
+            return p ? { rows: { length: 1, item: () => p } } : { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('SELECT cantidad_actual FROM inventario_stock')) {
+            const [productoId, depositoId] = params as [string, string]
+            const cant = opts.inventarioStock?.[`${productoId}::${depositoId}`]
+            return cant !== undefined
+              ? { rows: { length: 1, item: () => ({ cantidad_actual: cant }) } }
+              : { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('SELECT id, cantidad_actual FROM inventario_stock')) {
+            const productoId = params[1] as string
+            const depositoId = params[2] as string
+            const cant = opts.inventarioStock?.[`${productoId}::${depositoId}`]
+            return cant !== undefined
+              ? {
+                  rows: {
+                    length: 1,
+                    item: () => ({ id: `stock-row-${productoId}-${depositoId}`, cantidad_actual: cant }),
+                  },
+                }
+              : { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('SELECT producto_id, deposito_id, tipo, cantidad FROM movimientos_inventario')) {
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('SELECT stock FROM productos')) {
+            const productoId = params[0] as string
+            const p = opts.productos[productoId]
+            return { rows: { length: 1, item: () => ({ stock: p?.stock ?? '0.000' }) } }
+          }
+          if (sql.startsWith('SELECT banco_empresa_id, deposito_directo FROM metodos_cobro')) {
+            return { rows: { length: 1, item: () => ({ banco_empresa_id: null, deposito_directo: 0 }) } }
+          }
+          if (sql.startsWith('SELECT r.producto_id, r.cantidad, p.stock, p.nombre FROM recetas')) {
+            const servicioId = params[0] as string
+            const ingredientes = opts.recetas?.[servicioId] ?? []
+            return { rows: { length: ingredientes.length, item: (i: number) => ingredientes[i] } }
+          }
+          if (sql.startsWith('SELECT saf_disponible FROM clientes')) {
+            return { rows: { length: 1, item: () => ({ saf_disponible: clienteState.saf_disponible }) } }
+          }
+          // STATEFUL (a diferencia de mockCrearVentaTx): lee el estado MUTADO
+          // por el ultimo UPDATE clientes, no el fixture original.
+          if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('saf_disponible') && sql.includes('FROM clientes')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  saldo_actual: clienteState.saldo_actual,
+                  saf_disponible: clienteState.saf_disponible,
+                  saldo_pendiente_usd: clienteState.saldo_pendiente_usd,
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('FROM clientes')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  saldo_actual: clienteState.saldo_actual,
+                  saldo_pendiente_usd: clienteState.saldo_pendiente_usd,
+                }),
+              },
+            }
+          }
+          // STATEFUL: cada UPDATE clientes muta clienteState para que el
+          // PROXIMO SELECT (si lo hay, dentro de la misma tx) vea el valor
+          // recien escrito — esto es lo que reproduce el bug de staging.
+          if (sql.startsWith('UPDATE clientes SET saldo_actual') && sql.includes('saf_disponible')) {
+            clienteState.saldo_actual = params[0] as string
+            clienteState.saf_disponible = params[1] as string
+            clienteState.saldo_pendiente_usd = params[2] as string
+          } else if (sql.startsWith('UPDATE clientes SET saldo_actual')) {
+            clienteState.saldo_actual = params[0] as string
+            clienteState.saldo_pendiente_usd = params[1] as string
+          }
+          if (sql.includes('FROM cuentas_config') && sql.includes("clave = 'gastos_generales'")) {
+            const id = opts.cuentasConfig?.gastos_generales
+            return id
+              ? { rows: { length: 1, item: () => ({ cuenta_contable_id: id }) } }
+              : { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.includes('FROM cuentas_config') && sql.includes("clave = 'PERDIDA_DIFERENCIAL_CAMBIARIO'")) {
+            const id = opts.cuentasConfig?.PERDIDA_DIFERENCIAL_CAMBIARIO
+            return id
+              ? { rows: { length: 1, item: () => ({ cuenta_contable_id: id }) } }
+              : { rows: { length: 0, item: () => undefined } }
+          }
+
+          return { rows: { length: 0, item: () => undefined } }
+        }),
+      } as unknown as Transaction
+
+      return callback(tx)
+    })
+    return { calls, clienteState }
+  }
+
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -891,7 +1062,14 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
     })
 
     it('SAF aplicado (safEntry): el INSERT escribe saldo_pend_usd ya neto del SAF, y el consumo de SAF (movimientos_cuenta tipo=SAF) se escribe DESPUES del INSERT de ventas (orden pos-aplicar-saf-checkout preservado)', async () => {
-      const calls = mockCrearVentaTx({
+      // Mock STATEFUL (fix/cxc-ledger-saf-venta-doble-descuento): este
+      // escenario SI dispara el bloque FAC (cierre.tipo='CREDITO' porque
+      // saldoPend=$4 > 0.001, aunque el parametro `tipo` sea 'CONTADO') —
+      // con el mock estatico anterior, la relectura del bloque SAF no veia
+      // el efecto del UPDATE del bloque FAC y el bug de doble descuento
+      // quedaba invisible para este test. El mock stateful reproduce la
+      // continuidad real de la transaccion.
+      const { calls } = mockCrearVentaTxStatefulCliente({
         cajaDepositoRow: { deposito_id: 'dep-caja-A' },
         principalDepositoId: 'dep-principal',
         productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
@@ -935,11 +1113,17 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       expect(clienteUpdate).toBeDefined()
       expect(clienteUpdate!.params).toContain(toStorageString(9))
 
-      // wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign):
-      // SAF como metodo de pago en el POS reduce deuda pendiente igual que PAG.
+      // wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign) +
+      // FIX (fix/cxc-ledger-saf-venta-doble-descuento): el bloque FAC ya
+      // subio la deuda de 20 (anterior) a 24 (20 + saldoPend=$4, neto del
+      // SAF). El bloque SAF NO vuelve a restar los $6 de SAF aplicado —
+      // esa resta YA esta reflejada en que el FAC solo sumo $4 (no $10) en
+      // primer lugar. El valor final debe ser 24, NUNCA 14 (que seria el
+      // resultado del doble descuento: 20 + 4 - 6 = 18, o peor, el bug
+      // original de staging que ignoraba por completo el efecto del FAC).
       expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
-      // 20 (anterior) - 6 (SAF aplicado) = 14
-      expect(clienteUpdate!.params).toContain(toStorageString(14))
+      expect(clienteUpdate!.params).toContain(toStorageString(24))
+      expect(clienteUpdate!.params).not.toContain(toStorageString(14))
     })
 
     it('PR4 (saf-snapshot-y-trazabilidad): SAF como metodo de pago consume lotes FIFO — 2 filas saf_creditos_aplicaciones cuando el monto cruza 2 lotes, pareadas con el SAF recien creado', async () => {
@@ -1081,6 +1265,150 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       expect(ventaInsert!.params[14]).toBe('10.00000000')
       expect(ventaInsert!.params[15]).toBe('CREDITO')
       expect(ventaInsert!.params[16]).toBe('pendiente')
+    })
+  })
+
+  describe('BUG staging — crearVenta CREDITO + SAF duplica el descuento de saldo_pendiente_usd (fix/cxc-ledger-saf-venta-doble-descuento)', () => {
+    // Escenario exacto de staging: factura CREDITO de $100, SAF aplicado
+    // $50 como metodo de pago, cliente arranca con saldo_pendiente_usd=0.
+    // tasa=1 para que usdToBs/bsToUsd sean identidad (sin ruido de
+    // redondeo Bs) — el bug es aritmetico, no de tasa de cambio.
+    //
+    // Regla de negocio confirmada por el owner: "la aplicacion del SAF
+    // cuenta como metodo de pago, y la deuda es el restante que hubiera
+    // quedado pendiente" -> deuda real = $100 - $50 = $50.
+    //
+    // Bloque FAC (linea ~960 de use-ventas.ts) YA escribe la deuda NETA del
+    // SAF (el POS prededuce el SAF del total facturable antes de llegar
+    // aqui, via calcularCierreVentaConSaf): FAC monto=$50, no $100. El
+    // bloque SAF (linea ~1014) NO debe volver a restar esos mismos $50 de
+    // saldo_pendiente_usd — la deuda ya nacio neta en el FAC.
+    function stockFixture() {
+      return {
+        cajaDepositoRow: null as { deposito_id: string | null } | null,
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-principal': '10.000' },
+      }
+    }
+
+    it('[RED->GREEN] FAC nace neto del SAF ($50, no $100) y el bloque SAF NO debe re-descontar esos $50 de saldo_pendiente_usd — el UPDATE final debe quedar en 50, NO en 0', async () => {
+      const { calls, clienteState } = mockCrearVentaTxStatefulCliente({
+        ...stockFixture(),
+        clienteSaldoActual: '0',
+        clienteSaldoPendienteUsd: '0', // cliente arranca sin deuda (staging: 0)
+        safCredito: { creado: 50, consumido: 0 }, // saf_disponible = 50
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CREDITO',
+          tasa: 1,
+          cliente_id: 'cliente-1',
+          sesion_caja_id: null,
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 100 })],
+          pagos: [],
+          safEntry: { clienteId: 'cliente-1', montoUsd: 50 },
+        })
+      )
+
+      // Invariante FAC-es-neto: el movimiento FAC registra $50 (total $100 -
+      // SAF aplicado $50), NUNCA el total bruto de $100.
+      const facInsert = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'FAC'")
+      )
+      expect(facInsert).toBeDefined()
+      expect(facInsert!.params).toContain('50.00000000')
+      expect(facInsert!.params).not.toContain('100.00000000')
+
+      // El SAF SI se consume como metodo de pago (saf_disponible: 50 -> 0) —
+      // esta parte del ledger ya funciona correctamente hoy.
+      const safInsert = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAF',")
+      )
+      expect(safInsert).toBeDefined()
+      expect(safInsert!.params).toContain('50.00000000')
+
+      const safClienteUpdate = calls.find(
+        (c) => c.sql.startsWith('UPDATE clientes SET saldo_actual') && c.sql.includes('saf_disponible')
+      )
+      expect(safClienteUpdate).toBeDefined()
+      expect(safClienteUpdate!.sql).toContain('saldo_pendiente_usd')
+
+      // LA ASERCION QUE REPRODUCE EL BUG DE STAGING: la deuda real es $50
+      // (= $100 - $50 de SAF aplicado) — NUNCA $0. El codigo actual
+      // (pre-fix) escribe 0 aqui porque el bloque SAF relee el
+      // saldo_pendiente_usd YA NETO ($50, escrito por el FAC de arriba
+      // gracias al mock STATEFUL) y le resta $50 OTRA VEZ.
+      // Columnas del UPDATE: saldo_actual, saf_disponible, saldo_pendiente_usd,
+      // updated_at, id — saldo_pendiente_usd es params[2].
+      expect(safClienteUpdate!.params[2]).toBe('50.00000000')
+      expect(safClienteUpdate!.params[2]).not.toBe('0.00000000')
+
+      // Estado final del cliente (helper stateful) confirma lo mismo desde
+      // otro angulo: saldo_pendiente_usd termina en 50, saf_disponible en 0.
+      expect(clienteState.saldo_pendiente_usd).toBe('50.00000000')
+      expect(clienteState.saf_disponible).toBe('0.00000000')
+    })
+
+    it('[triangulacion] SAF cubre TODO el total ($100 total, $100 SAF disponible y aplicado): deuda final = $0, no negativa — piso en 0 preservado', async () => {
+      const { clienteState } = mockCrearVentaTxStatefulCliente({
+        ...stockFixture(),
+        clienteSaldoActual: '0',
+        clienteSaldoPendienteUsd: '0',
+        safCredito: { creado: 100, consumido: 0 },
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CREDITO',
+          tasa: 1,
+          cliente_id: 'cliente-1',
+          sesion_caja_id: null,
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 100 })],
+          pagos: [],
+          safEntry: { clienteId: 'cliente-1', montoUsd: 100 },
+        })
+      )
+
+      // SAF cubre el 100% -> saldoPend (cierre) = 0 -> cierre.tipo='CONTADO'
+      // -> el bloque FAC (gateado sobre cierre.tipo==='CREDITO') NUNCA corre.
+      // El bloque SAF SI corre (gateado solo sobre safAplicadoUsd > 0, no
+      // sobre cierre.tipo) y escribe saldo_pendiente_usd = GREATEST(0, 0-100)
+      // = 0 — mismo resultado con o sin el fix (nada que sobre-restar desde
+      // 0), pero sigue siendo necesario que el piso en 0 se preserve.
+      expect(clienteState.saldo_pendiente_usd).toBe('0.00000000')
+      expect(clienteState.saf_disponible).toBe('0.00000000')
+    })
+
+    it('[regression guard] venta a credito SIN SAF: el bloque FAC sigue aumentando saldo_pendiente_usd normalmente (comportamiento NO afectado por este fix)', async () => {
+      const { calls, clienteState } = mockCrearVentaTxStatefulCliente({
+        ...stockFixture(),
+        clienteSaldoActual: '0',
+        clienteSaldoPendienteUsd: '20.00000000',
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CREDITO',
+          tasa: 1,
+          cliente_id: 'cliente-1',
+          sesion_caja_id: null,
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 30 })],
+          pagos: [],
+        })
+      )
+
+      const safInsert = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAF',")
+      )
+      expect(safInsert).toBeUndefined() // sin safEntry, no hay bloque SAF
+
+      const facClienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET saldo_actual'))
+      expect(facClienteUpdate).toBeDefined()
+      // 20 (anterior) + 30 (FAC, monto total — sin SAF que lo netee) = 50
+      expect(facClienteUpdate!.params).toContain('50.00000000')
+      expect(clienteState.saldo_pendiente_usd).toBe('50.00000000')
     })
   })
 })
