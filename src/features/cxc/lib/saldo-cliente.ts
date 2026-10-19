@@ -113,8 +113,14 @@ export function esSaldoSafConsistente(
 // calcularSafDisponibleNuevo
 // =============================================
 
-/** Tipos que mueven `clientes.saf_disponible` (ver migrations/0102). */
-export type TipoMovimientoSaf = 'SAFC' | 'SAF'
+/**
+ * Tipos que mueven `clientes.saf_disponible` (ver migrations/0102, ampliado
+ * por 0114 para incluir 'SAFR' — anulacion del remanente no-consumido de un
+ * lote reversado. Misma formula que 'SAF'; difiere solo el ORIGEN
+ * semantico, nunca el calculo — ver design.md Q4 de
+ * cxc-ledger-saldos-redesign).
+ */
+export type TipoMovimientoSaf = 'SAFC' | 'SAF' | 'SAFR'
 
 /**
  * Calcula el nuevo valor de `clientes.saf_disponible` para una fila
@@ -124,6 +130,10 @@ export type TipoMovimientoSaf = 'SAFC' | 'SAF'
  *
  *   SAFC -> disponibleAnterior + monto          (creacion de credito)
  *   SAF  -> MAX(0, disponibleAnterior - monto)  (consumo, piso en cero)
+ *   SAFR -> MAX(0, disponibleAnterior - monto)  (anulacion de remanente no
+ *           consumido, migrations/0114 — MISMA formula que SAF, cae en la
+ *           misma rama de abajo sin cambio de codigo: difiere el ORIGEN,
+ *           nunca el calculo)
  *
  * A diferencia de `calcularSaldoNuevoMovimientoCuenta` (que para SAF confia
  * en un `saldoNuevoProvisto` por la app, porque esa direccion es ambigua),
@@ -146,7 +156,8 @@ export function calcularSafDisponibleNuevo(
     return anterior.plus(montoD)
   }
 
-  // tipo === 'SAF'
+  // tipo === 'SAF' | 'SAFR' — misma formula de consumo para ambos (zero
+  // cambio de codigo: SAFR cae aqui por diseno, difiere solo el ORIGEN).
   return Decimal.max(new Decimal(0), anterior.minus(montoD))
 }
 
