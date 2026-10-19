@@ -1869,6 +1869,19 @@ export async function registrarReversoAbono(params: {
 
   if (!reason.trim()) throw new Error('Debe ingresar una razon para el reverso')
 
+  // Deteccion SAF ANTES de abrir la tx de escritura (fix/cxc-reverso-deadlock-getall).
+  // `detectarLoteSafDePago` usa `db.getAll` — una conexion de LECTURA
+  // separada de la conexion de ESCRITURA de `db.writeTransaction`. Llamarla
+  // DESDE DENTRO de un `writeTransaction` abierto hace DEADLOCK en
+  // wa-sqlite: la tx tiene el lock de escritura, `db.getAll` espera ese
+  // lock, y la tx espera a que `db.getAll` retorne — espera circular que
+  // nunca se resuelve (confirmado en staging: "Reversando..." cuelga para
+  // SIEMPRE, en TODO reverso, SAF o no). La lectura es segura AQUI porque
+  // el lote y sus aplicaciones SAF ya fueron COMMITTEADOS en una
+  // transaccion previa (nunca en la que esta por abrirse) — leerlos antes
+  // de abrir la tx no pierde ninguna escritura relevante.
+  const detalleLoteSaf = await detectarLoteSafDePago(empresa_id, pago_id)
+
   await db.writeTransaction(async (tx) => {
     const now = localNow()
 
@@ -1929,20 +1942,20 @@ export async function registrarReversoAbono(params: {
       }
     }
 
-    // 3b. Detectar si el pago genero un lote de credito SAF (slice 3b-iii,
-    // cxc-ledger-saldos-redesign). CONTRATO (reversa-pago-saf.ts, docstring
-    // de `reversarPagoSafEnTx`, "CONTRATO PARA EL LLAMADOR" — 3b-ii.7):
-    // cuando `generatedLote` es `true`, esa funcion es la UNICA escritora
-    // de los efectos de saldo de este reverso — los Steps 4/5 de abajo
-    // (UPDATE clientes con el monto COMPLETO del pago + REV generico con
-    // venta_id=NULL) quedan OMITIDOS por completo. Llamarlos ademas
-    // triplicaria `saldo_pendiente_usd` (bug corregido en 3b-ii.7, ver
+    // 3b. Resultado de la deteccion de lote SAF (slice 3b-iii,
+    // cxc-ledger-saldos-redesign), ya calculado ANTES de abrir esta tx
+    // (ver `detalleLoteSaf` arriba — fix/cxc-reverso-deadlock-getall).
+    // CONTRATO (reversa-pago-saf.ts, docstring de `reversarPagoSafEnTx`,
+    // "CONTRATO PARA EL LLAMADOR" — 3b-ii.7): cuando `generatedLote` es
+    // `true`, esa funcion es la UNICA escritora de los efectos de saldo de
+    // este reverso — los Steps 4/5 de abajo (UPDATE clientes con el monto
+    // COMPLETO del pago + REV generico con venta_id=NULL) quedan OMITIDOS
+    // por completo. Llamarlos ademas triplicaria `saldo_pendiente_usd`
+    // (bug corregido en 3b-ii.7, ver
     // `sdd/cxc-ledger-saldos-redesign/analysis-reverso-saldo-actual`). Un
     // `pago` que genero lote SIEMPRE tiene `venta_id=NULL` → el Step 3 de
     // arriba (`if pago.venta_id`) y esta rama son mutuamente excluyentes
     // por construccion, nunca ambas corren para el mismo pago.
-    const detalleLoteSaf = await detectarLoteSafDePago(empresa_id, pago_id)
-
     if (detalleLoteSaf.generatedLote) {
       await reversarPagoSafEnTx(tx, {
         pagoId: pago_id,
