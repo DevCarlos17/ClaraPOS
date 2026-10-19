@@ -1058,14 +1058,51 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         // writeTransaction, el trigger del servidor (migration 0102) es la
         // autoridad final al reconectar.
         const safDisponibleDespues = calcularSafDisponibleNuevo('SAF', safDisponibleAntes, safAplicadoUsd)
-        // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
-        // cxc-ledger-saldos-redesign): SAF como metodo de pago en el POS
-        // reduce deuda pendiente igual que un PAG.
-        const saldoPendienteDespuesSafVenta = calcularSaldoPendienteClienteNuevo(
-          'SAF',
-          saldoPendienteAntesSafVenta,
-          safAplicadoUsd
-        )
+        // FIX (fix/cxc-ledger-saf-venta-doble-descuento, bug de staging):
+        // saldo_pendiente_usd NO se vuelve a restar aqui. El bloque FAC de
+        // arriba (linea ~977) ya escribe la deuda NETA del SAF — `saldoPend`
+        // (monto del FAC) es `cierre.saldoPendUsd`, que `calcularCierreVentaConSaf`
+        // calcula DESPUES de descontar `safAplicadoUsd` del total (invariante
+        // FAC-es-neto: monto FAC = total - safAplicadoUsd). La deuda real del
+        // cliente YA nacio en su valor final ($50 en el caso de staging: $100
+        // total - $50 SAF) en el UPDATE del bloque FAC.
+        //
+        // El codigo anterior volvia a aplicar `calcularSaldoPendienteClienteNuevo('SAF', ...)`
+        // aqui, que espeja el trigger Postgres (`actualizar_saldo_cliente`,
+        // migrations/0110/0114) tratando CUALQUIER fila tipo='SAF' como una
+        // reduccion de deuda — correcto para el flujo de CxC
+        // (`aplicarPagoFacturaEnTx` en use-cxc.ts, donde el SAF paga una
+        // factura PREEXISTENTE que SI carga su deuda completa), pero
+        // INCORRECTO aqui: restaba los mismos $50 una SEGUNDA vez sobre una
+        // deuda que nunca llego a nacer en $100 (0 -> 50 por FAC -> 0 por este
+        // bloque, en vez de quedar en 50). Ver analisis de sync en el reporte
+        // de esta sesion: el trigger del servidor SI reaplica la resta cuando
+        // esta fila SAF sincroniza, pero `saldo_pendiente_usd` esta
+        // deliberadamente EXCLUIDO de `TRIGGER_MANAGED_PATCH_COLUMNS.clientes`
+        // (connector.ts) — el UPDATE clientes explicito de este mismo bloque,
+        // que sube DESPUES en el mismo orden de la cola CRUD, sobreescribe el
+        // valor erroneo del trigger con el valor correcto (pass-through) una
+        // vez que la transaccion local termina de subir completa.
+        //
+        // `saldoPendienteAntesSafVenta` ya es el valor post-FAC (se releyo la
+        // fila `clientes` DESPUES de que el bloque FAC committeara su UPDATE,
+        // linea ~1029) — pasarlo sin cambios es exactamente "no tocar la
+        // deuda pendiente aqui".
+        //
+        // TODO / FOLLOW-UP (riesgo residual conocido, aun SIN ticket formal):
+        // existe una ventana transitoria durante la sincronizacion en la que
+        // un lector DIRECTO de Postgres (reportes, otro dispositivo) veria
+        // `saldo_pendiente_usd` en 0 entre que sube la fila SAF (dispara el
+        // trigger que resta) y que sube el PATCH de `clientes` (que lo
+        // corrige). Converge al valor correcto, pero la correctitud depende
+        // del ORDEN de subida de la cola CRUD + la exclusion en connector.ts
+        // (`TRIGGER_MANAGED_PATCH_COLUMNS`), lo cual es fragil ante refactors.
+        // Correccion REAL (Opcion B, evaluar al cierre del ciclo): un tipo de
+        // movimiento distinto (p.ej. 'SAFV') que el trigger trate como
+        // neutral para la deuda en el origen — requiere migracion (ampliar
+        // CHECK + CASE del trigger) + espejo en saldo-cliente.ts. No se hace
+        // en este fix por decision del owner (Opcion A).
+        const saldoPendienteDespuesSafVenta = saldoPendienteAntesSafVenta
         await tx.execute(
           'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
           [
