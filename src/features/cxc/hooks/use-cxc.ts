@@ -1992,10 +1992,10 @@ export async function registrarReversoAbono(params: {
       let monedaPagoLabel: string | null = null
       if (pago.moneda_id) {
         const monedaResult = await tx.execute(
-          `SELECT codigo FROM monedas WHERE id = ? LIMIT 1`,
+          `SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1`,
           [pago.moneda_id]
         )
-        const codigoMoneda = (monedaResult.rows?.item(0) as { codigo: string } | undefined)?.codigo
+        const codigoMoneda = (monedaResult.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso
         if (codigoMoneda === 'VES') {
           monedaPagoLabel = 'BS'
         } else if (codigoMoneda) {
