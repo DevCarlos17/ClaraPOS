@@ -121,7 +121,7 @@ function mockCerrarSesionTx(opts: CerrarSesionFixtures) {
           return { rows: { length: 0, item: () => undefined } }
         }
 
-        if (sql.includes("tipo = 'SAF'")) {
+        if (sql.includes("tipo IN ('SAF', 'SAFV')")) {
           return {
             rows: { length: 1, item: () => ({ saf_total: opts.safTotal ?? 0, saf_count: opts.safCount ?? 0 }) },
           }

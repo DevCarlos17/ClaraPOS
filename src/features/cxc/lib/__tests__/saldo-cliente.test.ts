@@ -163,6 +163,22 @@ describe('calcularSafDisponibleNuevo', () => {
     expect(resultadoSafr.toString()).toBe(resultadoSaf.toString())
     expect(resultadoSafr.toString()).toBe('0')
   })
+
+  it('SAFV: SAF aplicado en venta POS usa la MISMA formula de consumo que SAF — difiere el origen (venta vs. pago de CxC), nunca el calculo (migrations/0115, Opcion B1, parity)', () => {
+    const resultadoSafv = calcularSafDisponibleNuevo('SAFV', 40, 40)
+    const resultadoSaf = calcularSafDisponibleNuevo('SAF', 40, 40)
+
+    expect(resultadoSafv.toString()).toBe(resultadoSaf.toString())
+    expect(resultadoSafv.toString()).toBe('0')
+  })
+
+  it('SAFV: tambien pisa en 0 (nunca negativo), igual que SAF/SAFR', () => {
+    const resultadoSafv = calcularSafDisponibleNuevo('SAFV', 10, 40)
+    const resultadoSaf = calcularSafDisponibleNuevo('SAF', 10, 40)
+
+    expect(resultadoSafv.toString()).toBe(resultadoSaf.toString())
+    expect(resultadoSafv.toString()).toBe('0')
+  })
 })
 
 describe('calcularSaldoLoteDespues', () => {
@@ -276,6 +292,18 @@ describe('calcularSaldoPendienteClienteNuevo', () => {
 
     expect(resultadoSafc.toString()).toBe('100')
     expect(resultadoSal.toString()).toBe('100')
+  })
+
+  it('SAFV (migrations/0115, Opcion B1): SAF aplicado en una venta POS es DEBT-NEUTRAL — la factura FAC asociada ya nacio neta del SAF, por lo que la fila SAFV emparejada NUNCA debe volver a tocar la deuda pendiente (cae al ELSE, igual que SAFC/SAFR/SAL)', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('SAFV', 50, 50)
+
+    expect(resultado.toString()).toBe('50')
+  })
+
+  it('SAFV: debt-neutral tambien cuando el anterior es 0 — nunca resta, nunca produce negativo por construccion (no hay rama de resta para este tipo)', () => {
+    const resultado = calcularSaldoPendienteClienteNuevo('SAFV', 0, 100)
+
+    expect(resultado.toString()).toBe('0')
   })
 
   it('acepta instancias de Decimal como entrada', () => {

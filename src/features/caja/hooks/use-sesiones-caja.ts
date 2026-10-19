@@ -972,7 +972,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
          COALESCE(SUM(CAST(monto AS REAL)), 0) as saf_total,
          COUNT(*) as saf_count
        FROM movimientos_cuenta
-       WHERE tipo = 'SAF'
+       WHERE tipo IN ('SAF', 'SAFV')
          AND sesion_caja_id = ?
          AND sesion_caja_id IS NOT NULL
          AND empresa_id = ?`,
