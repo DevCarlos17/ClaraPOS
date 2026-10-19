@@ -768,6 +768,36 @@ const saf_creditos_aplicaciones = new Table(
   }
 )
 
+// Pagos — Aplicaciones por factura (cxc-ledger-saldos-redesign slice 2,
+// migrations/0112_pagos_aplicaciones.sql). Mirror de saf_creditos_aplicaciones
+// (arriba) pero SIN trigger — pura auditoria app-trusted, evento 100%
+// append-only (ningun campo cambia tras el INSERT).
+// `insertOnly: true` por el mismo motivo que saf_creditos_aplicaciones:
+// PowerSync nunca necesita sincronizar un PATCH de vuelta para esta tabla.
+const pagos_aplicaciones = new Table(
+  {
+    empresa_id: column.text,
+    cliente_id: column.text,
+    pago_id: column.text,
+    venta_id: column.text,
+    monto_aplicado_usd: column.text,
+    saldo_venta_antes_usd: column.text,
+    saldo_venta_despues_usd: column.text,
+    fecha: column.text,
+    created_at: column.text,
+    created_by: column.text,
+  },
+  {
+    insertOnly: true,
+    indexes: {
+      idx_pagos_aplic_pago: ['pago_id'],
+      idx_pagos_aplic_venta: ['venta_id'],
+      idx_pagos_aplic_empresa: ['empresa_id'],
+      idx_pagos_aplic_cliente: ['cliente_id'],
+    },
+  }
+)
+
 // =============================================
 // VENTAS
 // =============================================
@@ -1779,6 +1809,7 @@ export const AppSchema = new Schema({
   ventas,
   ventas_det,
   pagos,
+  pagos_aplicaciones,
   notas_credito,
   notas_credito_det,
   notas_debito,
