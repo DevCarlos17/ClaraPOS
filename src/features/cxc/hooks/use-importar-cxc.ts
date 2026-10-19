@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from 'uuid'
 import Decimal from 'decimal.js'
 import { localNow } from '@/lib/dates'
 import { calcularEstadoVenta } from '@/features/cxc/lib/estado-venta'
+import { calcularSaldoPendienteClienteNuevo } from '@/features/cxc/lib/saldo-cliente'
+import { toStorageString } from '@/lib/currency'
 import type { CxcImportRow, CxcImportRowResult, CxcImportSummary } from '../schemas/cxc-import-schema'
 
 interface ImportarCxcParams {
@@ -86,7 +88,7 @@ async function importarFilaCxc(
 
     // 1. Buscar cliente por identificacion
     const clienteResult = await tx.execute(
-      'SELECT id, nombre, saldo_actual FROM clientes WHERE empresa_id = ? AND identificacion = ? AND is_active = 1 LIMIT 1',
+      'SELECT id, nombre, saldo_actual, saldo_pendiente_usd FROM clientes WHERE empresa_id = ? AND identificacion = ? AND is_active = 1 LIMIT 1',
       [empresaId, fila.identificacion]
     )
     if (!clienteResult.rows?.length) {
@@ -96,6 +98,7 @@ async function importarFilaCxc(
       id: string
       nombre: string
       saldo_actual: string
+      saldo_pendiente_usd: string
     }
 
     // 2. Verificar duplicado: nro_documento + cliente_id + empresa_id
@@ -243,10 +246,15 @@ async function importarFilaCxc(
       ]
     )
 
-    // 8. Actualizar saldo_actual del cliente
+    // 8. Actualizar saldo_actual del cliente. Escritura optimista pareada de
+    // saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign): tipo 'SAL'
+    // es no-op para deuda pendiente (migrations/0110 ELSE branch) — el
+    // saldo inicial importado no se contabiliza como factura real.
+    const saldoPendienteAnteriorSal = new Decimal(cliente.saldo_pendiente_usd || '0')
+    const saldoPendienteNuevoSal = calcularSaldoPendienteClienteNuevo('SAL', saldoPendienteAnteriorSal, montoUsd)
     await tx.execute(
-      'UPDATE clientes SET saldo_actual = ?, updated_at = ?, updated_by = ? WHERE id = ?',
-      [saldoNuevo.toFixed(2), now, usuarioId, cliente.id]
+      'UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ?, updated_by = ? WHERE id = ?',
+      [saldoNuevo.toFixed(2), toStorageString(saldoPendienteNuevoSal), now, usuarioId, cliente.id]
     )
 
     resultado = { nroFactura, clienteNombre: cliente.nombre }

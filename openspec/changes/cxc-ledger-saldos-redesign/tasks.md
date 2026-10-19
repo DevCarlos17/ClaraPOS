@@ -60,15 +60,16 @@ must land before `3a` to avoid rebase).
 
 ## Slice 1b — write-site wiring (must land after 1a)
 
-- [ ] 1b.1 [RED] `use-cxc.test.ts`: assert `aplicarPagoFacturaEnTx`'s `UPDATE clientes` (~L614) SQL/params include `saldo_pendiente_usd`.
-- [ ] 1b.2 [GREEN] Wire `aplicarPagoFacturaEnTx` (~L614) with `saldo_pendiente_usd` via `calcularSaldoPendienteClienteNuevo('PAG', ...)`.
-- [ ] 1b.3 [RED] `use-cxc.test.ts`: assert `registrarAbonoGlobal`'s SAF pre-step + FIFO-loop + anticipo-promotion `UPDATE clientes` sites (~L837,997,1253) each carry `saldo_pendiente_usd`.
-- [ ] 1b.4 [GREEN] Wire those 3 `registrarAbonoGlobal` sites (~L837,997,1253) with `saldo_pendiente_usd`.
-- [ ] 1b.5 [RED] `use-cxc.test.ts`: assert `registrarReversoAbono`'s `UPDATE clientes` (~L1797) carries `saldo_pendiente_usd` via `tipo='REV'`.
-- [ ] 1b.6 [GREEN] Wire `registrarReversoAbono` (~L1797) with `saldo_pendiente_usd`.
-- [ ] 1b.7 [RED] `use-ventas.test.ts` / `use-notas-credito.test.ts` / `use-importar-cxc.test.ts`: assert their `UPDATE clientes` sites (`use-ventas.ts`:995,1051,1224; `use-notas-credito.ts`:1155,1351,1392,1518; `use-importar-cxc.ts`:248) carry `saldo_pendiente_usd`.
-- [ ] 1b.8 [GREEN] Wire those FAC-creation/NCR sites with `saldo_pendiente_usd` — same call sites, same tx, no new sites.
-- [ ] 1b.9 Verify: `yarn test:run src/features/cxc src/features/ventas`; confirm each of the 4 touched files adds 0 new type-check errors; no SQL in this slice.
+- [x] 1b.1 [RED] `use-cxc.test.ts`: assert `aplicarPagoFacturaEnTx`'s `UPDATE clientes` (~L614) SQL/params include `saldo_pendiente_usd`.
+- [x] 1b.2 [GREEN] Wire `aplicarPagoFacturaEnTx` (~L614) with `saldo_pendiente_usd` via `calcularSaldoPendienteClienteNuevo('PAG', ...)`.
+- [x] 1b.3 [RED] `use-cxc.test.ts`: assert `registrarAbonoGlobal`'s SAF pre-step + FIFO-loop + anticipo-promotion `UPDATE clientes` sites (real lines: 997, 1202, 1253 — `~L837` in the original estimate was actually inside `registrarPagoFactura`, a different function, intentionally left out of 1b scope) each carry `saldo_pendiente_usd`.
+- [x] 1b.4 [GREEN] Wire those 3 `registrarAbonoGlobal` sites (997/1202/1253) with `saldo_pendiente_usd`.
+- [x] 1b.5 [RED] `use-cxc.test.ts`: assert `registrarReversoAbono`'s `UPDATE clientes` (~L1797) carries `saldo_pendiente_usd` via `tipo='REV'`.
+- [x] 1b.6 [GREEN] Wire `registrarReversoAbono` (~L1797) with `saldo_pendiente_usd`.
+- [x] 1b.7 [RED] `use-ventas.test.ts` / `use-notas-credito.test.ts` / `use-importar-cxc.test.ts`: assert their `UPDATE clientes` sites (`use-ventas.ts`:995,1051,1224; `use-notas-credito.ts`:1155,1351,1392,1518; `use-importar-cxc.ts`:248) carry `saldo_pendiente_usd` — line numbers confirmed exact via grep, unchanged from estimate.
+- [x] 1b.8 [GREEN] Wire those FAC-creation/NCR sites with `saldo_pendiente_usd` — same call sites, same tx, no new sites.
+- [x] 1b.9 Verify: `yarn test:run src/features/cxc src/features/ventas` — 1023 passed (62 new), 2 pre-existing failures confirmed via `git stash` baseline (unrelated `cxc-list.test.tsx`, not touched); the 4 production files add 0 new type-check errors (confirmed via `git stash` baseline diff); no SQL in this slice.
+- [x] 1b.10 [CLOSURE] Orchestrator verified 5 additional debt-affecting sites were missed by 1b.1-1b.9 (all in `use-cxc.ts`): `registrarPagoFactura`'s inline SAF application (tipo SAF, real line 777→847), `registrarAbonoPrestamo`'s SAF pre-step (tipo SAF, 1498→1539) + linked-venta PAG step 7e (tipo PAG, 1644→1672), `registrarSafExcedente` (tipo SAFC no-op, 2294→2367), `reversarDiferencialEnTx` (tipo REV, 2431→2474), `registrarDiferencialCxC` (tipo PAG, 2539→2582). All 5 wired via strict RED-first TDD (RED failure observed and reported for each before GREEN). Slice 1b now covers **100% of debt-affecting write sites (19 total UPDATE clientes statements)** across the 4 files (fresh-context verify re-derived 19 by grep: registrarAbonoPrestamo has 2 sites). Verify: `yarn test:run src/features/cxc src/features/ventas` — 1031 passed (70 new total across both rounds), same 2 pre-existing failures; `use-cxc.ts` adds 0 new type-check errors (diff-confirmed against pre-closure state, which was already 0). Real total changed-line count for full slice 1b (both rounds): 993 insertions(+)/136 deletions(-) = 1129 lines across the 8 files.
 
 ## Slice 1c — read-path swap (must land after 1a+1b+manual backfill run)
 

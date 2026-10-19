@@ -9,7 +9,7 @@ import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-con
 import { generarAsientosVenta, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import { connector } from '@/core/db/powersync/connector'
 import { aplicarPagoFacturaEnTx, consumirSafLotesEnTx } from '@/features/cxc/hooks/use-cxc'
-import { calcularSafDisponibleNuevo } from '@/features/cxc/lib/saldo-cliente'
+import { calcularSafDisponibleNuevo, calcularSaldoPendienteClienteNuevo } from '@/features/cxc/lib/saldo-cliente'
 import { buildStockPorDepositoFragments, resolveDepositoEgresoVenta } from '../lib/deposito-venta'
 import { calcularCierreVentaConSaf } from '../lib/calcular-cierre-venta-saf'
 import { calcularEstadoVenta } from '@/features/cxc/lib/estado-venta'
@@ -960,16 +960,21 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     if (cierre.tipo === 'CREDITO' && saldoPend.gt('0.001')
         && discrepancy?.mode !== 'ABSORBER'
         && discrepancy?.mode !== 'DIFERENCIAL_FALTANTE') {
-      const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
-        cliente_id,
-      ])
+      const clienteResult = await tx.execute(
+        'SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?',
+        [cliente_id]
+      )
       if (!clienteResult.rows || clienteResult.rows.length === 0) {
         throw new Error('Cliente no encontrado')
       }
-      const saldoActual = new Decimal(
-        (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
-      )
+      const clienteFacRow = clienteResult.rows.item(0) as { saldo_actual: string; saldo_pendiente_usd: string }
+      const saldoActual = new Decimal(clienteFacRow.saldo_actual)
       const saldoNuevo = saldoActual.plus(saldoPend)
+      // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+      // cxc-ledger-saldos-redesign): venta a credito aumenta deuda pendiente
+      // — mismo trigger (migrations/0110) como autoridad final.
+      const saldoPendienteAnteriorFac = new Decimal(clienteFacRow.saldo_pendiente_usd || '0')
+      const saldoPendienteNuevoFac = calcularSaldoPendienteClienteNuevo('FAC', saldoPendienteAnteriorFac, saldoPend)
 
       const movCuentaId = uuidv4()
       await tx.execute(
@@ -992,8 +997,9 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       )
 
       // Actualizar saldo del cliente localmente
-      await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+      await tx.execute('UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?', [
         toStorageString(saldoNuevo),
+        toStorageString(saldoPendienteNuevoFac),
         now,
         cliente_id,
       ])
@@ -1008,14 +1014,19 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     if (safEntry && safAplicadoUsd.gt('0.001')) {
       const { clienteId: safClienteId, safOrigenRefs = [] } = safEntry
       const clienteSafRes = await tx.execute(
-        'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1',
+        'SELECT saldo_actual, saf_disponible, saldo_pendiente_usd FROM clientes WHERE id = ? LIMIT 1',
         [safClienteId]
       )
       if (clienteSafRes.rows?.length) {
-        const clienteSafRow = clienteSafRes.rows.item(0) as { saldo_actual: string; saf_disponible: string }
+        const clienteSafRow = clienteSafRes.rows.item(0) as {
+          saldo_actual: string
+          saf_disponible: string
+          saldo_pendiente_usd: string
+        }
         const saldoAntesSaf = new Decimal(clienteSafRow.saldo_actual)
         const safDisponibleAntes = new Decimal(clienteSafRow.saf_disponible || '0')
         const saldoDespuesSaf = saldoAntesSaf.plus(safAplicadoUsd)
+        const saldoPendienteAntesSafVenta = new Decimal(clienteSafRow.saldo_pendiente_usd || '0')
 
         // INSERT movimiento_cuenta tipo='SAF' — referencia de trazabilidad apunta a esta venta
         const safOrigenRefsWithVenta = safOrigenRefs.length > 0 ? safOrigenRefs : [ventaId]
@@ -1047,9 +1058,23 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         // writeTransaction, el trigger del servidor (migration 0102) es la
         // autoridad final al reconectar.
         const safDisponibleDespues = calcularSafDisponibleNuevo('SAF', safDisponibleAntes, safAplicadoUsd)
+        // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+        // cxc-ledger-saldos-redesign): SAF como metodo de pago en el POS
+        // reduce deuda pendiente igual que un PAG.
+        const saldoPendienteDespuesSafVenta = calcularSaldoPendienteClienteNuevo(
+          'SAF',
+          saldoPendienteAntesSafVenta,
+          safAplicadoUsd
+        )
         await tx.execute(
-          'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?',
-          [toStorageString(saldoDespuesSaf), toStorageString(safDisponibleDespues), now, safClienteId]
+          'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+          [
+            toStorageString(saldoDespuesSaf),
+            toStorageString(safDisponibleDespues),
+            toStorageString(saldoPendienteDespuesSafVenta),
+            now,
+            safClienteId,
+          ]
         )
 
         // PR4 (saf-snapshot-y-trazabilidad Fase 4): consumir lotes FIFO, 1..N
@@ -1172,15 +1197,16 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               // SUM(SAFC)-SUM(SAF) en use-cxc.ts la cuente como creacion y no
               // como consumo. Ver design.md Decision 1/2.
               const clienteRemRes = await tx.execute(
-                'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?',
+                'SELECT saldo_actual, saf_disponible, saldo_pendiente_usd FROM clientes WHERE id = ?',
                 [discrepancy.clienteId]
               )
               const clienteRemRow = clienteRemRes.rows?.item(0) as
-                | { saldo_actual: string; saf_disponible: string }
+                | { saldo_actual: string; saf_disponible: string; saldo_pendiente_usd: string }
                 | undefined
               const saldoActualRem = new Decimal(clienteRemRow?.saldo_actual ?? '0')
               const safDisponibleRemAntes = new Decimal(clienteRemRow?.saf_disponible ?? '0')
               const saldoNuevoRem = saldoActualRem.minus(remainingSaf)
+              const saldoPendienteRemAntes = new Decimal(clienteRemRow?.saldo_pendiente_usd ?? '0')
 
               const movRemId = uuidv4()
               await tx.execute(
@@ -1220,9 +1246,24 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               // mismo writeTransaction, el trigger del servidor (migration
               // 0102) es la autoridad final al reconectar.
               const safDisponibleRemDespues = calcularSafDisponibleNuevo('SAFC', safDisponibleRemAntes, remainingSaf)
+              // SAFC es no-op para deuda pendiente (migrations/0110 ELSE
+              // branch, slice 1b cxc-ledger-saldos-redesign) — se escribe
+              // igual, sin cambio, para mantener la columna siempre
+              // consistente con el trigger del servidor.
+              const saldoPendienteRemDespues = calcularSaldoPendienteClienteNuevo(
+                'SAFC',
+                saldoPendienteRemAntes,
+                remainingSaf
+              )
               await tx.execute(
-                'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?',
-                [toStorageString(saldoNuevoRem), toStorageString(safDisponibleRemDespues), now, discrepancy.clienteId]
+                'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+                [
+                  toStorageString(saldoNuevoRem),
+                  toStorageString(safDisponibleRemDespues),
+                  toStorageString(saldoPendienteRemDespues),
+                  now,
+                  discrepancy.clienteId,
+                ]
               )
             }
           }

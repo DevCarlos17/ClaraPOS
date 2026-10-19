@@ -12,6 +12,7 @@ import {
   calcularSaldoNuevoMovimientoCuenta,
   calcularSafDisponibleNuevo,
   calcularSaldoLoteDespues,
+  calcularSaldoPendienteClienteNuevo,
 } from '@/features/cxc/lib/saldo-cliente'
 import { calcularEstadoVenta } from '@/features/cxc/lib/estado-venta'
 
@@ -585,15 +586,24 @@ export async function aplicarPagoFacturaEnTx(
   ])
 
   // 6. Movimiento de cuenta (tipo PAG) + actualizar saldo cliente
-  const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [cliente_id])
+  const clienteResult = await tx.execute(
+    'SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?',
+    [cliente_id]
+  )
   if (!clienteResult.rows || clienteResult.rows.length === 0) {
     throw new Error('Cliente no encontrado')
   }
-  const saldoActual = new Decimal((clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0')
+  const clienteRow = clienteResult.rows.item(0) as { saldo_actual: string; saldo_pendiente_usd: string }
+  const saldoActual = new Decimal(clienteRow.saldo_actual || '0')
   // Sin clamp a 0: si el cliente tenia saldo a favor (credito), el pago puede
   // dejarlo con saldo negativo remanente — eso es correcto, no un error.
   // Ver openspec/changes/saldo-a-favor-fix/specs/cxc-pago-factura/spec.md
   const saldoNuevo = calcularSaldoNuevoMovimientoCuenta('PAG', saldoActual, montoUsd)
+  // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+  // cxc-ledger-saldos-redesign) — mismo writeTransaction, el trigger del
+  // servidor (migrations/0110) es la autoridad final al reconectar.
+  const saldoPendienteAnterior = new Decimal(clienteRow.saldo_pendiente_usd || '0')
+  const saldoPendienteNuevo = calcularSaldoPendienteClienteNuevo('PAG', saldoPendienteAnterior, montoUsd)
 
   const movId = uuidv4()
   await tx.execute(
@@ -611,8 +621,8 @@ export async function aplicarPagoFacturaEnTx(
   // UPDATE directo para reflejar el cambio en SQLite local inmediatamente.
   // En Supabase el trigger actualizar_saldo_cliente lo gestiona automáticamente
   // via el INSERT de movimientos_cuenta; este UPDATE llega como no-op (mismo valor).
-  await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-    toStorageString(saldoNuevo), now, cliente_id,
+  await tx.execute('UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?', [
+    toStorageString(saldoNuevo), toStorageString(saldoPendienteNuevo), now, cliente_id,
   ])
 
   // 6b. Si la factura tiene préstamos vinculados, sincronizar vencimientos_cobrar (FIFO)
@@ -765,13 +775,18 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
       // de cxc-saldo-favor-modelo Decision 1/3 por la misma fuente confiable,
       // ahora O(1)).
       const clienteRes = await tx.execute(
-        'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1',
+        'SELECT saldo_actual, saf_disponible, saldo_pendiente_usd FROM clientes WHERE id = ? LIMIT 1',
         [cliente_id]
       )
       if (!clienteRes.rows?.length) throw new Error('Cliente no encontrado')
-      const clienteRow = clienteRes.rows.item(0) as { saldo_actual: string; saf_disponible: string }
+      const clienteRow = clienteRes.rows.item(0) as {
+        saldo_actual: string
+        saf_disponible: string
+        saldo_pendiente_usd: string
+      }
       const saldoActualSaf = new Decimal(clienteRow.saldo_actual || '0')
       const creditoSafDisponible = new Decimal(clienteRow.saf_disponible || '0')
+      const saldoPendienteAntesPagoSaf = new Decimal(clienteRow.saldo_pendiente_usd || '0')
 
       if (creditoSafDisponible.lte('0.001')) throw new Error('El cliente no tiene saldo a favor disponible')
       if (montoSaf.gt(creditoSafDisponible.plus(new Decimal('0.01')))) {
@@ -834,9 +849,24 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
       // trigger del servidor (migration 0102) es la autoridad final al
       // reconectar.
       const safDisponibleNuevo = calcularSafDisponibleNuevo('SAF', creditoSafDisponible, montoSaf)
-      await tx.execute('UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?', [
-        toStorageString(saldoDespuesSaf), toStorageString(safDisponibleNuevo), now, cliente_id,
-      ])
+      // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+      // cxc-ledger-saldos-redesign): SAF aplicado a una factura especifica
+      // reduce deuda pendiente igual que un PAG.
+      const saldoPendienteNuevoPagoSaf = calcularSaldoPendienteClienteNuevo(
+        'SAF',
+        saldoPendienteAntesPagoSaf,
+        montoSaf
+      )
+      await tx.execute(
+        'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+        [
+          toStorageString(saldoDespuesSaf),
+          toStorageString(safDisponibleNuevo),
+          toStorageString(saldoPendienteNuevoPagoSaf),
+          now,
+          cliente_id,
+        ]
+      )
 
       // PR4 (saf-snapshot-y-trazabilidad Fase 4): consumir lotes FIFO, 1..N
       // filas saf_creditos_aplicaciones pareadas con el SAF recien creado.
@@ -894,13 +924,18 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       const safOrigenRefs = params.safOrigenRefs ?? []
 
       const clienteSafRes = await tx.execute(
-        'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1',
+        'SELECT saldo_actual, saf_disponible, saldo_pendiente_usd FROM clientes WHERE id = ? LIMIT 1',
         [cliente_id]
       )
       if (!clienteSafRes.rows?.length) throw new Error('Cliente no encontrado')
-      const clienteSafRow = clienteSafRes.rows.item(0) as { saldo_actual: string; saf_disponible: string }
+      const clienteSafRow = clienteSafRes.rows.item(0) as {
+        saldo_actual: string
+        saf_disponible: string
+        saldo_pendiente_usd: string
+      }
       const saldoActualSaf = new Decimal(clienteSafRow.saldo_actual || '0')
       const safDisponibleAntes = new Decimal(clienteSafRow.saf_disponible || '0')
+      const saldoPendienteAntesSaf = new Decimal(clienteSafRow.saldo_pendiente_usd || '0')
       // El GATE valida contra `saf_disponible` (snapshot puro de credito SAF,
       // mantenido por trigger), NO contra `saldo_actual` (neteado: deuda +
       // credito mezclados). Un cliente con deuda Y credito puede tener
@@ -994,9 +1029,20 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       // pareada de saf_disponible — mismo writeTransaction, el trigger del
       // servidor (migration 0102) es la autoridad final al reconectar.
       const safDisponibleDespues = calcularSafDisponibleNuevo('SAF', safDisponibleAntes, montoSaf)
-      await tx.execute('UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?', [
-        toStorageString(saldoDespuesSaf), toStorageString(safDisponibleDespues), now, cliente_id,
-      ])
+      // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+      // cxc-ledger-saldos-redesign): el pre-step SAF reduce deuda pendiente
+      // igual que un PAG — mismo trigger (migrations/0110) como autoridad final.
+      const saldoPendienteDespuesSaf = calcularSaldoPendienteClienteNuevo('SAF', saldoPendienteAntesSaf, montoSaf)
+      await tx.execute(
+        'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+        [
+          toStorageString(saldoDespuesSaf),
+          toStorageString(safDisponibleDespues),
+          toStorageString(saldoPendienteDespuesSaf),
+          now,
+          cliente_id,
+        ]
+      )
     }
 
     // Proceed with regular payment (monto from payment method) if any
@@ -1151,15 +1197,21 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     // patron que `aplicarPagoFacturaEnTx`) — el excedente se promueve por
     // separado a SAFC+lote en el paso 5b, nunca se evapora.
     const montoAplicadoFacturas = montoTotalUsd.minus(montoRestante)
-    const clienteResult = await tx.execute('SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?', [
-      cliente_id,
-    ])
+    const clienteResult = await tx.execute(
+      'SELECT saldo_actual, saf_disponible, saldo_pendiente_usd FROM clientes WHERE id = ?',
+      [cliente_id]
+    )
     if (!clienteResult.rows || clienteResult.rows.length === 0) {
       throw new Error('Cliente no encontrado')
     }
-    const clienteAbonoRow = clienteResult.rows.item(0) as { saldo_actual: string; saf_disponible: string }
+    const clienteAbonoRow = clienteResult.rows.item(0) as {
+      saldo_actual: string
+      saf_disponible: string
+      saldo_pendiente_usd: string
+    }
     const saldoActual = new Decimal(clienteAbonoRow.saldo_actual || '0')
     const safDisponibleAntesAbono = new Decimal(clienteAbonoRow.saf_disponible || '0')
+    const saldoPendienteAntesAbono = new Decimal(clienteAbonoRow.saldo_pendiente_usd || '0')
     // Guard: `movimientos_cuenta.monto` tiene CHECK (monto > 0) en Postgres
     // (migrations/0006). Si el cliente no tenia NINGUNA factura pendiente
     // (facturasResult vacio) el 100% del pago cae en `montoRestante` y
@@ -1171,6 +1223,12 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     const saldoNuevo = hayMontoAplicadoFacturas
       ? calcularSaldoNuevoMovimientoCuenta('PAG', saldoActual, montoAplicadoFacturas)
       : saldoActual
+    // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+    // cxc-ledger-saldos-redesign): mismo guard que saldoNuevo arriba — sin
+    // monto real aplicado a facturas, la deuda pendiente tampoco cambia.
+    const saldoPendienteNuevo = hayMontoAplicadoFacturas
+      ? calcularSaldoPendienteClienteNuevo('PAG', saldoPendienteAntesAbono, montoAplicadoFacturas)
+      : saldoPendienteAntesAbono
 
     const movId = uuidv4()
     const anticiPoSuffix = montoRestante.gt(new Decimal('0.01'))
@@ -1199,8 +1257,9 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         ]
       )
 
-      await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+      await tx.execute('UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?', [
         toStorageString(saldoNuevo),
+        toStorageString(saldoPendienteNuevo),
         now,
         cliente_id,
       ])
@@ -1250,9 +1309,26 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       )
 
       const safDisponibleDespuesAbono = calcularSafDisponibleNuevo('SAFC', safDisponibleAntesAbono, montoRestante)
-      await tx.execute('UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?', [
-        toStorageString(saldoNuevoSafc), toStorageString(safDisponibleDespuesAbono), now, cliente_id,
-      ])
+      // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+      // cxc-ledger-saldos-redesign): SAFC es no-op para deuda pendiente
+      // (migrations/0110 ELSE branch) — se encadena desde `saldoPendienteNuevo`
+      // (post-PAG de arriba), no desde el valor pre-abono, para preservar el
+      // mismo encadenamiento optimista que `saldoAntesSafc`/`saldoNuevo`.
+      const saldoPendienteDespuesAbono = calcularSaldoPendienteClienteNuevo(
+        'SAFC',
+        saldoPendienteNuevo,
+        montoRestante
+      )
+      await tx.execute(
+        'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+        [
+          toStorageString(saldoNuevoSafc),
+          toStorageString(safDisponibleDespuesAbono),
+          toStorageString(saldoPendienteDespuesAbono),
+          now,
+          cliente_id,
+        ]
+      )
     }
 
     // 6. Crear movimiento_metodo_cobro por el total del abono
@@ -1440,15 +1516,20 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
     // 3a. SAF pre-step: aplicar crédito del cliente al préstamo
     if (montoSafNum.gt(0)) {
       const clienteSafRes = await tx.execute(
-        'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ? LIMIT 1',
+        'SELECT saldo_actual, saf_disponible, saldo_pendiente_usd FROM clientes WHERE id = ? LIMIT 1',
         [venc.cliente_id]
       )
       if (!clienteSafRes.rows?.length) throw new Error('Cliente no encontrado')
-      const clienteSafRow = clienteSafRes.rows.item(0) as { saldo_actual: string; saf_disponible: string }
+      const clienteSafRow = clienteSafRes.rows.item(0) as {
+        saldo_actual: string
+        saf_disponible: string
+        saldo_pendiente_usd: string
+      }
       const saldoClienteSaf = new Decimal(clienteSafRow.saldo_actual || '0')
       // El GATE valida contra `saf_disponible` (snapshot puro), NO contra
       // `saldo_actual` (neteado) — mismo bug/fix PR13 que registrarAbonoGlobal.
       const safDisponibleAntes = new Decimal(clienteSafRow.saf_disponible || '0')
+      const saldoPendienteAntesPrestamoSaf = new Decimal(clienteSafRow.saldo_pendiente_usd || '0')
       if (safDisponibleAntes.lte('0.001')) throw new Error('El cliente no tiene saldo a favor disponible')
       if (montoSafNum.gt(safDisponibleAntes.plus(new Decimal('0.01')))) {
         throw new Error(`El monto SAF excede el saldo disponible ($${toStorageString(safDisponibleAntes)})`)
@@ -1480,9 +1561,23 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
         ]
       )
 
-      await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-        toStorageString(saldoClienteDespuesSaf), now, venc.cliente_id,
-      ])
+      // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+      // cxc-ledger-saldos-redesign): SAF aplicado a un prestamo reduce
+      // deuda pendiente igual que un PAG.
+      const saldoPendienteDespuesPrestamoSaf = calcularSaldoPendienteClienteNuevo(
+        'SAF',
+        saldoPendienteAntesPrestamoSaf,
+        montoSafNum
+      )
+      await tx.execute(
+        'UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+        [
+          toStorageString(saldoClienteDespuesSaf),
+          toStorageString(saldoPendienteDespuesPrestamoSaf),
+          now,
+          venc.cliente_id,
+        ]
+      )
     }
 
     // 4. Nuevos valores del vencimiento (SAF + método)
@@ -1586,14 +1681,25 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
         // 7e. Registrar movimiento de cuenta PAG y actualizar saldo cliente (solo por método)
         if (montoUsd.gt(0)) {
           const clienteResult = await tx.execute(
-            'SELECT saldo_actual FROM clientes WHERE id = ?',
+            'SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?',
             [venc.cliente_id]
           )
           if (clienteResult.rows?.length) {
-            const saldoClienteActual = new Decimal(
-              (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
-            )
+            const clienteVencLinkedRow = clienteResult.rows.item(0) as {
+              saldo_actual: string
+              saldo_pendiente_usd: string
+            }
+            const saldoClienteActual = new Decimal(clienteVencLinkedRow.saldo_actual || '0')
             const nuevoSaldoCliente = Decimal.max(new Decimal(0), saldoClienteActual.minus(montoUsd))
+            // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+            // cxc-ledger-saldos-redesign): pago por metodo de un prestamo
+            // vinculado a una factura reduce deuda pendiente igual que PAG.
+            const saldoPendienteAntesVencLinked = new Decimal(clienteVencLinkedRow.saldo_pendiente_usd || '0')
+            const saldoPendienteNuevoVencLinked = calcularSaldoPendienteClienteNuevo(
+              'PAG',
+              saldoPendienteAntesVencLinked,
+              montoUsd
+            )
 
             await tx.execute(
               `INSERT INTO movimientos_cuenta
@@ -1614,8 +1720,8 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
             )
 
             await tx.execute(
-              'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-              [toStorageString(nuevoSaldoCliente), now, venc.cliente_id]
+              'UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+              [toStorageString(nuevoSaldoCliente), toStorageString(saldoPendienteNuevoVencLinked), now, venc.cliente_id]
             )
           }
         }
@@ -1783,22 +1889,25 @@ export async function registrarReversoAbono(params: {
 
     // 4. Restaurar saldo del cliente
     const clienteResult = await tx.execute(
-      `SELECT saldo_actual FROM clientes WHERE id = ?`,
+      `SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?`,
       [pago.cliente_id]
     )
     if (!clienteResult.rows || clienteResult.rows.length === 0) {
       throw new Error('Cliente no encontrado')
     }
-    const saldoActual = new Decimal(
-      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
-    )
+    const clienteRevRow = clienteResult.rows.item(0) as { saldo_actual: string; saldo_pendiente_usd: string }
+    const saldoActual = new Decimal(clienteRevRow.saldo_actual || '0')
     const saldoNuevo = saldoActual.plus(montoUsd)
+    // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+    // cxc-ledger-saldos-redesign): un reverso de pago reabre deuda, igual
+    // que FAC/NDB — mismo trigger (migrations/0110) como autoridad final.
+    const saldoPendienteAnteriorRev = new Decimal(clienteRevRow.saldo_pendiente_usd || '0')
+    const saldoPendienteNuevoRev = calcularSaldoPendienteClienteNuevo('REV', saldoPendienteAnteriorRev, montoUsd)
 
-    await tx.execute(`UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?`, [
-      toStorageString(saldoNuevo),
-      now,
-      pago.cliente_id,
-    ])
+    await tx.execute(
+      `UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?`,
+      [toStorageString(saldoNuevo), toStorageString(saldoPendienteNuevoRev), now, pago.cliente_id]
+    )
 
     // 5. Insertar movimiento_cuenta tipo REV
     // Resolver moneda label desde moneda_id del pago original
@@ -2233,13 +2342,18 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
 
     // Leer saldo actual del cliente
     const clienteResult = await tx.execute(
-      'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?',
+      'SELECT saldo_actual, saf_disponible, saldo_pendiente_usd FROM clientes WHERE id = ?',
       [cliente_id]
     )
     if (!clienteResult.rows?.length) throw new Error('Cliente no encontrado')
-    const clienteRow = clienteResult.rows.item(0) as { saldo_actual: string; saf_disponible: string }
+    const clienteRow = clienteResult.rows.item(0) as {
+      saldo_actual: string
+      saf_disponible: string
+      saldo_pendiente_usd: string
+    }
     const saldoActual = new Decimal(clienteRow.saldo_actual || '0')
     const safDisponibleAnterior = new Decimal(clienteRow.saf_disponible || '0')
+    const saldoPendienteAnteriorExcedente = new Decimal(clienteRow.saldo_pendiente_usd || '0')
 
     // El excedente que el cliente pagó de más queda como crédito (saldo negativo)
     const saldoNuevo = saldoActual.minus(excedenteD)
@@ -2305,9 +2419,24 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
     // writeTransaction, el trigger del servidor (migration 0102) es la
     // autoridad final al reconectar.
     const safDisponibleNuevo = calcularSafDisponibleNuevo('SAFC', safDisponibleAnterior, excedenteD)
-    await tx.execute('UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?', [
-      toStorageString(saldoNuevo), toStorageString(safDisponibleNuevo), now, cliente_id,
-    ])
+    // SAFC es no-op para deuda pendiente (migrations/0110 ELSE branch,
+    // slice 1b cxc-ledger-saldos-redesign) — se escribe igual, sin cambio,
+    // para mantener la columna siempre consistente con el trigger del servidor.
+    const saldoPendienteNuevoExcedente = calcularSaldoPendienteClienteNuevo(
+      'SAFC',
+      saldoPendienteAnteriorExcedente,
+      excedenteD
+    )
+    await tx.execute(
+      'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+      [
+        toStorageString(saldoNuevo),
+        toStorageString(safDisponibleNuevo),
+        toStorageString(saldoPendienteNuevoExcedente),
+        now,
+        cliente_id,
+      ]
+    )
   })
 }
 
@@ -2370,14 +2499,18 @@ export async function reversarDiferencialEnTx(
 
   // 3. Leer saldo actual del cliente
   const clienteRes = await tx.execute(
-    'SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?',
+    'SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ? AND empresa_id = ?',
     [clienteId, empresaId]
   )
   if (!clienteRes.rows?.length) throw new Error('Cliente no encontrado')
-  const saldoActual = new Decimal(
-    (clienteRes.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
-  )
+  const clienteDifeRow = clienteRes.rows.item(0) as { saldo_actual: string; saldo_pendiente_usd: string }
+  const saldoActual = new Decimal(clienteDifeRow.saldo_actual || '0')
   const saldoNuevo = saldoActual.plus(montoUsd)
+  // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+  // cxc-ledger-saldos-redesign): reversar un diferencial cambiario reabre
+  // deuda pendiente igual que cualquier otro reverso (tipo REV).
+  const saldoPendienteAnteriorDife = new Decimal(clienteDifeRow.saldo_pendiente_usd || '0')
+  const saldoPendienteNuevoDife = calcularSaldoPendienteClienteNuevo('REV', saldoPendienteAnteriorDife, montoUsd)
 
   // 3b. Leer total_usd de la factura (necesario para derivar estado)
   const ventaDifeRes = await tx.execute('SELECT total_usd FROM ventas WHERE id = ?', [ventaId])
@@ -2412,8 +2545,8 @@ export async function reversarDiferencialEnTx(
 
   // 6. Actualizar saldo cliente en SQLite local
   await tx.execute(
-    'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-    [toStorageString(saldoNuevo), now, clienteId]
+    'UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+    [toStorageString(saldoNuevo), toStorageString(saldoPendienteNuevoDife), now, clienteId]
   )
 }
 
@@ -2478,14 +2611,18 @@ export async function registrarDiferencialCxC(params: DiferencialCxCParams): Pro
 
     // 2. Leer saldo actual del cliente
     const clienteResult = await tx.execute(
-      'SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?',
+      'SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ? AND empresa_id = ?',
       [clienteId, empresaId]
     )
     if (!clienteResult.rows?.length) throw new Error('Cliente no encontrado')
-    const saldoActual = new Decimal(
-      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
-    )
+    const clienteDifePagRow = clienteResult.rows.item(0) as { saldo_actual: string; saldo_pendiente_usd: string }
+    const saldoActual = new Decimal(clienteDifePagRow.saldo_actual || '0')
     const saldoNuevo = Decimal.max(new Decimal(0), saldoActual.minus(saldoUsd))
+    // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+    // cxc-ledger-saldos-redesign): cerrar el residual sub-centavo via
+    // diferencial cambiario reduce deuda pendiente igual que un PAG.
+    const saldoPendienteAnteriorDifePag = new Decimal(clienteDifePagRow.saldo_pendiente_usd || '0')
+    const saldoPendienteNuevoDifePag = calcularSaldoPendienteClienteNuevo('PAG', saldoPendienteAnteriorDifePag, saldoUsd)
 
     const dTasa = new Decimal(tasa)
     const saldoBs = saldoUsd.times(dTasa)
@@ -2520,8 +2657,8 @@ export async function registrarDiferencialCxC(params: DiferencialCxCParams): Pro
     // 5. Actualizar saldo cliente en SQLite local inmediatamente
     // (En Supabase el trigger actualizar_saldo_cliente lo gestiona via movimientos_cuenta)
     await tx.execute(
-      'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-      [toStorageString(saldoNuevo), now, clienteId]
+      'UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+      [toStorageString(saldoNuevo), toStorageString(saldoPendienteNuevoDifePag), now, clienteId]
     )
 
     // 6. Registrar gasto de diferencial cambiario en el libro de gastos

@@ -9,7 +9,7 @@ import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosNCR } from '@/features/contabilidad/lib/generar-asientos'
 import { reversarDiferencialEnTx, useDetalleFactura as useDetalleFacturaCanonica } from '@/features/cxc/hooks/use-cxc'
-import { calcularSafDisponibleNuevo } from '@/features/cxc/lib/saldo-cliente'
+import { calcularSafDisponibleNuevo, calcularSaldoPendienteClienteNuevo } from '@/features/cxc/lib/saldo-cliente'
 import { calcularEstadoVenta } from '@/features/cxc/lib/estado-venta'
 import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
 import { resolveDepositoReingresoNcr } from '@/features/inventario/lib/deposito-inactivo'
@@ -1121,16 +1121,24 @@ export async function crearNotaCredito(
     const nuevoSaldoPendVenta = Decimal.max(new Decimal(0), saldoPendVenta.minus(totalUsdNc))
 
     if (montoAplicadoAPendiente.gt('0.01')) {
-      const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
-        venta.cliente_id,
-      ])
+      const clienteResult = await tx.execute(
+        'SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?',
+        [venta.cliente_id]
+      )
       if (!clienteResult.rows || clienteResult.rows.length === 0) {
         throw new Error('Cliente no encontrado')
       }
-      const saldoActual = new Decimal(
-        (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
-      )
+      const clienteNcrRow = clienteResult.rows.item(0) as { saldo_actual: string; saldo_pendiente_usd: string }
+      const saldoActual = new Decimal(clienteNcrRow.saldo_actual)
       const saldoNuevo = Decimal.max(new Decimal(0), saldoActual.minus(montoAplicadoAPendiente))
+      // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+      // cxc-ledger-saldos-redesign): NCR reduce deuda pendiente igual que PAG.
+      const saldoPendienteAnteriorNcr = new Decimal(clienteNcrRow.saldo_pendiente_usd || '0')
+      const saldoPendienteNuevoNcr = calcularSaldoPendienteClienteNuevo(
+        'NCR',
+        saldoPendienteAnteriorNcr,
+        montoAplicadoAPendiente
+      )
 
       const movCuentaId = uuidv4()
       await tx.execute(
@@ -1152,8 +1160,9 @@ export async function crearNotaCredito(
         ]
       )
 
-      await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+      await tx.execute('UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?', [
         toStorageString(saldoNuevo),
+        toStorageString(saldoPendienteNuevoNcr),
         now,
         venta.cliente_id,
       ])
@@ -1293,16 +1302,21 @@ export async function crearNotaCredito(
         // `nota_credito_id` (Spec notas-credito-liquidacion, scenario
         // "SAFC generado referencia el nota_credito_id de origen").
         const clienteSafcResult = await tx.execute(
-          'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?',
+          'SELECT saldo_actual, saf_disponible, saldo_pendiente_usd FROM clientes WHERE id = ?',
           [venta.cliente_id]
         )
         if (!clienteSafcResult.rows || clienteSafcResult.rows.length === 0) {
           throw new Error('Cliente no encontrado')
         }
-        const clienteSafcRow = clienteSafcResult.rows.item(0) as { saldo_actual: string; saf_disponible: string }
+        const clienteSafcRow = clienteSafcResult.rows.item(0) as {
+          saldo_actual: string
+          saf_disponible: string
+          saldo_pendiente_usd: string
+        }
         const saldoActualSafc = new Decimal(clienteSafcRow.saldo_actual || '0')
         const safDisponibleSafcAntes = new Decimal(clienteSafcRow.saf_disponible || '0')
         const saldoNuevoSafc = saldoActualSafc.minus(remanenteALiquidar)
+        const saldoPendienteSafcAntes = new Decimal(clienteSafcRow.saldo_pendiente_usd || '0')
 
         const safcMovIdNcr = uuidv4()
         await tx.execute(
@@ -1348,27 +1362,49 @@ export async function crearNotaCredito(
         // writeTransaction, el trigger del servidor (migration 0102) es la
         // autoridad final al reconectar.
         const safDisponibleSafcDespues = calcularSafDisponibleNuevo('SAFC', safDisponibleSafcAntes, remanenteALiquidar)
-        await tx.execute('UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?', [
-          toStorageString(saldoNuevoSafc),
-          toStorageString(safDisponibleSafcDespues),
-          now,
-          venta.cliente_id,
-        ])
+        // SAFC es no-op para deuda pendiente (migrations/0110 ELSE branch,
+        // slice 1b cxc-ledger-saldos-redesign).
+        const saldoPendienteSafcDespues = calcularSaldoPendienteClienteNuevo(
+          'SAFC',
+          saldoPendienteSafcAntes,
+          remanenteALiquidar
+        )
+        await tx.execute(
+          'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+          [
+            toStorageString(saldoNuevoSafc),
+            toStorageString(safDisponibleSafcDespues),
+            toStorageString(saldoPendienteSafcDespues),
+            now,
+            venta.cliente_id,
+          ]
+        )
       } else if (modalidad === 'AJUSTE_CXC') {
         // Reusa el MISMO patron de reduccion de saldo que Step A (paso 5,
         // lineas ~440-478) — nunca crea credito, solo cancela deuda
         // EXISTENTE del cliente (tope en 0). Task 3.4.
         const clienteAjusteResult = await tx.execute(
-          'SELECT saldo_actual FROM clientes WHERE id = ?',
+          'SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?',
           [venta.cliente_id]
         )
         if (!clienteAjusteResult.rows || clienteAjusteResult.rows.length === 0) {
           throw new Error('Cliente no encontrado')
         }
-        const saldoActualAjuste = new Decimal(
-          (clienteAjusteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
-        )
+        const clienteAjusteRow = clienteAjusteResult.rows.item(0) as {
+          saldo_actual: string
+          saldo_pendiente_usd: string
+        }
+        const saldoActualAjuste = new Decimal(clienteAjusteRow.saldo_actual || '0')
         const saldoNuevoAjuste = Decimal.max(new Decimal(0), saldoActualAjuste.minus(remanenteALiquidar))
+        // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+        // cxc-ledger-saldos-redesign): AJUSTE_CXC cancela deuda real igual
+        // que NCR/PAG.
+        const saldoPendienteAjusteAntes = new Decimal(clienteAjusteRow.saldo_pendiente_usd || '0')
+        const saldoPendienteAjusteDespues = calcularSaldoPendienteClienteNuevo(
+          'NCR',
+          saldoPendienteAjusteAntes,
+          remanenteALiquidar
+        )
 
         await tx.execute(
           `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, tasa_pago)
@@ -1389,11 +1425,10 @@ export async function crearNotaCredito(
           ]
         )
 
-        await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-          toStorageString(saldoNuevoAjuste),
-          now,
-          venta.cliente_id,
-        ])
+        await tx.execute(
+          'UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(saldoNuevoAjuste), toStorageString(saldoPendienteAjusteDespues), now, venta.cliente_id]
+        )
       } else if (modalidad === 'REFUND_TESORERIA') {
         // REFUND_TESORERIA (nc-refund-tesoreria, Design §Data Flow): parte
         // `remanenteALiquidar` en dos — N egresos reales de tesoreria
@@ -1458,7 +1493,7 @@ export async function crearNotaCredito(
         // arriba pero con `remanenteSafc` en vez de `remanenteALiquidar`.
         if (remanenteSafc.gt('0.01')) {
           const clienteRefundSafcResult = await tx.execute(
-            'SELECT saldo_actual, saf_disponible FROM clientes WHERE id = ?',
+            'SELECT saldo_actual, saf_disponible, saldo_pendiente_usd FROM clientes WHERE id = ?',
             [venta.cliente_id]
           )
           if (!clienteRefundSafcResult.rows || clienteRefundSafcResult.rows.length === 0) {
@@ -1467,10 +1502,12 @@ export async function crearNotaCredito(
           const clienteRefundSafcRow = clienteRefundSafcResult.rows.item(0) as {
             saldo_actual: string
             saf_disponible: string
+            saldo_pendiente_usd: string
           }
           const saldoActualRefundSafc = new Decimal(clienteRefundSafcRow.saldo_actual || '0')
           const safDisponibleRefundAntes = new Decimal(clienteRefundSafcRow.saf_disponible || '0')
           const saldoNuevoRefundSafc = saldoActualRefundSafc.minus(remanenteSafc)
+          const saldoPendienteRefundAntes = new Decimal(clienteRefundSafcRow.saldo_pendiente_usd || '0')
 
           const safcMovIdRefund = uuidv4()
           await tx.execute(
@@ -1515,12 +1552,23 @@ export async function crearNotaCredito(
           // writeTransaction, el trigger del servidor (migration 0102) es la
           // autoridad final al reconectar.
           const safDisponibleRefundDespues = calcularSafDisponibleNuevo('SAFC', safDisponibleRefundAntes, remanenteSafc)
-          await tx.execute('UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, updated_at = ? WHERE id = ?', [
-            toStorageString(saldoNuevoRefundSafc),
-            toStorageString(safDisponibleRefundDespues),
-            now,
-            venta.cliente_id,
-          ])
+          // SAFC es no-op para deuda pendiente (migrations/0110 ELSE branch,
+          // slice 1b cxc-ledger-saldos-redesign).
+          const saldoPendienteRefundDespues = calcularSaldoPendienteClienteNuevo(
+            'SAFC',
+            saldoPendienteRefundAntes,
+            remanenteSafc
+          )
+          await tx.execute(
+            'UPDATE clientes SET saldo_actual = ?, saf_disponible = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
+            [
+              toStorageString(saldoNuevoRefundSafc),
+              toStorageString(safDisponibleRefundDespues),
+              toStorageString(saldoPendienteRefundDespues),
+              now,
+              venta.cliente_id,
+            ]
+          )
         }
       }
     }

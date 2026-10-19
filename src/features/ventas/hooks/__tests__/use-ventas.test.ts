@@ -25,6 +25,7 @@ vi.mock('@/features/contabilidad/lib/generar-asientos', () => ({
 import type { Transaction } from '@powersync/common'
 import { db } from '@/core/db/powersync/db'
 import { toStorageString } from '@/lib/currency'
+import { calcularSaldoPendienteClienteNuevo } from '@/features/cxc/lib/saldo-cliente'
 import { calcularCierreVentaConSaf } from '../../lib/calcular-cierre-venta-saf'
 import {
   buscarProductoPorCodigoBarras,
@@ -152,6 +153,8 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
     recetas?: Record<string, Array<{ producto_id: string; cantidad: string; stock: string; nombre: string }>>
     /** `clientes.saldo_actual` leido por el bloque CxC (FAC) y por el consumo de SAF. Default '0'. */
     clienteSaldoActual?: string
+    /** `clientes.saldo_pendiente_usd` anterior (slice 1b, cxc-ledger-saldos-redesign). Default '0'. */
+    clienteSaldoPendienteUsd?: string
     /** `movimientos_cuenta` SUM(SAFC)-SUM(SAF) del cliente, leido cuando `safEntry` esta presente. Default creado=0/consumido=0. */
     safCredito?: { creado: number; consumido: number }
     /**
@@ -263,18 +266,33 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
             const disponible = Math.max(0, creado - consumido)
             return { rows: { length: 1, item: () => ({ saf_disponible: String(disponible) }) } }
           }
-          if (sql.startsWith('SELECT saldo_actual, saf_disponible FROM clientes')) {
+          // Matchea con o sin `saldo_pendiente_usd` en la lista de columnas
+          // (slice 1b, cxc-ledger-saldos-redesign) via includes en vez de
+          // startsWith exacto, para no acoplar el test al orden literal.
+          if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('saf_disponible') && sql.includes('FROM clientes')) {
             const { creado, consumido } = opts.safCredito ?? { creado: 0, consumido: 0 }
             const disponible = Math.max(0, creado - consumido)
             return {
               rows: {
                 length: 1,
-                item: () => ({ saldo_actual: opts.clienteSaldoActual ?? '0', saf_disponible: String(disponible) }),
+                item: () => ({
+                  saldo_actual: opts.clienteSaldoActual ?? '0',
+                  saf_disponible: String(disponible),
+                  saldo_pendiente_usd: opts.clienteSaldoPendienteUsd ?? '0',
+                }),
               },
             }
           }
-          if (sql.startsWith('SELECT saldo_actual FROM clientes')) {
-            return { rows: { length: 1, item: () => ({ saldo_actual: opts.clienteSaldoActual ?? '0' }) } }
+          if (sql.startsWith('SELECT') && sql.includes('saldo_actual') && sql.includes('FROM clientes')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  saldo_actual: opts.clienteSaldoActual ?? '0',
+                  saldo_pendiente_usd: opts.clienteSaldoPendienteUsd ?? '0',
+                }),
+              },
+            }
           }
           if (sql.includes('FROM cuentas_config') && sql.includes("clave = 'gastos_generales'")) {
             const id = opts.cuentasConfig?.gastos_generales
@@ -522,6 +540,7 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
         principalDepositoId: 'dep-principal',
         productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
         inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        clienteSaldoPendienteUsd: '40.00000000',
       })
 
       await crearVenta(
@@ -573,6 +592,14 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       expect(clienteUpdate).toBeDefined()
       expect(clienteUpdate!.sql).toContain('saf_disponible')
       expect(clienteUpdate!.params).toContain(toStorageString(5))
+
+      // wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign):
+      // SAFC (Paso B, excedente sin facturas asignadas) es no-op para deuda
+      // pendiente — se escribe igual, preservando el valor anterior sin cambio.
+      expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+      const esperadoNoOp = calcularSaldoPendienteClienteNuevo('SAFC', '40.00000000', '5')
+      expect(clienteUpdate!.params).toContain(toStorageString(esperadoNoOp))
+      expect(toStorageString(esperadoNoOp)).toBe('40.00000000')
     })
 
     it('PR7 (saf-trazabilidad-pago, reemplaza PR3): inserta un pago anticipo (venta_id=NULL, metodo_cobro_id real) y el lote saf_creditos_lotes apunta origen_tipo=PAGO a ESE pago (no a la venta), anclado al SAFC, saldo_disponible_usd=monto_original_usd=remainingSaf, status=ACTIVO', async () => {
@@ -807,6 +834,7 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
         productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
         inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
         clienteSaldoActual: '0',
+        clienteSaldoPendienteUsd: '15.00000000',
       })
 
       await crearVenta(
@@ -825,6 +853,14 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
 
       expect(calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))).toHaveLength(0)
       expect(calls.filter((c) => c.sql.startsWith('UPDATE ventas SET tipo'))).toHaveLength(0)
+
+      // wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign):
+      // venta a credito (tipo FAC) aumenta la deuda pendiente del cliente.
+      const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+      expect(clienteUpdate).toBeDefined()
+      expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+      // 15 (anterior) + 10 (saldoPend de esta venta) = 25
+      expect(clienteUpdate!.params).toContain(toStorageString(25))
     })
 
     it('pago mixto ($1.00 total, $0.40 efectivo, $0.60 pendiente a credito): el INSERT escribe saldo_pend_usd=0.60 y cero UPDATE de ventas la modifica despues', async () => {
@@ -861,6 +897,7 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
         productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
         inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
         clienteSaldoActual: '0',
+        clienteSaldoPendienteUsd: '20.00000000',
         safCredito: { creado: 15, consumido: 0 }, // credito disponible = 15
       })
 
@@ -897,6 +934,12 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       )
       expect(clienteUpdate).toBeDefined()
       expect(clienteUpdate!.params).toContain(toStorageString(9))
+
+      // wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign):
+      // SAF como metodo de pago en el POS reduce deuda pendiente igual que PAG.
+      expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+      // 20 (anterior) - 6 (SAF aplicado) = 14
+      expect(clienteUpdate!.params).toContain(toStorageString(14))
     })
 
     it('PR4 (saf-snapshot-y-trazabilidad): SAF como metodo de pago consume lotes FIFO — 2 filas saf_creditos_aplicaciones cuando el monto cruza 2 lotes, pareadas con el SAF recien creado', async () => {

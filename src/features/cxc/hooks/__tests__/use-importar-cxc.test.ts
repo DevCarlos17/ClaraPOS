@@ -11,6 +11,8 @@ vi.mock('@/core/db/powersync/db', () => ({
 
 import type { Transaction } from '@powersync/common'
 import { db } from '@/core/db/powersync/db'
+import { toStorageString } from '@/lib/currency'
+import { calcularSaldoPendienteClienteNuevo } from '@/features/cxc/lib/saldo-cliente'
 import type { CxcImportRow } from '../../schemas/cxc-import-schema'
 import { importarSaldosInicialesCxc } from '../use-importar-cxc'
 
@@ -36,17 +38,22 @@ function baseFila(overrides: Partial<CxcImportRow> = {}): CxcImportRow {
  * `tx.execute(sql, params)` para las aserciones. Mismo patron que
  * `mockCrearVentaTx` en use-ventas.test.ts.
  */
-function mockImportarCxcTx() {
+function mockImportarCxcTx(opts: { clienteSaldoPendienteUsd?: string } = {}) {
   const calls: Call[] = []
   vi.mocked(db, true).writeTransaction.mockImplementation(async (callback) => {
     const tx = {
       execute: vi.fn(async (sql: string, params: unknown[] = []) => {
         calls.push({ sql, params })
-        if (sql.startsWith('SELECT id, nombre, saldo_actual FROM clientes')) {
+        if (sql.startsWith('SELECT id, nombre, saldo_actual, saldo_pendiente_usd FROM clientes')) {
           return {
             rows: {
               length: 1,
-              item: () => ({ id: 'cliente-1', nombre: 'Cliente Uno', saldo_actual: '0' }),
+              item: () => ({
+                id: 'cliente-1',
+                nombre: 'Cliente Uno',
+                saldo_actual: '0',
+                saldo_pendiente_usd: opts.clienteSaldoPendienteUsd ?? '0',
+              }),
             },
           }
         }
@@ -112,5 +119,41 @@ describe('importarSaldosInicialesCxc — cxc-sync-snapshot-redesign (CRITICAL-1)
     // literal fijo en el codigo de produccion.
     expect(ventaInsert!.params[10]).toBe(ventaInsert!.params[8])
     expect(ventaInsert!.params[10]).toBe('1500.75')
+  })
+})
+
+describe('importarSaldosInicialesCxc — wiring saldo_pendiente_usd (slice 1b, cxc-ledger-saldos-redesign)', () => {
+  it('el UPDATE clientes incluye saldo_pendiente_usd sin cambio (tipo SAL es no-op para deuda pendiente, migrations/0110 ELSE branch)', async () => {
+    const calls = mockImportarCxcTx({ clienteSaldoPendienteUsd: '75.00000000' })
+
+    const result = await importarSaldosInicialesCxc({
+      filas: [baseFila({ monto_usd: 250 })],
+      empresaId: 'emp-1',
+      usuarioId: 'user-1',
+      onProgress: () => {},
+    })
+
+    expect(result.exitosos).toBe(1)
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
+    const esperado = calcularSaldoPendienteClienteNuevo('SAL', '75.00000000', 250)
+    expect(toStorageString(esperado)).toBe('75.00000000')
+    expect(clienteUpdate!.params).toContain(toStorageString(esperado))
+  })
+
+  it('triangulacion: con saldo_pendiente_usd anterior distinto (120.50), el no-op preserva ESE valor exacto — no un literal fijo', async () => {
+    const calls = mockImportarCxcTx({ clienteSaldoPendienteUsd: '120.50000000' })
+
+    await importarSaldosInicialesCxc({
+      filas: [baseFila({ monto_usd: 999, nro_documento: 'SI-0003' })],
+      empresaId: 'emp-1',
+      usuarioId: 'user-1',
+      onProgress: () => {},
+    })
+
+    const clienteUpdate = calls.find((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdate).toBeDefined()
+    expect(clienteUpdate!.params).toContain('120.50000000')
   })
 })
