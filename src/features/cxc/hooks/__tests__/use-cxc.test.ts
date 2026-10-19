@@ -6,6 +6,11 @@
 vi.mock('@/core/db/powersync/db', () => ({
   db: {
     writeTransaction: vi.fn(),
+    // `detectarLoteSafDePago` (slice 3b-iii, cxc-ledger-saldos-redesign) usa
+    // `db.getAll` (lectura fuera de la tx del llamador). Default `[]` ->
+    // `generatedLote: false` para TODOS los tests existentes que no
+    // configuran explicitamente un lote SAF (cero regresion).
+    getAll: vi.fn().mockResolvedValue([]),
   },
 }))
 
@@ -1642,6 +1647,364 @@ describe('registrarReversoAbono — saldo acotado a total_usd', () => {
     expect(clienteUpdate!.sql).toContain('saldo_pendiente_usd')
     // 70 (anterior) + 20 (monto reversado) = 90
     expect(clienteUpdate!.params).toContain(toStorageString(90))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// registrarReversoAbono — mutua exclusion con reversarPagoSafEnTx (slice
+// 3b-iii, cxc-ledger-saldos-redesign)
+//
+// CONTRATO (ver reversa-pago-saf.ts, docstring "CONTRATO PARA EL LLAMADOR",
+// 3b-ii.7): cuando el pago reversado genero un lote SAF
+// (`detectarLoteSafDePago(...).generatedLote === true`), `reversarPagoSafEnTx`
+// es la UNICA escritora de los efectos de saldo de este reverso — los Steps
+// 4/5 ORIGINALES de `registrarReversoAbono` (UPDATE clientes con el monto
+// COMPLETO del pago + INSERT REV generico con venta_id=NULL) deben quedar
+// OMITIDOS por completo. Si ambos corrieran, `saldo_pendiente_usd` se
+// triplicaria (bug corregido en 3b-ii.7, documentado en
+// `sdd/cxc-ledger-saldos-redesign/analysis-reverso-saldo-actual`).
+// Cuando `generatedLote` es `false`, el comportamiento de hoy (Steps 3-5)
+// corre sin cambios — cero regresion para reversos normales.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('registrarReversoAbono — mutua exclusion con reversarPagoSafEnTx (slice 3b-iii)', () => {
+  // Forma SQL de los Steps 4/5 ORIGINALES (pre-3b-iii) — deben desaparecer
+  // por completo cuando `generatedLote` es `true`.
+  const STEP4_UPDATE_CLIENTES = 'UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?'
+  const STEP5_INSERT_MOVIMIENTO =
+    'INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)'
+
+  // Forma SQL NUEVA de `reversarPagoSafEnTx` — deben ser las UNICAS
+  // escrituras de saldo cuando `generatedLote` es `true`.
+  const LOTE_QUERY_PREFIX = 'SELECT id, monto_original_usd, saldo_disponible_usd'
+  const NUEVO_UPDATE_CLIENTES =
+    'UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, saf_disponible = ?, updated_at = ? WHERE id = ? AND empresa_id = ?'
+
+  function mockTxConLote(opts: {
+    pagoMontoUsd: string
+    saldoClienteActual: string
+    saldoPendienteClienteActual: string
+    safDisponibleClienteActual: string
+    loteMontoOriginalUsd: string
+    loteSaldoDisponibleUsd: string
+    aplicaciones: Array<{ ventaId: string; nroFactura: string; montoAplicadoUsd: string }>
+  }) {
+    const calls: Call[] = []
+    mockedDb.getAll.mockImplementation(async (sql: string) => {
+      if (sql.startsWith(LOTE_QUERY_PREFIX)) {
+        return [
+          {
+            id: 'lote-1',
+            monto_original_usd: opts.loteMontoOriginalUsd,
+            saldo_disponible_usd: opts.loteSaldoDisponibleUsd,
+          },
+        ]
+      }
+      if (sql.startsWith('SELECT sca.venta_id, v.nro_factura, sca.monto_aplicado_usd')) {
+        return opts.aplicaciones.map((a) => ({
+          venta_id: a.ventaId,
+          nro_factura: a.nroFactura,
+          monto_aplicado_usd: a.montoAplicadoUsd,
+        }))
+      }
+      return []
+    })
+    mockedDb.writeTransaction.mockImplementation(async (callback) => {
+      const tx = {
+        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params })
+          if (sql.startsWith('SELECT id, venta_id, cliente_id, monto_usd, is_reversed, tasa, monto, moneda_id FROM pagos')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  id: 'pago-saf-1',
+                  venta_id: null,
+                  cliente_id: 'cliente-1',
+                  monto_usd: opts.pagoMontoUsd,
+                  is_reversed: 0,
+                  tasa: null,
+                  monto: null,
+                  moneda_id: null,
+                }),
+              },
+            }
+          }
+          if (sql.startsWith(LOTE_QUERY_PREFIX)) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  id: 'lote-1',
+                  monto_original_usd: opts.loteMontoOriginalUsd,
+                  saldo_disponible_usd: opts.loteSaldoDisponibleUsd,
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT sca.venta_id, v.nro_factura, sca.monto_aplicado_usd')) {
+            return {
+              rows: {
+                length: opts.aplicaciones.length,
+                item: (i: number) => ({
+                  venta_id: opts.aplicaciones[i]!.ventaId,
+                  nro_factura: opts.aplicaciones[i]!.nroFactura,
+                  monto_aplicado_usd: opts.aplicaciones[i]!.montoAplicadoUsd,
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT saldo_actual, saldo_pendiente_usd, saf_disponible FROM clientes WHERE id = ? AND empresa_id = ?')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  saldo_actual: opts.saldoClienteActual,
+                  saldo_pendiente_usd: opts.saldoPendienteClienteActual,
+                  saf_disponible: opts.safDisponibleClienteActual,
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  saldo_actual: opts.saldoClienteActual,
+                  saldo_pendiente_usd: opts.saldoPendienteClienteActual,
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT id FROM libro_contable WHERE')) {
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          return { rows: { length: 0, item: () => undefined } }
+        }),
+      } as unknown as Transaction
+      return callback(tx)
+    })
+    return calls
+  }
+
+  function baseParamsSaf() {
+    return {
+      pago_id: 'pago-saf-1',
+      reason: 'Cliente reporto error de cobro',
+      reversed_by: 'user-1',
+      reversed_by_nombre: 'Cajero Test',
+      empresa_id: 'emp-1',
+    }
+  }
+
+  it('generatedLote=true: llama a reversarPagoSafEnTx y OMITE los Steps 4/5 originales por completo', async () => {
+    const calls = mockTxConLote({
+      pagoMontoUsd: '30.00000000',
+      saldoClienteActual: '-30.00000000',
+      saldoPendienteClienteActual: '130.00000000',
+      safDisponibleClienteActual: '10.00000000',
+      loteMontoOriginalUsd: '30.00000000',
+      loteSaldoDisponibleUsd: '10.00000000',
+      aplicaciones: [{ ventaId: 'venta-2', nroFactura: 'F-002', montoAplicadoUsd: '20.00000000' }],
+    })
+
+    await registrarReversoAbono(baseParamsSaf())
+
+    // (a) reversarPagoSafEnTx SI corrio: su query interna de deteccion de
+    // lote (via tx.execute) debe aparecer.
+    const loteQuery = calls.find((c) => c.sql.startsWith(LOTE_QUERY_PREFIX))
+    expect(loteQuery).toBeDefined()
+
+    // (b) Step 4 ORIGINAL (UPDATE clientes con el monto COMPLETO del pago,
+    // sin saf_disponible) NUNCA debe ejecutarse.
+    const step4Update = calls.find((c) => c.sql.startsWith(STEP4_UPDATE_CLIENTES))
+    expect(step4Update).toBeUndefined()
+
+    // (c) Step 5 ORIGINAL (REV generico con venta_id=NULL, columnas
+    // moneda_pago/monto_moneda/tasa_pago) NUNCA debe ejecutarse.
+    const step5Insert = calls.find((c) => c.sql.startsWith(STEP5_INSERT_MOVIMIENTO))
+    expect(step5Insert).toBeUndefined()
+
+    // reversarPagoSafEnTx es la UNICA escritora: exactamente 1 UPDATE
+    // clientes, con la forma NUEVA (incluye saf_disponible + empresa_id).
+    const clienteUpdates = calls.filter((c) => c.sql.startsWith('UPDATE clientes SET'))
+    expect(clienteUpdates).toHaveLength(1)
+    expect(clienteUpdates[0]!.sql).toBe(NUEVO_UPDATE_CLIENTES)
+  })
+
+  it('generatedLote=false: NO llama a reversarPagoSafEnTx, corre los Steps 4/5 originales sin cambios', async () => {
+    const calls = mockTxConLote({
+      pagoMontoUsd: '30.00000000',
+      saldoClienteActual: '-30.00000000',
+      saldoPendienteClienteActual: '130.00000000',
+      safDisponibleClienteActual: '10.00000000',
+      loteMontoOriginalUsd: '30.00000000',
+      loteSaldoDisponibleUsd: '10.00000000',
+      aplicaciones: [],
+    })
+    // Sin lote para este pago: `detectarLoteSafDePago` (via `db.getAll`)
+    // retorna `[]` -> `generatedLote: false`.
+    mockedDb.getAll.mockResolvedValue([])
+
+    await registrarReversoAbono(baseParamsSaf())
+
+    // reversarPagoSafEnTx NO se invoca: su query interna de deteccion de
+    // lote (via tx.execute) nunca aparece.
+    const loteQuery = calls.find((c) => c.sql.startsWith(LOTE_QUERY_PREFIX))
+    expect(loteQuery).toBeUndefined()
+
+    // Steps 4/5 ORIGINALES SI corren, forma identica a la pre-existente.
+    const step4Update = calls.find((c) => c.sql.startsWith(STEP4_UPDATE_CLIENTES))
+    expect(step4Update).toBeDefined()
+    const step5Insert = calls.find((c) => c.sql.startsWith(STEP5_INSERT_MOVIMIENTO))
+    expect(step5Insert).toBeDefined()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// registrarReversoAbono — integracion $130 FIFO+SAF, net-zero
+// pendiente+disponible (slice 3b-iii)
+//
+// Reverso de un abono global de $130 ($100 FIFO aplicado a factura-1 +
+// $30 excedente SAF, del cual $20 fue consumido contra factura-2 y $10
+// quedo sin consumir). `registrarAbonoGlobal` crea 2 filas `pagos`
+// independientes para este abono (una por cada eje: FIFO por-factura y el
+// excedente SAF, ver use-cxc.ts ~L1122/1208) — reversar el abono completo
+// significa 2 llamadas SECUENCIALES a `registrarReversoAbono`, una por
+// `pago_id`. Este test simula ambas llamadas contra un estado MUTABLE
+// compartido de `clientes`/`ventas` (como 2 `writeTransaction` reales
+// corriendo una tras la otra) para probar el stack completo end-to-end.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('registrarReversoAbono — integracion $130 FIFO+SAF, net-zero pendiente+disponible (slice 3b-iii)', () => {
+  it('reverso de pago-A ($100 FIFO, factura-1) + pago-B ($30 SAF excedente, $20 consumido en factura-2, $10 remanente): saldo_pendiente_usd y saf_disponible vuelven exactamente al valor pre-abono (net-zero); saldo_actual queda con el residual documentado (riesgo fuera de alcance, ver 3b-ii.6/3b-ii.7)', async () => {
+    // Estado PRE-REVERSO (resultado del abono de $130 ya aplicado):
+    // factura-1 totalmente pagada por el FIFO de $100; factura-2 con $20
+    // de sus $50 ya cubiertos por el SAF; cliente con $10 de credito SAF
+    // sin consumir y $30 de deuda pendiente real (los $30 de factura-2).
+    const cliente = { saldo_actual: '-130.00000000', saldo_pendiente_usd: '30.00000000', saf_disponible: '10.00000000' }
+    const ventas: Record<string, { nro_factura: string; saldo_pend_usd: string; total_usd: string }> = {
+      'factura-1': { nro_factura: 'F-001', saldo_pend_usd: '0.00000000', total_usd: '100.00000000' },
+      'factura-2': { nro_factura: 'F-002', saldo_pend_usd: '30.00000000', total_usd: '50.00000000' },
+    }
+    const lotePagoB = { id: 'lote-B', monto_original_usd: '30.00000000', saldo_disponible_usd: '10.00000000' }
+    const aplicacionesLoteB = [{ venta_id: 'factura-2', nro_factura: 'F-002', monto_aplicado_usd: '20.00000000' }]
+
+    mockedDb.getAll.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      const pagoId = params[0] as string
+      if (sql.startsWith('SELECT id, monto_original_usd, saldo_disponible_usd')) {
+        return pagoId === 'pago-B' ? [lotePagoB] : []
+      }
+      return []
+    })
+
+    mockedDb.writeTransaction.mockImplementation(async (callback) => {
+      const tx = {
+        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+          if (sql.startsWith('SELECT id, venta_id, cliente_id, monto_usd, is_reversed, tasa, monto, moneda_id FROM pagos')) {
+            const pagoId = params[0] as string
+            const esPagoA = pagoId === 'pago-A'
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  id: pagoId,
+                  venta_id: esPagoA ? 'factura-1' : null,
+                  cliente_id: 'cliente-1',
+                  monto_usd: esPagoA ? '100.00000000' : '30.00000000',
+                  is_reversed: 0,
+                  tasa: null,
+                  monto: null,
+                  moneda_id: null,
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT nro_factura, saldo_pend_usd, total_usd FROM ventas WHERE id = ?')) {
+            const ventaId = params[0] as string
+            const v = ventas[ventaId]!
+            return { rows: { length: 1, item: () => ({ ...v }) } }
+          }
+          if (sql.startsWith('UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?')) {
+            const [nuevoSaldo, , ventaId] = params as [string, string, string]
+            ventas[ventaId]!.saldo_pend_usd = nuevoSaldo
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('UPDATE ventas SET saldo_pend_usd = saldo_pend_usd + ? WHERE id = ?')) {
+            const [montoStr, ventaId] = params as [string, string]
+            const v = ventas[ventaId]!
+            v.saldo_pend_usd = toStorageString(new Decimal(v.saldo_pend_usd).plus(new Decimal(montoStr)))
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('SELECT saldo_actual, saldo_pendiente_usd, saf_disponible FROM clientes WHERE id = ? AND empresa_id = ?')) {
+            return { rows: { length: 1, item: () => ({ ...cliente }) } }
+          }
+          if (sql.startsWith('SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?')) {
+            return { rows: { length: 1, item: () => ({ saldo_actual: cliente.saldo_actual, saldo_pendiente_usd: cliente.saldo_pendiente_usd }) } }
+          }
+          if (sql.startsWith('UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, saf_disponible = ?, updated_at = ? WHERE id = ? AND empresa_id = ?')) {
+            const [saldoActual, saldoPendiente, safDisponible] = params as [string, string, string]
+            cliente.saldo_actual = saldoActual
+            cliente.saldo_pendiente_usd = saldoPendiente
+            cliente.saf_disponible = safDisponible
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?')) {
+            const [saldoActual, saldoPendiente] = params as [string, string]
+            cliente.saldo_actual = saldoActual
+            cliente.saldo_pendiente_usd = saldoPendiente
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('SELECT id, monto_original_usd, saldo_disponible_usd')) {
+            return { rows: { length: 1, item: () => ({ ...lotePagoB }) } }
+          }
+          if (sql.startsWith('SELECT sca.venta_id, v.nro_factura, sca.monto_aplicado_usd')) {
+            return {
+              rows: {
+                length: aplicacionesLoteB.length,
+                item: (i: number) => ({ ...aplicacionesLoteB[i]! }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT id FROM libro_contable WHERE')) {
+            return { rows: { length: 0, item: () => undefined } }
+          }
+          return { rows: { length: 0, item: () => undefined } }
+        }),
+      } as unknown as Transaction
+      return callback(tx)
+    })
+
+    // Reverso 1: pago-A (venta-linked, $100, generatedLote=false)
+    await registrarReversoAbono({
+      pago_id: 'pago-A',
+      reason: 'Reverso integral $130',
+      reversed_by: 'user-1',
+      reversed_by_nombre: 'Cajero Test',
+      empresa_id: 'emp-1',
+    })
+
+    // Reverso 2: pago-B (SAF excedente, $30, generatedLote=true)
+    await registrarReversoAbono({
+      pago_id: 'pago-B',
+      reason: 'Reverso integral $130',
+      reversed_by: 'user-1',
+      reversed_by_nombre: 'Cajero Test',
+      empresa_id: 'emp-1',
+    })
+
+    // Net-zero en los 2 ejes que este slice garantiza:
+    expect(cliente.saldo_pendiente_usd).toBe(toStorageString(150)) // 100 + 50 pre-abono
+    expect(cliente.saf_disponible).toBe(toStorageString(0))
+    expect(ventas['factura-1']!.saldo_pend_usd).toBe(toStorageString(100))
+    expect(ventas['factura-2']!.saldo_pend_usd).toBe(toStorageString(50))
+
+    // saldo_actual: riesgo documentado (3b-ii.6/3b-ii.7) — NO neteable a 0
+    // en este escenario multi-hop sin corregir la convencion de signo
+    // aguas-arriba de `registrarAbonoGlobal` (fuera de alcance de este
+    // slice). Se congela el residual REAL observado como regresion.
+    expect(cliente.saldo_actual).toBe(toStorageString(-10))
   })
 })
 
