@@ -6,9 +6,21 @@ import Decimal from 'decimal.js'
 
 /**
  * Tipos validos de `movimientos_cuenta.tipo` (ver `movimientos_cuenta_tipo_check`
- * en migrations/0057). Espejo del CHECK constraint de Postgres.
+ * en migrations/0057, ampliado por 0090 para `SAFC` y por 0114 para `SAFR`).
+ * Espejo del CHECK constraint de Postgres. `SAFC`/`SAFR` ya existian en el
+ * CHECK de la base desde 0090; esta union TS no los incluia — fix incidental
+ * de paridad CHECK-vs-TS (no cambia ningun comportamiento existente).
  */
-export type TipoMovimientoCuenta = 'FAC' | 'NDB' | 'PAG' | 'NCR' | 'SAF' | 'REV' | 'SAL'
+export type TipoMovimientoCuenta =
+  | 'FAC'
+  | 'NDB'
+  | 'PAG'
+  | 'NCR'
+  | 'SAF'
+  | 'REV'
+  | 'SAL'
+  | 'SAFC'
+  | 'SAFR'
 
 type DecimalInput = string | number | Decimal
 
@@ -183,4 +195,50 @@ export function calcularSaldoLoteDespues(
     : 'ACTIVO'
 
   return { saldoDespues, status }
+}
+
+// =============================================
+// calcularSaldoPendienteClienteNuevo
+// =============================================
+
+/**
+ * Calcula el nuevo valor de `clientes.saldo_pendiente_usd` para una fila
+ * `movimientos_cuenta` dada. Espejo TS puro (sin I/O) de la expresion SQL
+ * atomica agregada por el trigger `actualizar_saldo_cliente()` en
+ * migrations/0110_extender_trigger_saldo_pendiente.sql (mismo patron que
+ * `calcularSafDisponibleNuevo` para `saf_disponible`, migrations/0102):
+ *
+ *   FAC/NDB/REV -> anterior + monto           (aumenta deuda pendiente:
+ *                  venta a credito, nota de debito, o reverso que reabre
+ *                  una factura)
+ *   PAG/NCR/SAF -> MAX(0, anterior - monto)    (reduce deuda pendiente:
+ *                  pago/abono, nota de credito, o SAF usado como metodo de
+ *                  pago — piso en cero, nunca negativo)
+ *   resto       -> anterior sin cambios        (SAFC/SAFR/SAL no tocan la
+ *                  deuda pendiente — mueven saldo a favor standing o
+ *                  importan saldo inicial, no facturas)
+ *
+ * A diferencia de `calcularSaldoNuevoMovimientoCuenta` (que para SAF/REV/SAL
+ * confia en un `saldoNuevoProvisto` por la app, porque esa direccion es
+ * ambigua en el ledger de `saldo_actual`), esta funcion NO necesita valor
+ * provisto: aqui el `tipo` determina unambiguously si la deuda pendiente
+ * sube, baja o no se toca — mismo razonamiento que `calcularSafDisponibleNuevo`.
+ */
+export function calcularSaldoPendienteClienteNuevo(
+  tipo: TipoMovimientoCuenta,
+  anterior: DecimalInput,
+  monto: DecimalInput
+): Decimal {
+  const anteriorD = new Decimal(anterior)
+  const montoD = new Decimal(monto)
+
+  if (tipo === 'FAC' || tipo === 'NDB' || tipo === 'REV') {
+    return anteriorD.plus(montoD)
+  }
+
+  if (tipo === 'PAG' || tipo === 'NCR' || tipo === 'SAF') {
+    return Decimal.max(new Decimal(0), anteriorD.minus(montoD))
+  }
+
+  return anteriorD
 }
