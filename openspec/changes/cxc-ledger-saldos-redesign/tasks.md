@@ -128,4 +128,4 @@ must land before `3a` to avoid rebase).
 
 ## Cross-slice final task
 
-- [ ] F.1 Update `migrations/README.md`: add 6 rows (0109-0114), same density/voice as existing 0104-0108 rows, cross-referencing `cxc-ledger-saldos-redesign` design.md.
+- [x] F.1 Update `migrations/README.md`: added 6 rows (0109-0114), same density/voice as existing 0104-0108 rows. Each row documents the migration's role in `cxc-ledger-saldos-redesign`, the deploy-ordering notes (0111 before 1c deploy; 0114 before 0113), and the regression-guard facts (0110/0114 built on the newest trigger body, slice-1a CASE byte-identical).
