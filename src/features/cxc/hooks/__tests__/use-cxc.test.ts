@@ -852,6 +852,164 @@ describe('registrarAbonoGlobal (SAF pre-step) — escritura optimista pareada de
 })
 
 // ─────────────────────────────────────────────────────────────────────────
+// registrarAbonoGlobal — movimientos_bancarios_pagos (bridge, slice
+// 0a-wiring, trazabilidad-ingreso-pagos-directo). Fan-in FIFO: 1 ingreso
+// bancario <-> N pago_id (uno por factura tocada + opcionalmente 1 de
+// anticipo/excedente). Solo camino directo (deposito_directo=1).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('registrarAbonoGlobal — movimientos_bancarios_pagos (bridge, 0a-wiring)', () => {
+  function mockTx(opts: {
+    saldoActual: string
+    saldoPendienteUsd?: string
+    facturas: Array<{ id: string; nro_factura: string; saldo_pend_usd: string }>
+    depositoDirecto: 0 | 1
+    bancoEmpresaId?: string
+  }) {
+    const calls: Call[] = []
+    mockedDb.writeTransaction.mockImplementation(async (callback) => {
+      const tx = {
+        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params })
+          if (sql.includes('saldo_actual') && sql.includes('saf_disponible') && sql.startsWith('SELECT') && sql.includes('FROM clientes WHERE id = ?')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  saldo_actual: opts.saldoActual,
+                  saf_disponible: '0.00000000',
+                  saldo_pendiente_usd: opts.saldoPendienteUsd ?? '0',
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT id, nro_factura, saldo_pend_usd, total_usd FROM ventas')) {
+            return { rows: { length: opts.facturas.length, item: (i: number) => opts.facturas[i] } }
+          }
+          if (sql.startsWith('SELECT id FROM monedas WHERE codigo_iso = ?')) {
+            const codigo = params[0] as string
+            return { rows: { length: 1, item: () => ({ id: codigo === 'VES' ? 'moneda-bs' : 'moneda-usd' }) } }
+          }
+          if (sql.startsWith('SELECT banco_empresa_id, deposito_directo FROM metodos_cobro WHERE id = ? LIMIT 1')) {
+            return {
+              rows: {
+                length: 1,
+                item: () => ({
+                  banco_empresa_id: opts.depositoDirecto === 1 ? (opts.bancoEmpresaId ?? 'banco-1') : null,
+                  deposito_directo: opts.depositoDirecto,
+                }),
+              },
+            }
+          }
+          if (sql.startsWith('SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1')) {
+            return { rows: { length: 1, item: () => ({ saldo_actual: '1000.00000000', moneda_id: 'moneda-usd' }) } }
+          }
+          if (sql.startsWith('SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1')) {
+            return { rows: { length: 1, item: () => ({ codigo_iso: 'USD' }) } }
+          }
+          return { rows: { length: 0, item: () => undefined } }
+        }),
+      } as unknown as Transaction
+      return callback(tx)
+    })
+    return calls
+  }
+
+  function baseParams(overrides: Partial<AbonoGlobalParams> = {}): AbonoGlobalParams {
+    return {
+      cliente_id: 'cliente-1',
+      metodo_cobro_id: 'metodo-1',
+      moneda: 'USD',
+      tasa: 40,
+      monto: 100,
+      empresa_id: 'emp-1',
+      procesado_por: 'user-1',
+      procesado_por_nombre: 'Cajero Test',
+      aplicarSaf: false,
+      ...overrides,
+    }
+  }
+
+  it('FIFO sin excedente (metodo directo): N facturas -> N filas puente, SUM(monto_aplicado_usd) == monto del ingreso, mismo ingreso_id real', async () => {
+    const calls = mockTx({
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '100.00000000',
+      facturas: [
+        { id: 'fac-a', nro_factura: 'F-A', saldo_pend_usd: '30.00000000' },
+        { id: 'fac-b', nro_factura: 'F-B', saldo_pend_usd: '70.00000000' },
+      ],
+      depositoDirecto: 1,
+    })
+
+    await registrarAbonoGlobal(baseParams({ monto: 100 }))
+
+    const ingresoInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_bancarios') && !c.sql.includes('movimientos_bancarios_pagos')
+    )
+    expect(ingresoInsert).toBeDefined()
+    const ingresoId = ingresoInsert!.params[0] as string
+    expect(ingresoInsert!.params[3]).toBe(toStorageString(100))
+
+    const bridgeRows = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+    expect(bridgeRows).toHaveLength(2)
+    expect(bridgeRows.every((r) => r.params[2] === ingresoId)).toBe(true)
+
+    const suma = bridgeRows.reduce((acc, c) => acc + Number(c.params[4]), 0)
+    expect(suma).toBeCloseTo(100, 8)
+
+    const pagoIds = new Set(bridgeRows.map((r) => r.params[3]))
+    expect(pagoIds.size).toBe(2)
+  })
+
+  it('FIFO con excedente (metodo directo): N+1 filas puente (N facturas + 1 anticipo), SUM(monto_aplicado_usd) == monto del ingreso', async () => {
+    const calls = mockTx({
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '20.00000000',
+      facturas: [{ id: 'fac-1', nro_factura: 'F-001', saldo_pend_usd: '20.00000000' }],
+      depositoDirecto: 1,
+    })
+
+    await registrarAbonoGlobal(baseParams({ monto: 50 }))
+
+    const ingresoInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_bancarios') && !c.sql.includes('movimientos_bancarios_pagos')
+    )
+    expect(ingresoInsert).toBeDefined()
+    const ingresoId = ingresoInsert!.params[0] as string
+    expect(ingresoInsert!.params[3]).toBe(toStorageString(50))
+
+    const bridgeRows = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+    expect(bridgeRows).toHaveLength(2) // 1 factura FIFO + 1 anticipo
+
+    const suma = bridgeRows.reduce((acc, c) => acc + Number(c.params[4]), 0)
+    expect(suma).toBeCloseTo(50, 8)
+
+    const pagoIds = new Set(bridgeRows.map((r) => r.params[3]))
+    expect(pagoIds.size).toBe(2)
+    expect(bridgeRows.every((r) => r.params[2] === ingresoId)).toBe(true)
+  })
+
+  it('metodo batch/lote (deposito_directo=0): NO escribe ninguna fila movimientos_bancarios_pagos (ni ingreso bancario)', async () => {
+    const calls = mockTx({
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '100.00000000',
+      facturas: [{ id: 'fac-a', nro_factura: 'F-A', saldo_pend_usd: '100.00000000' }],
+      depositoDirecto: 0,
+    })
+
+    await registrarAbonoGlobal(baseParams({ monto: 100 }))
+
+    const ingresoInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_bancarios') && !c.sql.includes('movimientos_bancarios_pagos')
+    )
+    expect(ingresoInsert).toBeUndefined()
+
+    const bridgeRows = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+    expect(bridgeRows).toHaveLength(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
 // registrarAbonoPrestamo (SAF pre-step) — PR13 (fix saf-gate-disponible):
 // este sitio tenia el MISMO bug que registrarAbonoGlobal (y ni siquiera leia
 // saf_disponible): el gate validaba contra clientes.saldo_actual neteado.
@@ -1320,6 +1478,140 @@ describe('aplicarPagoFacturaEnTx — pagos_aplicaciones (slice 2)', () => {
     expect(aplicaciones[0]!.params[5]).toBe(toStorageString(40))
     expect(aplicaciones[0]!.params[6]).toBe(toStorageString(100))
     expect(aplicaciones[0]!.params[7]).toBe(toStorageString(60))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// aplicarPagoFacturaEnTx — movimientos_bancarios_pagos (bridge, slice
+// 0a-wiring, trazabilidad-ingreso-pagos-directo). Tabla puente append-only
+// que conecta el INGRESO bancario directo con el/los `pago_id` que
+// representa. Solo cubre el camino directo (metodos_cobro.deposito_directo
+// = 1); los metodos de lote/batch NUNCA deben escribir fila puente.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('aplicarPagoFacturaEnTx — movimientos_bancarios_pagos (bridge, 0a-wiring)', () => {
+  function makeTx(opts: {
+    saldoActual: string
+    saldoPendienteUsd: string
+    facturaSaldoPend: string
+    depositoDirecto: 0 | 1
+    bancoEmpresaId?: string
+  }) {
+    const calls: Call[] = []
+    const tx = {
+      execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params })
+        if (sql.startsWith('SELECT id FROM monedas WHERE codigo_iso = ?')) {
+          return { rows: { length: 1, item: () => ({ id: 'moneda-usd-id' }) } }
+        }
+        if (sql.startsWith('SELECT nro_factura, saldo_pend_usd, total_usd, tasa FROM ventas WHERE id = ?')) {
+          return {
+            rows: {
+              length: 1,
+              item: () => ({
+                nro_factura: 'F-001',
+                saldo_pend_usd: opts.facturaSaldoPend,
+                total_usd: '100.00000000',
+                tasa: '40.00000000',
+              }),
+            },
+          }
+        }
+        if (sql.startsWith('SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?')) {
+          return {
+            rows: {
+              length: 1,
+              item: () => ({ saldo_actual: opts.saldoActual, saldo_pendiente_usd: opts.saldoPendienteUsd }),
+            },
+          }
+        }
+        if (sql.startsWith('SELECT banco_empresa_id, deposito_directo FROM metodos_cobro WHERE id = ? LIMIT 1')) {
+          return {
+            rows: {
+              length: 1,
+              item: () => ({
+                banco_empresa_id: opts.depositoDirecto === 1 ? (opts.bancoEmpresaId ?? 'banco-1') : null,
+                deposito_directo: opts.depositoDirecto,
+              }),
+            },
+          }
+        }
+        if (sql.startsWith('SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1')) {
+          return { rows: { length: 1, item: () => ({ saldo_actual: '1000.00000000', moneda_id: 'moneda-usd-id' }) } }
+        }
+        if (sql.startsWith('SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1')) {
+          return { rows: { length: 1, item: () => ({ codigo_iso: 'USD' }) } }
+        }
+        return { rows: { length: 0, item: () => undefined } }
+      }),
+    } as unknown as Transaction
+    return { tx, calls }
+  }
+
+  function baseParams(overrides: Partial<AplicarPagoEnTxParams> = {}): AplicarPagoEnTxParams {
+    return {
+      venta_id: 'venta-1',
+      cliente_id: 'cliente-1',
+      metodo_cobro_id: 'metodo-1',
+      moneda: 'USD',
+      tasa: 40,
+      monto: 100,
+      empresa_id: 'emp-1',
+      procesado_por: 'user-1',
+      skipBankAndAccounting: false,
+      ...overrides,
+    }
+  }
+
+  it('metodo directo (deposito_directo=1): escribe exactamente 1 fila movimientos_bancarios_pagos con ingreso_id == id real del INSERT movimientos_bancarios', async () => {
+    const { tx, calls } = makeTx({
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '100.00000000',
+      facturaSaldoPend: '100.00000000',
+      depositoDirecto: 1,
+    })
+
+    await aplicarPagoFacturaEnTx(tx, baseParams({ monto: 100 }), '2026-10-19T00:00:00-04:00')
+
+    const ingresoInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_bancarios') && !c.sql.includes('movimientos_bancarios_pagos')
+    )
+    expect(ingresoInsert).toBeDefined()
+    const ingresoId = ingresoInsert!.params[0] as string
+    // Guard contra el riesgo "dead-code-if-hoist-forgotten": el id puente DEBE
+    // ser el MISMO uuid real usado en el INSERT movimientos_bancarios, no uno
+    // reconstruido por separado.
+    expect(ingresoInsert!.params[3]).toBe(toStorageString(100))
+
+    const pagoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO pagos ('))
+    const pagoId = pagoInsert!.params[0] as string
+
+    const bridgeRows = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+    expect(bridgeRows).toHaveLength(1)
+    // Columnas: id, empresa_id, ingreso_id, pago_id, monto_aplicado_usd, created_at, created_by
+    expect(bridgeRows[0]!.params[1]).toBe('emp-1')
+    expect(bridgeRows[0]!.params[2]).toBe(ingresoId)
+    expect(bridgeRows[0]!.params[3]).toBe(pagoId)
+    expect(bridgeRows[0]!.params[4]).toBe(toStorageString(100))
+  })
+
+  it('metodo batch/lote (deposito_directo=0): NO escribe ninguna fila movimientos_bancarios_pagos (ni ingreso bancario)', async () => {
+    const { tx, calls } = makeTx({
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '100.00000000',
+      facturaSaldoPend: '100.00000000',
+      depositoDirecto: 0,
+    })
+
+    await aplicarPagoFacturaEnTx(tx, baseParams({ monto: 100 }), '2026-10-19T00:00:00-04:00')
+
+    const ingresoInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_bancarios') && !c.sql.includes('movimientos_bancarios_pagos')
+    )
+    expect(ingresoInsert).toBeUndefined()
+
+    const bridgeRows = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+    expect(bridgeRows).toHaveLength(0)
   })
 })
 

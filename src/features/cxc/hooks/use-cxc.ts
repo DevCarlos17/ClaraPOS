@@ -723,13 +723,14 @@ export async function aplicarPagoFacturaEnTx(
         const _saldoAnt = parseFloat(_bancoData?.saldo_actual ?? '0')
         const _saldoNuevo = _saldoAnt + _montoNativo
 
+        const ingresoBancarioId = uuidv4()
         await tx.execute(
           `INSERT INTO movimientos_bancarios
              (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
               doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
            VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, ?, ?, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
           [
-            uuidv4(), empresa_id, bancoCxCId,
+            ingresoBancarioId, empresa_id, bancoCxCId,
             toStorageString(_montoNativo),
             toStorageString(_saldoAnt),
             toStorageString(_saldoNuevo),
@@ -741,6 +742,17 @@ export async function aplicarPagoFacturaEnTx(
         await tx.execute(
           'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
           [toStorageString(_saldoNuevo), now, bancoCxCId]
+        )
+
+        // Trazabilidad ingreso <-> pago (slice 0a-wiring,
+        // trazabilidad-ingreso-pagos-directo): tabla puente append-only que
+        // conecta este INGRESO bancario directo con el pago que representa.
+        // Solo se escribe para el camino directo (deposito_directo=1, este
+        // mismo `if`); los metodos de lote/batch nunca generan fila puente.
+        await tx.execute(
+          `INSERT INTO movimientos_bancarios_pagos (id, empresa_id, ingreso_id, pago_id, monto_aplicado_usd, created_at, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [uuidv4(), empresa_id, ingresoBancarioId, pagoId, toStorageString(montoUsd), now, procesado_por]
         )
       }
 
@@ -1095,6 +1107,14 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     const montoTotalUsd = moneda === 'BS' ? bsToUsd(montoD, tasaD) : montoD
     let montoRestante = montoTotalUsd
 
+    // Trazabilidad ingreso <-> pago (slice 0a-wiring,
+    // trazabilidad-ingreso-pagos-directo): acumula 1 entrada por cada `pago`
+    // creado (FIFO + anticipo) para despues escribir las filas puente
+    // `movimientos_bancarios_pagos` DENTRO del `if` de banco directo, mas
+    // abajo. Se construye siempre, pero solo se flushea si el metodo es
+    // directo — los metodos de lote/batch nunca generan fila puente.
+    const bridgeEntries: Array<{ pagoId: string; montoAplicadoUsd: Decimal }> = []
+
     // 2. Obtener facturas pendientes FIFO (ORDER BY fecha ASC)
     const facturasResult = await tx.execute(
       `SELECT id, nro_factura, saldo_pend_usd, total_usd FROM ventas
@@ -1165,6 +1185,11 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           ]
         )
 
+        // Trazabilidad ingreso <-> pago (slice 0a-wiring): 1 entrada por
+        // cada `pago` del FIFO — se flushea mas abajo solo si el metodo es
+        // directo.
+        bridgeEntries.push({ pagoId, montoAplicadoUsd: montoAplicar })
+
         // Si la factura tiene préstamos vinculados, sincronizar vencimientos_cobrar FIFO
         const vencFifoResult = await tx.execute(
           `SELECT id, saldo_pendiente_usd, monto_pagado_usd
@@ -1226,6 +1251,11 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           procesado_por_nombre,
         ]
       )
+
+      // Trazabilidad ingreso <-> pago (slice 0a-wiring): el anticipo/
+      // excedente tambien es un `pago` real — cierra el fan-in N+1 (N FIFO +
+      // 1 anticipo) cuando hay excedente.
+      bridgeEntries.push({ pagoId: pagoAnticipoId, montoAplicadoUsd: montoRestante })
     }
 
     montoAplicado = montoTotalUsd.toNumber()
@@ -1456,6 +1486,20 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
           [toStorageString(_saldoNuevo), now, bancoAbonoId]
         )
+
+        // Trazabilidad ingreso <-> pago (slice 0a-wiring,
+        // trazabilidad-ingreso-pagos-directo): flushea 1 fila puente por
+        // cada entrada acumulada en el FIFO (+ anticipo si existe). Fan-in
+        // real: este MISMO ingreso bancario puede referenciar N pago_id.
+        // Solo se escribe para el camino directo (deposito_directo=1, este
+        // mismo `if`); los metodos de lote/batch nunca llegan aqui.
+        for (const entry of bridgeEntries) {
+          await tx.execute(
+            `INSERT INTO movimientos_bancarios_pagos (id, empresa_id, ingreso_id, pago_id, monto_aplicado_usd, created_at, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [uuidv4(), empresa_id, movBancoAbonoId, entry.pagoId, toStorageString(entry.montoAplicadoUsd), now, procesado_por]
+          )
+        }
       }
 
       const [cuentas, monedaContable] = await Promise.all([
