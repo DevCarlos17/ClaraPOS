@@ -124,8 +124,12 @@ const IMMUTABLE_COLUMNS: Record<string, string[]> = {
 const TRIGGER_MANAGED_PATCH_COLUMNS: Record<string, string[]> = {
   // saldo_actual y saf_disponible se actualizan via trigger
   // actualizar_saldo_cliente disparado por INSERT en movimientos_cuenta
-  // (ver migrations/0102_extender_trigger_saf_disponible.sql)
-  clientes: ['saldo_actual', 'saf_disponible'],
+  // (ver migrations/0102_extender_trigger_saf_disponible.sql).
+  // saldo_pendiente_usd tambien lo recalcula el mismo trigger
+  // actualizar_saldo_cliente() (ver migrations/0110_*.sql); antes de este
+  // fix no estaba protegido aqui, lo que causaba doble conteo al reversar
+  // un abono (el PATCH local pisaba el valor ya correcto del trigger).
+  clientes: ['saldo_actual', 'saf_disponible', 'saldo_pendiente_usd'],
   // saldo_disponible_usd/status se actualizan via trigger consumir_saf_lote
   // disparado por INSERT en saf_creditos_aplicaciones (ver
   // migrations/0105_saf_creditos_aplicaciones.sql). updated_at tambien lo
