@@ -831,6 +831,32 @@ const pagos_aplicaciones = new Table(
   }
 )
 
+// Movimientos Bancarios — Pagos (tabla puente, trazabilidad-ingreso-pagos-directo
+// slice 0a-schema, migrations/0117_movimientos_bancarios_pagos.sql). Mirror de
+// pagos_aplicaciones (arriba) pero formalizando la relacion INGRESO bancario
+// (camino directo) <-> pago_id, en vez de factura <-> pago. Fan-in real: 1
+// ingreso puede referenciar N pago_id (abono global FIFO + opcional anticipo).
+// `insertOnly: true` por el mismo motivo que pagos_aplicaciones: 100%
+// append-only, PowerSync nunca necesita sincronizar un PATCH de vuelta.
+const movimientos_bancarios_pagos = new Table(
+  {
+    empresa_id: column.text,
+    ingreso_id: column.text,
+    pago_id: column.text,
+    monto_aplicado_usd: column.text,
+    created_at: column.text,
+    created_by: column.text,
+  },
+  {
+    insertOnly: true,
+    indexes: {
+      idx_mov_banc_pagos_ingreso: ['ingreso_id'],
+      idx_mov_banc_pagos_pago: ['pago_id'],
+      idx_mov_banc_pagos_empresa: ['empresa_id'],
+    },
+  }
+)
+
 // =============================================
 // VENTAS
 // =============================================
@@ -1844,6 +1870,7 @@ export const AppSchema = new Schema({
   ventas_det,
   pagos,
   pagos_aplicaciones,
+  movimientos_bancarios_pagos,
   notas_credito,
   notas_credito_det,
   notas_debito,

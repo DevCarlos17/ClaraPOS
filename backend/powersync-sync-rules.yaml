@@ -111,6 +111,9 @@ bucket_definitions:
       # y consumirSafLotesEnTx no encuentra lotes (falso "saldo insuficiente").
       - SELECT * FROM saf_creditos_lotes WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM saf_creditos_aplicaciones WHERE empresa_id = bucket.empresa_id
+      # Gap preexistente (cxc-ledger-saldos-redesign slice 2): faltaba desde 0112.
+      # Sin esta linea, pagos_aplicaciones no baja al SQLite local.
+      - SELECT * FROM pagos_aplicaciones WHERE empresa_id = bucket.empresa_id
 
       # --- VENTAS ---
       - SELECT * FROM ventas WHERE empresa_id = bucket.empresa_id
@@ -127,6 +130,8 @@ bucket_definitions:
       - SELECT * FROM lotes_pos_cuadre WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM movimientos_metodo_cobro WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM movimientos_bancarios WHERE empresa_id = bucket.empresa_id
+      # Tabla puente ingreso<->pago (trazabilidad-ingreso-pagos-directo, 0117).
+      - SELECT * FROM movimientos_bancarios_pagos WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM caja_fuerte WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM mov_caja_fuerte WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM traspasos_tesoreria WHERE empresa_id = bucket.empresa_id
