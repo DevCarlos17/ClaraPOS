@@ -180,6 +180,8 @@ const IMMUTABLE_TABLES = new Set([
                                    // en SI MISMA (su propio trigger anular_saf_lote_reversa() muta saf_creditos_lotes,
                                    // no esta tabla), pero un PUT reintentado debe converger via ON CONFLICT DO NOTHING,
                                    // mismo motivo que saf_creditos_aplicaciones (ver migrations/0113, cxc-ledger-saldos-redesign)
+  'movimientos_bancarios_pagos',  // 100% append-only (sin policy UPDATE/DELETE), sin trigger — mismo motivo que
+                                   // pagos_aplicaciones (ver migrations/0117, trazabilidad-ingreso-pagos-directo)
 ])
 
 function convertBooleans(table: string, payload: Record<string, unknown>): Record<string, unknown> {
