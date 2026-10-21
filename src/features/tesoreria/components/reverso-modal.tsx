@@ -16,6 +16,11 @@ import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { reversarMovBancario, reversarMovCajaFuerte } from '../hooks/use-conciliacion-tesoreria'
 import { reversarTraspaso } from '../hooks/use-traspasos'
+import {
+  previewFacturasAfectadas,
+  type PreviewFacturasAfectadas,
+} from '../hooks/use-preview-facturas-afectadas'
+import { esTransferenciaCliente } from '../utils/es-transferencia-cliente'
 import { reversoSchema } from '../schemas/tesoreria-schemas'
 import type { MovimientoTesoreria } from './movimientos-table'
 
@@ -44,6 +49,8 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
   const [saving, setSaving] = useState(false)
   const [motivo, setMotivo] = useState('')
   const [motivoError, setMotivoError] = useState('')
+  const [preview, setPreview] = useState<PreviewFacturasAfectadas | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -52,8 +59,34 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
     }
   }, [isOpen])
 
-  const esTransferenciaCliente =
-    movimiento?.origen === 'TRANSFERENCIA_CLIENTE' && movimiento?.doc_origen_tipo === 'PAGO'
+  const aplicaPreview = esTransferenciaCliente(movimiento?.origen)
+  const empresaId = user?.empresa_id ?? ''
+  const movimientoId = movimiento?.id ?? ''
+
+  // Snapshot bajo demanda al abrir el modal — NO una suscripcion reactiva
+  // (el preview es un snapshot del estado de las facturas en ese instante,
+  // ver spec Requirement "Solo lectura y aislamiento multi-tenant"). Deps
+  // primitivos (regla `rerender-dependencies`), no el objeto `movimiento`.
+  useEffect(() => {
+    if (!isOpen || !aplicaPreview || !movimientoId || !empresaId) {
+      setPreview(null)
+      return
+    }
+
+    let cancelled = false
+    setPreviewLoading(true)
+    previewFacturasAfectadas(empresaId, movimientoId)
+      .then((resultado) => {
+        if (!cancelled) setPreview(resultado)
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, aplicaPreview, movimientoId, empresaId])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -157,14 +190,85 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
             </div>
           )}
 
-          {/* Warning si afecta CxC */}
-          {esTransferenciaCliente && (
-            <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              <Warning size={16} className="shrink-0 mt-0.5" weight="fill" />
-              <p>
-                Este movimiento esta vinculado a un cobro de cliente. Al reversarlo, verifique el
-                saldo en Cuentas por Cobrar.
-              </p>
+          {/* Panel read-only: facturas afectadas por este reverso (solo
+              aplica a ingresos TRANSFERENCIA_CLIENTE — slice 1b-panel de
+              preview-facturas-afectadas-reverso-tesoreria) */}
+          {aplicaPreview && (
+            <div
+              data-testid="preview-facturas-afectadas"
+              className="rounded-lg border p-4 space-y-3 text-sm"
+            >
+              <p className="font-medium">Facturas afectadas por este reverso</p>
+
+              {previewLoading && (
+                <p className="text-muted-foreground">Cargando facturas afectadas...</p>
+              )}
+
+              {!previewLoading && preview?.estado === 'LEGACY' && (
+                <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-800">
+                  <Warning size={16} className="shrink-0 mt-0.5" weight="fill" />
+                  <p>
+                    Sin trazabilidad: este ingreso es anterior al registro de abonos y no se puede
+                    determinar automaticamente que facturas afecta. Verifique manualmente el saldo
+                    del cliente en Cuentas por Cobrar antes de reversar.
+                  </p>
+                </div>
+              )}
+
+              {!previewLoading &&
+                preview?.estado === 'OK' &&
+                preview.facturasDirectas.length === 0 &&
+                preview.facturasSaf.length === 0 && (
+                  <p className="text-muted-foreground">
+                    No se encontraron facturas asociadas a este cobro.
+                  </p>
+                )}
+
+              {!previewLoading &&
+                preview?.estado === 'OK' &&
+                (preview.facturasDirectas.length > 0 || preview.facturasSaf.length > 0) && (
+                  <div className="space-y-3">
+                    {preview.facturasDirectas.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase text-muted-foreground">
+                          Pago directo
+                        </p>
+                        <ul className="mt-1 space-y-1">
+                          {preview.facturasDirectas.map((f) => (
+                            <li key={f.ventaId} className="flex justify-between">
+                              <span>{f.nroFactura}</span>
+                              <span>{formatUsd(f.montoAplicadoUsd)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {preview.facturasSaf.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase text-muted-foreground">
+                          Afectada por saldo a favor (SAF)
+                        </p>
+                        <ul className="mt-1 space-y-1">
+                          {preview.facturasSaf.map((f) => (
+                            <li key={f.ventaId} className="flex justify-between">
+                              <span>{f.nroFactura}</span>
+                              <span>{formatUsd(f.montoAplicadoUsd)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between border-t pt-2 font-semibold">
+                      <span>Total afectado</span>
+                      <span>{formatUsd(preview.totalUsd)}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Este total equivale al monto del reverso.
+                    </p>
+                  </div>
+                )}
             </div>
           )}
 
