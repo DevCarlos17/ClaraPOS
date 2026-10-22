@@ -14,8 +14,11 @@ import { Label } from '@/components/ui/label'
 import { formatUsd } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
+import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { reversarMovBancario, reversarMovCajaFuerte } from '../hooks/use-conciliacion-tesoreria'
 import { reversarTraspaso } from '../hooks/use-traspasos'
+import { reversarAbonoDirectoDesdeTesoreria } from '../hooks/use-reverso-abono-directo'
 import {
   previewFacturasAfectadas,
   type PreviewFacturasAfectadas,
@@ -23,6 +26,9 @@ import {
 import { esTransferenciaCliente } from '../utils/es-transferencia-cliente'
 import { reversoSchema } from '../schemas/tesoreria-schemas'
 import type { MovimientoTesoreria } from './movimientos-table'
+
+const SAF_BLOCK_MESSAGE =
+  'Este abono generó saldo a favor consumido en otras facturas; reversar desde tesorería no está disponible todavía'
 
 interface Props {
   isOpen: boolean
@@ -46,22 +52,36 @@ const ORIGEN_LABELS: Record<string, string> = {
 
 export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, traspasoId }: Props) {
   const { user } = useCurrentUser()
+  const { hasPermission } = usePermissions()
   const [saving, setSaving] = useState(false)
   const [motivo, setMotivo] = useState('')
   const [motivoError, setMotivoError] = useState('')
   const [preview, setPreview] = useState<PreviewFacturasAfectadas | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [showPinDialog, setShowPinDialog] = useState(false)
+  const [pendingMotivo, setPendingMotivo] = useState('')
 
   useEffect(() => {
     if (isOpen) {
       setMotivo('')
       setMotivoError('')
+      setShowPinDialog(false)
+      setPendingMotivo('')
     }
   }, [isOpen])
 
   const aplicaPreview = esTransferenciaCliente(movimiento?.origen)
   const empresaId = user?.empresa_id ?? ''
   const movimientoId = movimiento?.id ?? ''
+  // Slice 2b-ii: el reverso REAL de un ingreso TRANSFERENCIA_CLIENTE pasa
+  // por el orquestador `reversarAbonoDirectoDesdeTesoreria` en vez del
+  // reverso bancario estandar — gated por ausencia de SAF (ver
+  // tesoreria-preview-facturas-afectadas/spec.md Requirement "Accion de
+  // reverso expuesta y gateada por presencia de SAF").
+  const esReversoDirecto = !traspasoId && aplicaPreview
+  const bloqueadoPorSaf = Boolean(
+    aplicaPreview && preview?.estado === 'OK' && preview.facturasSaf.length > 0
+  )
 
   // Snapshot bajo demanda al abrir el modal — NO una suscripcion reactiva
   // (el preview es un snapshot del estado de las facturas en ese instante,
@@ -88,6 +108,40 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
     }
   }, [isOpen, aplicaPreview, movimientoId, empresaId])
 
+  // Ejecuta el reverso REAL contra el orquestador — invocado directo
+  // (usuario con CXC_REVERSE) o tras autorizacion por PIN de supervisor
+  // (handlePinAuthorized abajo). El orquestador asume la identidad ya
+  // resuelta (userId/reversedByNombre); la autorizacion ocurre ANTES de
+  // llegar aqui.
+  async function ejecutarReversoDirecto(
+    userId: string,
+    reversedByNombre: string,
+    motivoValidado: string
+  ) {
+    if (!movimiento || !user?.empresa_id) return
+    setSaving(true)
+    try {
+      await reversarAbonoDirectoDesdeTesoreria({
+        ingresoId: movimiento.id,
+        motivo: motivoValidado,
+        userId,
+        reversedByNombre,
+        empresaId: user.empresa_id,
+      })
+      toast.success('Movimiento reversado correctamente')
+      onClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al reversar')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function handlePinAuthorized(supervisorId: string) {
+    setShowPinDialog(false)
+    void ejecutarReversoDirecto(supervisorId, 'Supervisor', pendingMotivo)
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setMotivoError('')
@@ -99,6 +153,24 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
     }
 
     if (!user?.id || !user?.empresa_id || !movimiento) return
+
+    if (esReversoDirecto) {
+      // Defensa en profundidad: el boton ya esta deshabilitado cuando hay
+      // SAF (ver render abajo), pero este guard bloquea tambien un submit
+      // disparado directo sobre el form (p.ej. Enter en el input).
+      if (bloqueadoPorSaf) {
+        toast.error(SAF_BLOCK_MESSAGE)
+        return
+      }
+      if (hasPermission(PERMISSIONS.CXC_REVERSE)) {
+        await ejecutarReversoDirecto(user.id, user.nombre, parsed.data.motivo)
+      } else {
+        setPendingMotivo(parsed.data.motivo)
+        setShowPinDialog(true)
+      }
+      return
+    }
+
     setSaving(true)
     try {
       if (traspasoId) {
@@ -269,6 +341,17 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
                     </p>
                   </div>
                 )}
+
+              {/* Bloqueo SAF — la accion de reverso solo esta habilitada
+                  cuando `facturasSaf` esta vacio (spec delta
+                  tesoreria-preview-facturas-afectadas, Requirement "Accion
+                  de reverso expuesta y gateada por presencia de SAF") */}
+              {bloqueadoPorSaf && (
+                <div className="flex gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
+                  <Warning size={16} className="shrink-0 mt-0.5" weight="fill" />
+                  <p>{SAF_BLOCK_MESSAGE}</p>
+                </div>
+              )}
             </div>
           )}
 
@@ -290,11 +373,31 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
           <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
             Cancelar
           </Button>
-          <Button type="submit" form="reverso-form" variant="destructive" disabled={saving}>
+          <Button
+            type="submit"
+            form="reverso-form"
+            variant="destructive"
+            disabled={saving || bloqueadoPorSaf}
+          >
             {saving ? 'Reversando...' : 'Confirmar reverso'}
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {/* PIN de supervisor — solo se abre cuando el usuario actual no
+          tiene CXC_REVERSE y el reverso es de un ingreso
+          TRANSFERENCIA_CLIENTE (mismo patron que `factura-detalle-cxc.tsx`). */}
+      <SupervisorPinDialog
+        isOpen={showPinDialog}
+        onClose={() => {
+          setShowPinDialog(false)
+          setPendingMotivo('')
+        }}
+        onAuthorized={handlePinAuthorized}
+        titulo="Autorizacion requerida"
+        mensaje="Ingresa el PIN de supervisor para reversar este abono."
+        requiredPermission={PERMISSIONS.CXC_REVERSE}
+      />
     </Dialog>
   )
 }
