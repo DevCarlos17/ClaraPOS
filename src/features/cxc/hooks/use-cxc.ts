@@ -1897,10 +1897,215 @@ export function useHistorialPrestamo(
   return { historial: (data ?? []) as AbonoPrestamo[], isLoading }
 }
 
+export interface ReversarPagoEnTxParams {
+  pagoId: string
+  empresaId: string
+  reversedBy: string
+  reversedByNombre: string
+  reason: string
+  now: string
+  /**
+   * Resultado de `detectarLoteSafDePago(empresaId, pagoId)`, resuelto
+   * PRE-TX por el llamador — NUNCA re-detectado aqui (re-llamar
+   * `detectarLoteSafDePago`, que usa `db.getAll`, desde dentro de una tx
+   * abierta reproduce el deadlock documentado en
+   * `registrarReversoAbono`/fix/cxc-reverso-deadlock-getall).
+   */
+  generatedLote: boolean
+}
+
+/**
+ * Cuerpo transaccional del reverso de UN pago/abono (slice 2a,
+ * `reverso-abono-directo-tesoreria-sin-saf`) — extraido verbatim de
+ * `registrarReversoAbono` para ser reutilizable por el futuro orquestador
+ * de reverso directo desde tesoreria (slice 2b-i). Marca el pago como
+ * reversado, restaura el saldo de la factura y del cliente (o compensa via
+ * `reversarPagoSafEnTx` si el pago genero un lote SAF), e inserta los
+ * contra-asientos contables.
+ *
+ * Corre DENTRO de la `tx` del llamador — NUNCA abre su propia
+ * `db.writeTransaction` (mismo contrato que
+ * `reversarPagoSafEnTx`/`consumirSafLotesEnTx`).
+ */
+export async function reversarPagoEnTx(tx: Transaction, params: ReversarPagoEnTxParams): Promise<void> {
+  const { pagoId, empresaId, reversedBy, reversedByNombre, reason, now, generatedLote } = params
+
+  // 1. Leer el pago original
+  const pagoResult = await tx.execute(
+    `SELECT id, venta_id, cliente_id, monto_usd, is_reversed, tasa, monto, moneda_id FROM pagos WHERE id = ? AND empresa_id = ?`,
+    [pagoId, empresaId]
+  )
+  if (!pagoResult.rows || pagoResult.rows.length === 0) {
+    throw new Error('Pago no encontrado')
+  }
+  const pago = pagoResult.rows.item(0) as {
+    id: string
+    venta_id: string | null
+    cliente_id: string
+    monto_usd: string
+    is_reversed: number
+    tasa: string | null
+    monto: string | null
+    moneda_id: string | null
+  }
+
+  if (pago.is_reversed === 1) {
+    throw new Error('Este pago ya fue reversado anteriormente')
+  }
+
+  const montoUsd = new Decimal(pago.monto_usd || '0')
+
+  // 2. Marcar el pago como reversado
+  await tx.execute(
+    `UPDATE pagos SET is_reversed = 1, reversed_at = ?, reversed_by = ?, reversed_reason = ? WHERE id = ?`,
+    [now, reversedBy, reason.trim(), pagoId]
+  )
+
+  // 3. Si tiene factura: restaurar saldo_pend_usd
+  let nroFactura = ''
+  if (pago.venta_id) {
+    const ventaResult = await tx.execute(
+      `SELECT nro_factura, saldo_pend_usd, total_usd FROM ventas WHERE id = ?`,
+      [pago.venta_id]
+    )
+    if (ventaResult.rows && ventaResult.rows.length > 0) {
+      const venta = ventaResult.rows.item(0) as {
+        nro_factura: string
+        saldo_pend_usd: string
+        total_usd: string
+      }
+      nroFactura = venta.nro_factura
+      const saldoPendActual = new Decimal(venta.saldo_pend_usd || '0')
+      const totalFactura = new Decimal(venta.total_usd || '0')
+      const nuevoSaldoFactura = Decimal.min(totalFactura, saldoPendActual.plus(montoUsd))
+      const estadoReverso = calcularEstadoVenta(nuevoSaldoFactura, totalFactura, 'REV')
+      await tx.execute(`UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?`, [
+        toStorageString(nuevoSaldoFactura),
+        estadoReverso,
+        pago.venta_id,
+      ])
+    }
+  }
+
+  // 3b. Resultado de la deteccion de lote SAF (slice 3b-iii,
+  // cxc-ledger-saldos-redesign), ya calculado ANTES de abrir la tx por el
+  // llamador (ver `generatedLote` en params — fix/cxc-reverso-deadlock-getall).
+  // CONTRATO (reversa-pago-saf.ts, docstring de `reversarPagoSafEnTx`,
+  // "CONTRATO PARA EL LLAMADOR" — 3b-ii.7): cuando `generatedLote` es
+  // `true`, esa funcion es la UNICA escritora de los efectos de saldo de
+  // este reverso — los Steps 4/5 de abajo (UPDATE clientes con el monto
+  // COMPLETO del pago + REV generico con venta_id=NULL) quedan OMITIDOS
+  // por completo. Llamarlos ademas triplicaria `saldo_pendiente_usd`
+  // (bug corregido en 3b-ii.7, ver
+  // `sdd/cxc-ledger-saldos-redesign/analysis-reverso-saldo-actual`). Un
+  // `pago` que genero lote SIEMPRE tiene `venta_id=NULL` → el Step 3 de
+  // arriba (`if pago.venta_id`) y esta rama son mutuamente excluyentes
+  // por construccion, nunca ambas corren para el mismo pago.
+  if (generatedLote) {
+    await reversarPagoSafEnTx(tx, {
+      pagoId,
+      empresaId,
+      clienteId: pago.cliente_id,
+      reversedBy,
+      now,
+    })
+  } else {
+    // 4. Restaurar saldo del cliente
+    const clienteResult = await tx.execute(
+      `SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?`,
+      [pago.cliente_id]
+    )
+    if (!clienteResult.rows || clienteResult.rows.length === 0) {
+      throw new Error('Cliente no encontrado')
+    }
+    const clienteRevRow = clienteResult.rows.item(0) as { saldo_actual: string; saldo_pendiente_usd: string }
+    const saldoActual = new Decimal(clienteRevRow.saldo_actual || '0')
+    const saldoNuevo = saldoActual.plus(montoUsd)
+    // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
+    // cxc-ledger-saldos-redesign): un reverso de pago reabre deuda, igual
+    // que FAC/NDB — mismo trigger (migrations/0110) como autoridad final.
+    const saldoPendienteAnteriorRev = new Decimal(clienteRevRow.saldo_pendiente_usd || '0')
+    const saldoPendienteNuevoRev = calcularSaldoPendienteClienteNuevo('REV', saldoPendienteAnteriorRev, montoUsd)
+
+    await tx.execute(
+      `UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?`,
+      [toStorageString(saldoNuevo), toStorageString(saldoPendienteNuevoRev), now, pago.cliente_id]
+    )
+
+    // 5. Insertar movimiento_cuenta tipo REV
+    // Resolver moneda label desde moneda_id del pago original
+    let monedaPagoLabel: string | null = null
+    if (pago.moneda_id) {
+      const monedaResult = await tx.execute(
+        `SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1`,
+        [pago.moneda_id]
+      )
+      const codigoMoneda = (monedaResult.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso
+      if (codigoMoneda === 'VES') {
+        monedaPagoLabel = 'BS'
+      } else if (codigoMoneda) {
+        monedaPagoLabel = codigoMoneda
+      }
+    }
+
+    const movId = uuidv4()
+    const referencia = nroFactura ? `REV-${nroFactura}` : 'REV-ABONO'
+    await tx.execute(
+      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
+       VALUES (?, ?, 'REV', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        movId,
+        pago.cliente_id,
+        referencia,
+        toStorageString(montoUsd),
+        toStorageString(saldoActual),
+        toStorageString(saldoNuevo),
+        `Reverso de abono${nroFactura ? ` factura ${nroFactura}` : ''}: ${reason.trim()} (por ${reversedByNombre})`,
+        pago.venta_id ?? null,
+        now,
+        empresaId,
+        now,
+        reversedBy,
+        monedaPagoLabel,
+        pago.monto != null ? toStorageString(new Decimal(pago.monto)) : null,
+        pago.tasa != null ? toStorageString(new Decimal(pago.tasa)) : null,
+      ]
+    )
+  }
+
+  // 6. Reversar asientos contables del pago original (crea contra-asientos)
+  try {
+    const asientosResult = await tx.execute(
+      `SELECT id FROM libro_contable WHERE empresa_id = ? AND doc_origen_id = ? AND modulo_origen = 'PAGO_CXC' AND estado = 'PENDIENTE'`,
+      [empresaId, pagoId]
+    )
+    const asientosIds: string[] = []
+    if (asientosResult.rows) {
+      for (let i = 0; i < asientosResult.rows.length; i++) {
+        asientosIds.push((asientosResult.rows.item(i) as { id: string }).id)
+      }
+    }
+    if (asientosIds.length > 0) {
+      await reversarAsientos(tx, {
+        empresaId,
+        asientosIds,
+        usuarioId: reversedBy,
+      })
+    }
+  } catch {
+    // Fallo en contabilidad no bloquea el reverso
+  }
+}
+
 /**
  * Reverso de un abono/pago.
  * Marca el pago como reversado, restaura el saldo de la factura
  * y del cliente, e inserta un movimiento_cuenta tipo REV.
+ *
+ * Wrapper standalone: resuelve la deteccion SAF pre-tx y abre su propia
+ * `db.writeTransaction`, delegando el cuerpo de la reversa a
+ * `reversarPagoEnTx` (slice 2a, `reverso-abono-directo-tesoreria-sin-saf`
+ * — extraccion que preserva comportamiento, ver spec Requirement 1).
  */
 export async function registrarReversoAbono(params: {
   pago_id: string
@@ -1928,172 +2133,15 @@ export async function registrarReversoAbono(params: {
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
-
-    // 1. Leer el pago original
-    const pagoResult = await tx.execute(
-      `SELECT id, venta_id, cliente_id, monto_usd, is_reversed, tasa, monto, moneda_id FROM pagos WHERE id = ? AND empresa_id = ?`,
-      [pago_id, empresa_id]
-    )
-    if (!pagoResult.rows || pagoResult.rows.length === 0) {
-      throw new Error('Pago no encontrado')
-    }
-    const pago = pagoResult.rows.item(0) as {
-      id: string
-      venta_id: string | null
-      cliente_id: string
-      monto_usd: string
-      is_reversed: number
-      tasa: string | null
-      monto: string | null
-      moneda_id: string | null
-    }
-
-    if (pago.is_reversed === 1) {
-      throw new Error('Este pago ya fue reversado anteriormente')
-    }
-
-    const montoUsd = new Decimal(pago.monto_usd || '0')
-
-    // 2. Marcar el pago como reversado
-    await tx.execute(
-      `UPDATE pagos SET is_reversed = 1, reversed_at = ?, reversed_by = ?, reversed_reason = ? WHERE id = ?`,
-      [now, reversed_by, reason.trim(), pago_id]
-    )
-
-    // 3. Si tiene factura: restaurar saldo_pend_usd
-    let nroFactura = ''
-    if (pago.venta_id) {
-      const ventaResult = await tx.execute(
-        `SELECT nro_factura, saldo_pend_usd, total_usd FROM ventas WHERE id = ?`,
-        [pago.venta_id]
-      )
-      if (ventaResult.rows && ventaResult.rows.length > 0) {
-        const venta = ventaResult.rows.item(0) as {
-          nro_factura: string
-          saldo_pend_usd: string
-          total_usd: string
-        }
-        nroFactura = venta.nro_factura
-        const saldoPendActual = new Decimal(venta.saldo_pend_usd || '0')
-        const totalFactura = new Decimal(venta.total_usd || '0')
-        const nuevoSaldoFactura = Decimal.min(totalFactura, saldoPendActual.plus(montoUsd))
-        const estadoReverso = calcularEstadoVenta(nuevoSaldoFactura, totalFactura, 'REV')
-        await tx.execute(`UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?`, [
-          toStorageString(nuevoSaldoFactura),
-          estadoReverso,
-          pago.venta_id,
-        ])
-      }
-    }
-
-    // 3b. Resultado de la deteccion de lote SAF (slice 3b-iii,
-    // cxc-ledger-saldos-redesign), ya calculado ANTES de abrir esta tx
-    // (ver `detalleLoteSaf` arriba — fix/cxc-reverso-deadlock-getall).
-    // CONTRATO (reversa-pago-saf.ts, docstring de `reversarPagoSafEnTx`,
-    // "CONTRATO PARA EL LLAMADOR" — 3b-ii.7): cuando `generatedLote` es
-    // `true`, esa funcion es la UNICA escritora de los efectos de saldo de
-    // este reverso — los Steps 4/5 de abajo (UPDATE clientes con el monto
-    // COMPLETO del pago + REV generico con venta_id=NULL) quedan OMITIDOS
-    // por completo. Llamarlos ademas triplicaria `saldo_pendiente_usd`
-    // (bug corregido en 3b-ii.7, ver
-    // `sdd/cxc-ledger-saldos-redesign/analysis-reverso-saldo-actual`). Un
-    // `pago` que genero lote SIEMPRE tiene `venta_id=NULL` → el Step 3 de
-    // arriba (`if pago.venta_id`) y esta rama son mutuamente excluyentes
-    // por construccion, nunca ambas corren para el mismo pago.
-    if (detalleLoteSaf.generatedLote) {
-      await reversarPagoSafEnTx(tx, {
-        pagoId: pago_id,
-        empresaId: empresa_id,
-        clienteId: pago.cliente_id,
-        reversedBy: reversed_by,
-        now,
-      })
-    } else {
-      // 4. Restaurar saldo del cliente
-      const clienteResult = await tx.execute(
-        `SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?`,
-        [pago.cliente_id]
-      )
-      if (!clienteResult.rows || clienteResult.rows.length === 0) {
-        throw new Error('Cliente no encontrado')
-      }
-      const clienteRevRow = clienteResult.rows.item(0) as { saldo_actual: string; saldo_pendiente_usd: string }
-      const saldoActual = new Decimal(clienteRevRow.saldo_actual || '0')
-      const saldoNuevo = saldoActual.plus(montoUsd)
-      // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
-      // cxc-ledger-saldos-redesign): un reverso de pago reabre deuda, igual
-      // que FAC/NDB — mismo trigger (migrations/0110) como autoridad final.
-      const saldoPendienteAnteriorRev = new Decimal(clienteRevRow.saldo_pendiente_usd || '0')
-      const saldoPendienteNuevoRev = calcularSaldoPendienteClienteNuevo('REV', saldoPendienteAnteriorRev, montoUsd)
-
-      await tx.execute(
-        `UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?`,
-        [toStorageString(saldoNuevo), toStorageString(saldoPendienteNuevoRev), now, pago.cliente_id]
-      )
-
-      // 5. Insertar movimiento_cuenta tipo REV
-      // Resolver moneda label desde moneda_id del pago original
-      let monedaPagoLabel: string | null = null
-      if (pago.moneda_id) {
-        const monedaResult = await tx.execute(
-          `SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1`,
-          [pago.moneda_id]
-        )
-        const codigoMoneda = (monedaResult.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso
-        if (codigoMoneda === 'VES') {
-          monedaPagoLabel = 'BS'
-        } else if (codigoMoneda) {
-          monedaPagoLabel = codigoMoneda
-        }
-      }
-
-      const movId = uuidv4()
-      const referencia = nroFactura ? `REV-${nroFactura}` : 'REV-ABONO'
-      await tx.execute(
-        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
-         VALUES (?, ?, 'REV', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          movId,
-          pago.cliente_id,
-          referencia,
-          toStorageString(montoUsd),
-          toStorageString(saldoActual),
-          toStorageString(saldoNuevo),
-          `Reverso de abono${nroFactura ? ` factura ${nroFactura}` : ''}: ${reason.trim()} (por ${reversed_by_nombre})`,
-          pago.venta_id ?? null,
-          now,
-          empresa_id,
-          now,
-          reversed_by,
-          monedaPagoLabel,
-          pago.monto != null ? toStorageString(new Decimal(pago.monto)) : null,
-          pago.tasa != null ? toStorageString(new Decimal(pago.tasa)) : null,
-        ]
-      )
-    }
-
-    // 6. Reversar asientos contables del pago original (crea contra-asientos)
-    try {
-      const asientosResult = await tx.execute(
-        `SELECT id FROM libro_contable WHERE empresa_id = ? AND doc_origen_id = ? AND modulo_origen = 'PAGO_CXC' AND estado = 'PENDIENTE'`,
-        [empresa_id, pago_id]
-      )
-      const asientosIds: string[] = []
-      if (asientosResult.rows) {
-        for (let i = 0; i < asientosResult.rows.length; i++) {
-          asientosIds.push((asientosResult.rows.item(i) as { id: string }).id)
-        }
-      }
-      if (asientosIds.length > 0) {
-        await reversarAsientos(tx, {
-          empresaId: empresa_id,
-          asientosIds,
-          usuarioId: reversed_by,
-        })
-      }
-    } catch {
-      // Fallo en contabilidad no bloquea el reverso
-    }
+    await reversarPagoEnTx(tx, {
+      pagoId: pago_id,
+      empresaId: empresa_id,
+      reversedBy: reversed_by,
+      reversedByNombre: reversed_by_nombre,
+      reason,
+      now,
+      generatedLote: detalleLoteSaf.generatedLote,
+    })
   })
 }
 
