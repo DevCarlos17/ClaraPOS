@@ -317,3 +317,135 @@ describe('reversarAbonoDirectoDesdeTesoreria — orquestador caso simple (sin SA
     expect(mockedReversarPagoEnTx).toHaveBeenCalledTimes(1)
   })
 })
+
+// Slice 2b-i-b — caso GLOBAL multi-factura (tasks 6.1/6.2). El loop (iii)
+// del orquestador ya es generico sobre N `pago_id` desde 2b-i-a; estos
+// tests NO esperan cambios de produccion, solo prueban que el camino N>1
+// realmente se ejercita: N delegaciones a reversarPagoEnTx (una por
+// pago_id, con el pagoId correcto cada vez) y EXACTAMENTE 1 egreso por el
+// monto TOTAL del ingreso (nunca un egreso por pago). Escenario base
+// grounded contra la spec Requirement 3: ingreso `38201beb` ($2 total),
+// 2 facturas `8954d635`/`ab7d1bab` ($1 cada una).
+describe('reversarAbonoDirectoDesdeTesoreria — caso global multi-factura (fan-in, slice 2b-i-b)', () => {
+  it('abono global 2 facturas ($2 total, $1+$1): EXACTAMENTE 1 egreso por el monto TOTAL, 2 delegaciones a reversarPagoEnTx con el pagoId correcto cada una', async () => {
+    mockedDb.getAll
+      .mockResolvedValueOnce(
+        mockIngresoSimple({
+          id: '38201beb',
+          monto: '2.00000000',
+          doc_origen_id: 'venta-multi',
+        })
+      )
+      .mockResolvedValueOnce([{ pago_id: 'pago-8954d635' }, { pago_id: 'pago-ab7d1bab' }])
+    mockedDetectarLoteSafDePago
+      .mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
+      .mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
+    const calls = setupWriteTransaction({
+      bancoSaldoActual: '500.00000000',
+      movToctou: { monto: '2.00000000', doc_origen_id: 'venta-multi' },
+    })
+
+    await reversarAbonoDirectoDesdeTesoreria({
+      ingresoId: '38201beb',
+      motivo: 'Transferencia duplicada, abono global 2 facturas',
+      userId: 'user-1',
+      reversedByNombre: 'Cajero Uno',
+      empresaId: 'emp-1',
+    })
+
+    // EXACTAMENTE 1 egreso, por el TOTAL ($2) — no la suma recomputada de
+    // 2 egresos de $1, ni un egreso por pago.
+    const egresoInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))
+    expect(egresoInserts).toHaveLength(1)
+    expect(egresoInserts[0]!.params).toContain('2.00000000')
+
+    // El banco se decrementa UNA sola vez por el total ($500 - $2 = $498),
+    // nunca dos veces por $1 cada una.
+    const bancoUpdate = calls.find((c) => c.sql.startsWith('UPDATE bancos_empresa'))
+    expect(bancoUpdate!.params).toEqual(['498.00000000', expect.any(String), 'banco-1', 'emp-1'])
+
+    // 2 delegaciones a reversarPagoEnTx, UNA por pago_id del puente, con
+    // el pagoId EXACTO de cada factura (no colapsadas, no en orden
+    // incorrecto, no se "pierde" ninguna).
+    expect(mockedReversarPagoEnTx).toHaveBeenCalledTimes(2)
+    const [, paramsA] = mockedReversarPagoEnTx.mock.calls[0]!
+    const [, paramsB] = mockedReversarPagoEnTx.mock.calls[1]!
+    expect(paramsA).toMatchObject({ pagoId: 'pago-8954d635', empresaId: 'emp-1' })
+    expect(paramsB).toMatchObject({ pagoId: 'pago-ab7d1bab', empresaId: 'emp-1' })
+
+    // El ingreso global queda reversado=1 (una sola fila, el puente no
+    // genera N filas de ingreso).
+    const marcarReversado = calls.find((c) => c.sql.startsWith('UPDATE movimientos_bancarios SET reversado = 1'))
+    expect(marcarReversado!.params).toEqual(['38201beb', 'emp-1'])
+  })
+
+  it('abono global 3 facturas ($3 total): 3 delegaciones, 1 solo egreso, consistencia de suma (monto egreso === suma de los 3 pagos)', async () => {
+    mockedDb.getAll
+      .mockResolvedValueOnce(mockIngresoSimple({ id: 'ingreso-3fact', monto: '3.00000000' }))
+      .mockResolvedValueOnce([{ pago_id: 'pago-A' }, { pago_id: 'pago-B' }, { pago_id: 'pago-C' }])
+    mockedDetectarLoteSafDePago
+      .mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
+      .mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
+      .mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
+    const calls = setupWriteTransaction({
+      bancoSaldoActual: '1000.00000000',
+      movToctou: { monto: '3.00000000' },
+    })
+
+    await reversarAbonoDirectoDesdeTesoreria({
+      ingresoId: 'ingreso-3fact',
+      motivo: 'Abono global 3 facturas',
+      userId: 'user-1',
+      reversedByNombre: 'Cajero Uno',
+      empresaId: 'emp-1',
+    })
+
+    const egresoInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))
+    expect(egresoInserts).toHaveLength(1)
+    // Consistencia de suma: el monto del UNICO egreso es el total ($3),
+    // igual a la suma de los 3 pagos individuales ($1+$1+$1), nunca
+    // recomputado sumando por pago (viene directo de mov.monto).
+    expect(egresoInserts[0]!.params).toContain('3.00000000')
+
+    expect(mockedReversarPagoEnTx).toHaveBeenCalledTimes(3)
+    const pagoIdsLlamados = mockedReversarPagoEnTx.mock.calls.map(
+      (call) => (call[1] as { pagoId: string }).pagoId
+    )
+    expect(pagoIdsLlamados).toEqual(['pago-A', 'pago-B', 'pago-C'])
+  })
+
+  it('rollback atomico multi-pago: si el 2do de 3 reversarPagoEnTx rechaza, el 3ro NUNCA se invoca y el writeTransaction completo rechaza (sin reopens parciales)', async () => {
+    mockedDb.getAll
+      .mockResolvedValueOnce(mockIngresoSimple({ id: 'ingreso-3fact', monto: '3.00000000' }))
+      .mockResolvedValueOnce([{ pago_id: 'pago-A' }, { pago_id: 'pago-B' }, { pago_id: 'pago-C' }])
+    mockedDetectarLoteSafDePago
+      .mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
+      .mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
+      .mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
+    setupWriteTransaction({ bancoSaldoActual: '1000.00000000', movToctou: { monto: '3.00000000' } })
+    // pago-A resuelve bien, pago-B rechaza a mitad del loop, pago-C NUNCA
+    // deberia ejecutarse (el `for...of` con `await` corta en el primer throw).
+    mockedReversarPagoEnTx
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('Pago no encontrado'))
+
+    await expect(
+      reversarAbonoDirectoDesdeTesoreria({
+        ingresoId: 'ingreso-3fact',
+        motivo: 'Abono global 3 facturas, 2do pago roto',
+        userId: 'user-1',
+        reversedByNombre: 'Cajero Uno',
+        empresaId: 'emp-1',
+      })
+    ).rejects.toThrow('Pago no encontrado')
+
+    // Solo A y B se intentaron (2 llamadas) — C jamas se invoco porque el
+    // loop secuencial corta en el primer rechazo, sin "saltarse" al
+    // siguiente pago silenciosamente.
+    expect(mockedReversarPagoEnTx).toHaveBeenCalledTimes(2)
+    const pagoIdsIntentados = mockedReversarPagoEnTx.mock.calls.map(
+      (call) => (call[1] as { pagoId: string }).pagoId
+    )
+    expect(pagoIdsIntentados).toEqual(['pago-A', 'pago-B'])
+  })
+})
