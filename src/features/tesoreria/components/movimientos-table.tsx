@@ -307,6 +307,9 @@ function HistoricoTable({
           <th className="text-center py-3 px-4 font-medium text-muted-foreground">
             Estado
           </th>
+          <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+            Acciones
+          </th>
         </tr>
       </thead>
       <tbody className="divide-y">
@@ -382,6 +385,20 @@ function HistoricoRow({
       {/* Estado */}
       <td className="py-3 px-4 text-center">
         <EstadoBadge validado={isValidado} reversado={isReversado} />
+      </td>
+
+      {/* Acciones */}
+      <td className="py-3 px-4 text-right">
+        {isValidado && !isReversado && mov.origen === 'TRANSFERENCIA_CLIENTE' && mov.onReversar && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
+            onClick={() => mov.onReversar!(mov.id)}
+          >
+            Desconciliar
+          </Button>
+        )}
       </td>
     </tr>
   )
