@@ -336,6 +336,32 @@ export function ConciliacionTesoreria() {
     }
   }
 
+  async function handleDesconciliarMov(id: string) {
+    if (!selectedCuenta || !user?.empresa_id) return
+
+    if (selectedCuenta.tipo === 'BANCO') {
+      const mov = historicoBancoResult.data.find((m) => m.id === id)
+      if (!mov) return
+      setMovParaReversar({ ...mov, _source: 'BANCO' as const })
+      if (mov.origen === 'TRASPASO') {
+        const traspasoId = await findTraspasoByMovId(id, user.empresa_id)
+        setTraspasoIdParaReversar(traspasoId)
+      } else {
+        setTraspasoIdParaReversar(null)
+      }
+    } else {
+      const mov = historicoCajaResult.data.find((m) => m.id === id)
+      if (!mov) return
+      setMovParaReversar({ ...mov, _source: 'CAJA_FUERTE' as const })
+      if (mov.origen === 'TRASPASO') {
+        const traspasoId = await findTraspasoByMovId(id, user.empresa_id)
+        setTraspasoIdParaReversar(traspasoId)
+      } else {
+        setTraspasoIdParaReversar(null)
+      }
+    }
+  }
+
   async function handleReversarTraspaso(traspaso: TraspasoEnriquecido) {
     if (!user?.id || !user?.empresa_id) return
     const motivo = window.prompt('Ingrese el motivo del reverso (min 3 caracteres):')
@@ -363,7 +389,7 @@ export function ConciliacionTesoreria() {
   )
 
   const historicoMovRows: MovimientoTableRow[] = historicoResult.data.map((mov) =>
-    toMovRow(mov)
+    toMovRow(mov, undefined, handleDesconciliarMov)
   )
 
   // ─── Helpers de exportación ──────────────────────────────────
