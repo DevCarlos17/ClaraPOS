@@ -28,6 +28,7 @@ export interface MovimientoTableRow {
   reversado: number
   onValidar?: (id: string) => void
   onReversar?: (id: string) => void
+  onDesconciliar?: (id: string) => void
 }
 
 // ─── Labels de origen ────────────────────────────────────────
@@ -389,16 +390,28 @@ function HistoricoRow({
 
       {/* Acciones */}
       <td className="py-3 px-4 text-right">
-        {isValidado && !isReversado && mov.origen === 'TRANSFERENCIA_CLIENTE' && mov.onReversar && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
-            onClick={() => mov.onReversar!(mov.id)}
-          >
-            Desconciliar
-          </Button>
-        )}
+        <div className="flex items-center justify-end gap-1">
+          {isValidado && !isReversado && mov.onDesconciliar && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
+              onClick={() => mov.onDesconciliar!(mov.id)}
+            >
+              Desconciliar
+            </Button>
+          )}
+          {isValidado && !isReversado && mov.origen === 'TRANSFERENCIA_CLIENTE' && mov.onReversar && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
+              onClick={() => mov.onReversar!(mov.id)}
+            >
+              Reversar
+            </Button>
+          )}
+        </div>
       </td>
     </tr>
   )

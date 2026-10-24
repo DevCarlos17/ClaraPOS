@@ -11,15 +11,20 @@ import {
 import { useMovBancariosFiltrados, type MovBancario } from '@/features/caja/hooks/use-mov-bancarios'
 import { useMovCajaFuerteFiltrados } from '../../hooks/use-mov-caja-fuerte'
 import { useTraspasos } from '../../hooks/use-traspasos'
+import { desconciliarMovBancario } from '../../hooks/use-conciliacion-tesoreria'
 
 /**
- * Cambio `desconciliar-reverso-historico-tesoreria` (Phase 3/4): primera
- * cobertura de `conciliacion-tesoreria.tsx` (824 lineas, sin tests previos).
- * Mockeamos en el boundary — mismo patron que `nota-credito-pos-modal.test.tsx` —
- * para probar SOLO el wiring: click "Desconciliar" en Historico abre el
- * `ReversoModal` existente con el movimiento correcto (handler nuevo
- * `handleDesconciliarMov`), y fijamos como regresion que "Rechazar" en
- * Pendientes (handler preexistente `handleReversarMov`) sigue intacto.
+ * Cambio `split-desconciliar-reversar-historico` (Phase 3/4): cobertura de
+ * `conciliacion-tesoreria.tsx`. Mockeamos en el boundary — mismo patron que
+ * `nota-credito-pos-modal.test.tsx` — para probar el wiring de los DOS
+ * handlers de Historico ahora separados:
+ * - "Reversar" (antes mal etiquetado "Desconciliar") sigue abriendo
+ *   `ReversoModal` via `handleReversarHistorico` (cuerpo sin cambios).
+ * - "Desconciliar" (nuevo) es un flip de estado puro via
+ *   `handleDesconciliarHistorico` → `desconciliarMovBancario` — NO abre
+ *   `ReversoModal`.
+ * Se fija como regresion que "Rechazar" en Pendientes (handler
+ * preexistente `handleReversarMov`) sigue intacto.
  */
 
 vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
@@ -43,6 +48,7 @@ vi.mock('../../hooks/use-traspasos', () => ({
   reversarTraspaso: vi.fn(),
   findTraspasoByMovId: vi.fn().mockResolvedValue(null),
   validarTraspaso: vi.fn(),
+  desvalidarTraspaso: vi.fn(),
   crearTraspaso: vi.fn(),
   crearTraspasoTesoreriaASesion: vi.fn(),
 }))
@@ -50,6 +56,8 @@ vi.mock('../../hooks/use-traspasos', () => ({
 vi.mock('../../hooks/use-conciliacion-tesoreria', () => ({
   validarMovBancario: vi.fn(),
   validarMovCajaFuerte: vi.fn(),
+  desconciliarMovBancario: vi.fn(),
+  desconciliarMovCajaFuerte: vi.fn(),
   crearMovManualBanco: vi.fn(),
   crearMovManualCajaFuerte: vi.fn(),
 }))
@@ -98,6 +106,7 @@ const mockedUsePendingCounts = vi.mocked(usePendingCounts)
 const mockedUseMovBancariosFiltrados = vi.mocked(useMovBancariosFiltrados)
 const mockedUseMovCajaFuerteFiltrados = vi.mocked(useMovCajaFuerteFiltrados)
 const mockedUseTraspasos = vi.mocked(useTraspasos)
+const mockedDesconciliarMovBancario = vi.mocked(desconciliarMovBancario)
 
 const CUENTA_BANCO: CuentaTesoreria = {
   id: 'banco-1',
@@ -193,19 +202,19 @@ async function seleccionarCuentaYTab(tab: 'Pendientes' | 'Historico') {
   await userEvent.click(screen.getByRole('tab', { name: tab }))
 }
 
-describe('ConciliacionTesoreria — Desconciliar desde Historico', () => {
+describe('ConciliacionTesoreria — Reversar desde Historico (antes "Desconciliar")', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setupDefaults()
     mockMovBancariosByEstado()
   })
 
-  it('click en "Desconciliar" abre ReversoModal con el movimiento historico correcto', async () => {
+  it('click en "Reversar" abre ReversoModal con el movimiento historico correcto', async () => {
     render(<ConciliacionTesoreria />)
 
     await seleccionarCuentaYTab('Historico')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Desconciliar' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Reversar' }))
 
     const modal = screen.getByTestId('mock-reverso-modal')
     expect(modal).toHaveAttribute('data-movimiento-id', 'mov-historico-1')
@@ -220,5 +229,24 @@ describe('ConciliacionTesoreria — Desconciliar desde Historico', () => {
 
     const modal = screen.getByTestId('mock-reverso-modal')
     expect(modal).toHaveAttribute('data-movimiento-id', 'mov-pendiente-1')
+  })
+})
+
+describe('ConciliacionTesoreria — Desconciliar desde Historico (nuevo, flip de estado puro)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupDefaults()
+    mockMovBancariosByEstado()
+  })
+
+  it('click en "Desconciliar" llama desconciliarMovBancario con el id correcto y NO abre ReversoModal', async () => {
+    render(<ConciliacionTesoreria />)
+
+    await seleccionarCuentaYTab('Historico')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Desconciliar' }))
+
+    expect(mockedDesconciliarMovBancario).toHaveBeenCalledWith('mov-historico-1', 'empresa-1')
+    expect(screen.queryByTestId('mock-reverso-modal')).not.toBeInTheDocument()
   })
 })

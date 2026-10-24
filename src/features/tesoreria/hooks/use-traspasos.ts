@@ -1030,3 +1030,50 @@ export async function validarTraspaso(
     }
   })
 }
+
+// ─── Desvalidar traspaso (ambos lados) — espejo invertido ───
+
+export async function desvalidarTraspaso(
+  traspasoId: string,
+  empresaId: string
+): Promise<void> {
+  await db.writeTransaction(async (tx) => {
+    const result = await tx.execute(
+      'SELECT * FROM traspasos_tesoreria WHERE id = ? AND empresa_id = ? LIMIT 1',
+      [traspasoId, empresaId]
+    )
+    if (!result.rows?.length) throw new Error('Traspaso no encontrado')
+
+    const t = result.rows.item(0) as {
+      cuenta_origen_tipo: string
+      mov_origen_id: string | null
+      cuenta_destino_tipo: string
+      mov_destino_id: string | null
+      reversado: number
+    }
+
+    if (t.reversado === 1) throw new Error('Este traspaso ya fue reversado')
+
+    // Desvalidar movimiento origen
+    // Note: movimientos_metodo_cobro (SESION_CAJA) has no validado column — skip.
+    if (t.mov_origen_id && t.cuenta_origen_tipo !== 'SESION_CAJA') {
+      const table =
+        t.cuenta_origen_tipo === 'BANCO' ? 'movimientos_bancarios' : 'mov_caja_fuerte'
+      await tx.execute(
+        `UPDATE ${table} SET validado = 0, validado_por = NULL, validado_at = NULL WHERE id = ?`,
+        [t.mov_origen_id]
+      )
+    }
+
+    // Desvalidar movimiento destino
+    // Note: movimientos_metodo_cobro (SESION_CAJA) has no validado column — skip.
+    if (t.mov_destino_id && t.cuenta_destino_tipo !== 'SESION_CAJA') {
+      const table =
+        t.cuenta_destino_tipo === 'BANCO' ? 'movimientos_bancarios' : 'mov_caja_fuerte'
+      await tx.execute(
+        `UPDATE ${table} SET validado = 0, validado_por = NULL, validado_at = NULL WHERE id = ?`,
+        [t.mov_destino_id]
+      )
+    }
+  })
+}
