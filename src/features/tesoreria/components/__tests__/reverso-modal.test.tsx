@@ -220,8 +220,28 @@ describe('ReversoModal — panel de facturas afectadas, estado OK', () => {
   it('con facturas directas y via SAF: lista ambos grupos distinguidos, cada fila con su nro_factura y monto, y el total', async () => {
     mockedPreviewFacturasAfectadas.mockResolvedValue({
       estado: 'OK',
-      facturasDirectas: [{ ventaId: 'venta-A', nroFactura: 'F-A', montoAplicadoUsd: 1 }],
-      facturasSaf: [{ ventaId: 'venta-D', nroFactura: 'F-D', montoAplicadoUsd: 30 }],
+      facturasDirectas: [
+        {
+          ventaId: 'venta-A',
+          nroFactura: 'F-A',
+          montoAplicadoUsd: 1,
+          montoAplicadoNativo: 500,
+          monedaCodigo: 'VES',
+          metodoNombre: 'BANESCO PAGO MOVIL',
+          tasa: 500,
+        },
+      ],
+      facturasSaf: [
+        {
+          ventaId: 'venta-D',
+          nroFactura: 'F-D',
+          montoAplicadoUsd: 30,
+          montoAplicadoNativo: 15000,
+          monedaCodigo: 'VES',
+          metodoNombre: 'BANESCO PAGO MOVIL',
+          tasa: 500,
+        },
+      ],
       totalUsd: 31,
     })
 
@@ -237,6 +257,12 @@ describe('ReversoModal — panel de facturas afectadas, estado OK', () => {
     // DOM) para evitar ambiguedad con ese nuevo mensaje de bloqueo.
     expect(screen.getByText(/afectada por saldo a favor \(saf\)/i)).toBeInTheDocument()
     expect(screen.getByText('$31.00')).toBeInTheDocument()
+    // Monto dual-moneda (via formatMontoPago) + metodo de pago, uniforme en
+    // ambos arreglos (directa y SAF) — spec Requirement "Renderizado
+    // dual-moneda y metodo de pago en el panel".
+    expect(screen.getAllByText('$1.00 (Bs. 500,00)')).toHaveLength(1)
+    expect(screen.getAllByText('$30.00 (Bs. 15.000,00)')).toHaveLength(1)
+    expect(screen.getAllByText('BANESCO PAGO MOVIL')).toHaveLength(2)
   })
 
   it('estado OK con 0 facturas (sin facturas asociadas, trazabilidad confirmada): copy distinto de LEGACY', async () => {
@@ -278,7 +304,17 @@ describe('ReversoModal — panel no muta datos', () => {
   it('el panel no renderiza ningun boton de accion propio (solo lectura)', async () => {
     mockedPreviewFacturasAfectadas.mockResolvedValue({
       estado: 'OK',
-      facturasDirectas: [{ ventaId: 'venta-A', nroFactura: 'F-A', montoAplicadoUsd: 1 }],
+      facturasDirectas: [
+        {
+          ventaId: 'venta-A',
+          nroFactura: 'F-A',
+          montoAplicadoUsd: 1,
+          montoAplicadoNativo: 500,
+          monedaCodigo: 'VES',
+          metodoNombre: 'BANESCO PAGO MOVIL',
+          tasa: 500,
+        },
+      ],
       facturasSaf: [],
       totalUsd: 1,
     })
@@ -299,7 +335,17 @@ describe('ReversoModal — submit, origen TRANSFERENCIA_CLIENTE (orquestador nue
   it('con permiso CXC_REVERSE, sin SAF: llama reversarAbonoDirectoDesdeTesoreria con los params exactos, NO reversarMovBancario', async () => {
     mockedPreviewFacturasAfectadas.mockResolvedValue({
       estado: 'OK',
-      facturasDirectas: [{ ventaId: 'venta-A', nroFactura: 'F-A', montoAplicadoUsd: 1 }],
+      facturasDirectas: [
+        {
+          ventaId: 'venta-A',
+          nroFactura: 'F-A',
+          montoAplicadoUsd: 1,
+          montoAplicadoNativo: 500,
+          monedaCodigo: 'VES',
+          metodoNombre: 'BANESCO PAGO MOVIL',
+          tasa: 500,
+        },
+      ],
       facturasSaf: [],
       totalUsd: 1,
     })
@@ -390,7 +436,17 @@ describe('ReversoModal — bloqueo SAF (accion de reverso deshabilitada)', () =>
     mockedPreviewFacturasAfectadas.mockResolvedValue({
       estado: 'OK',
       facturasDirectas: [],
-      facturasSaf: [{ ventaId: 'venta-D', nroFactura: 'F-D', montoAplicadoUsd: 30 }],
+      facturasSaf: [
+        {
+          ventaId: 'venta-D',
+          nroFactura: 'F-D',
+          montoAplicadoUsd: 30,
+          montoAplicadoNativo: 15000,
+          monedaCodigo: 'VES',
+          metodoNombre: 'BANESCO PAGO MOVIL',
+          tasa: 500,
+        },
+      ],
       totalUsd: 30,
     })
 
@@ -425,7 +481,17 @@ describe('ReversoModal — PIN gate (CXC_REVERSE)', () => {
     denyCxcReverse()
     mockedPreviewFacturasAfectadas.mockResolvedValue({
       estado: 'OK',
-      facturasDirectas: [{ ventaId: 'venta-A', nroFactura: 'F-A', montoAplicadoUsd: 1 }],
+      facturasDirectas: [
+        {
+          ventaId: 'venta-A',
+          nroFactura: 'F-A',
+          montoAplicadoUsd: 1,
+          montoAplicadoNativo: 500,
+          monedaCodigo: 'VES',
+          metodoNombre: 'BANESCO PAGO MOVIL',
+          tasa: 500,
+        },
+      ],
       facturasSaf: [],
       totalUsd: 1,
     })
@@ -464,7 +530,17 @@ describe('ReversoModal — manejo de errores del orquestador', () => {
   it('el orquestador rechaza (ej. SAF-block tardio o ya reversado): muestra toast de error y no lanza', async () => {
     mockedPreviewFacturasAfectadas.mockResolvedValue({
       estado: 'OK',
-      facturasDirectas: [{ ventaId: 'venta-A', nroFactura: 'F-A', montoAplicadoUsd: 1 }],
+      facturasDirectas: [
+        {
+          ventaId: 'venta-A',
+          nroFactura: 'F-A',
+          montoAplicadoUsd: 1,
+          montoAplicadoNativo: 500,
+          monedaCodigo: 'VES',
+          metodoNombre: 'BANESCO PAGO MOVIL',
+          tasa: 500,
+        },
+      ],
       facturasSaf: [],
       totalUsd: 1,
     })

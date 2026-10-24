@@ -16,12 +16,15 @@ import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
+import { formatMontoPago } from '@/features/ventas/utils/factura-export'
+import type { ReciboPagoLinea } from '@/features/ventas/utils/recibo-pagos'
 import { reversarMovBancario, reversarMovCajaFuerte } from '../hooks/use-conciliacion-tesoreria'
 import { reversarTraspaso } from '../hooks/use-traspasos'
 import { reversarAbonoDirectoDesdeTesoreria } from '../hooks/use-reverso-abono-directo'
 import {
   previewFacturasAfectadas,
   type PreviewFacturasAfectadas,
+  type FacturaAfectadaPreview,
 } from '../hooks/use-preview-facturas-afectadas'
 import { esTransferenciaCliente } from '../utils/es-transferencia-cliente'
 import { reversoSchema } from '../schemas/tesoreria-schemas'
@@ -48,6 +51,30 @@ const ORIGEN_LABELS: Record<string, string> = {
   TRASPASO: 'Traspaso',
   REVERSO: 'Reverso',
   MANUAL: 'Manual',
+}
+
+/**
+ * Mapea una `FacturaAfectadaPreview` al shape `ReciboPagoLinea` que espera
+ * `formatMontoPago` (reusado de "Consulta de Factura" — ver exploracion
+ * `sdd/reverso-abono-tesoreria/explore-preview-presentacion`). `tasa` ya es
+ * un valor DERIVADO (usd*tasa, no una moneda nativa real distinta), por lo
+ * que se fuerza `moneda: 'USD'` + `forzarBimonetario: true` para mostrar
+ * SIEMPRE "$X (Bs. Y)" de forma uniforme (spec Requirement "Renderizado
+ * dual-moneda y metodo de pago en el panel", mismo formato en ambos
+ * arreglos) — mapear `moneda` desde `monedaCodigo` colapsaria a Bs-primario
+ * cuando no coincide con la presentacion ('USD'), contradiciendo el
+ * ejemplo bloqueado de la spec.
+ */
+function aLineaPago(f: FacturaAfectadaPreview): ReciboPagoLinea {
+  return {
+    metodoCobroId: f.ventaId,
+    metodoNombre: f.metodoNombre,
+    moneda: 'USD',
+    montoNativo: f.montoAplicadoUsd,
+    montoUsd: f.montoAplicadoUsd,
+    montoBs: f.montoAplicadoNativo,
+    forzarBimonetario: true,
+  }
 }
 
 export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, traspasoId }: Props) {
@@ -307,9 +334,14 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
                         </p>
                         <ul className="mt-1 space-y-1">
                           {preview.facturasDirectas.map((f) => (
-                            <li key={f.ventaId} className="flex justify-between">
-                              <span>{f.nroFactura}</span>
-                              <span>{formatUsd(f.montoAplicadoUsd)}</span>
+                            <li key={f.ventaId} className="flex justify-between gap-2">
+                              <span>
+                                {f.nroFactura}
+                                <span className="block text-xs text-muted-foreground">
+                                  {f.metodoNombre}
+                                </span>
+                              </span>
+                              <span className="shrink-0">{formatMontoPago(aLineaPago(f), 'USD')}</span>
                             </li>
                           ))}
                         </ul>
@@ -323,9 +355,14 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
                         </p>
                         <ul className="mt-1 space-y-1">
                           {preview.facturasSaf.map((f) => (
-                            <li key={f.ventaId} className="flex justify-between">
-                              <span>{f.nroFactura}</span>
-                              <span>{formatUsd(f.montoAplicadoUsd)}</span>
+                            <li key={f.ventaId} className="flex justify-between gap-2">
+                              <span>
+                                {f.nroFactura}
+                                <span className="block text-xs text-muted-foreground">
+                                  {f.metodoNombre}
+                                </span>
+                              </span>
+                              <span className="shrink-0">{formatMontoPago(aLineaPago(f), 'USD')}</span>
                             </li>
                           ))}
                         </ul>
