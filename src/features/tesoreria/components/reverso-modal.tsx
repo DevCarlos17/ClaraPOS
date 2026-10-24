@@ -11,7 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { formatUsd } from '@/lib/currency'
+import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
@@ -246,7 +246,7 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
             <div className="flex justify-between font-semibold">
               <span className="text-muted-foreground">Monto</span>
               <span>
-                {monedaSimbolo} {formatUsd(monto)}
+                {monedaSimbolo === '$' ? formatUsd(monto) : formatBs(monto)}
               </span>
             </div>
           </div>
