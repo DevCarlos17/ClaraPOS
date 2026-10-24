@@ -145,6 +145,30 @@ beforeEach(() => {
   allowCxcReverse()
 })
 
+describe('ReversoModal — formato del Monto en el header segun moneda', () => {
+  const previewVacio = { estado: 'OK' as const, facturasDirectas: [], facturasSaf: [], totalUsd: 0 }
+
+  it('monedaSimbolo="Bs": usa formatBs (ej. "Bs. 100,00"), NO mezcla "Bs" con el "$" de formatUsd', () => {
+    mockedPreviewFacturasAfectadas.mockResolvedValue(previewVacio)
+    render(
+      <ReversoModal isOpen onClose={vi.fn()} movimiento={movimiento()} monedaSimbolo="Bs" />
+    )
+
+    expect(screen.getByText('Bs. 100,00')).toBeInTheDocument()
+    // Regresion del bug "Bs $100.00": el simbolo Bs NO debe anteponerse al $
+    expect(screen.queryByText(/Bs \$/)).not.toBeInTheDocument()
+  })
+
+  it('monedaSimbolo="$": usa formatUsd (ej. "$100.00")', () => {
+    mockedPreviewFacturasAfectadas.mockResolvedValue(previewVacio)
+    render(
+      <ReversoModal isOpen onClose={vi.fn()} movimiento={movimiento()} monedaSimbolo="$" />
+    )
+
+    expect(screen.getByText('$100.00')).toBeInTheDocument()
+  })
+})
+
 describe('ReversoModal — gate de aplicabilidad (origen, no doc_origen_tipo)', () => {
   it('origen !== TRANSFERENCIA_CLIENTE (ej. CIERRE_CONSOLIDACION): NO renderiza el panel ni llama al hook', async () => {
     render(
