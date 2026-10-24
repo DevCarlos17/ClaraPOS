@@ -66,6 +66,52 @@ export async function validarMovCajaFuerte(
   })
 }
 
+// ─── Desconciliar movimiento bancario (flip puro, sin saldo) ─
+
+export async function desconciliarMovBancario(
+  movimientoId: string,
+  empresaId: string
+): Promise<void> {
+  await db.writeTransaction(async (tx) => {
+    const result = await tx.execute(
+      'SELECT validado, reversado FROM movimientos_bancarios WHERE id = ? AND empresa_id = ?',
+      [movimientoId, empresaId]
+    )
+    if (!result.rows?.length) throw new Error('Movimiento no encontrado')
+    const mov = result.rows.item(0) as { validado: number; reversado: number }
+    if (mov.validado === 0) throw new Error('Este movimiento ya está desconciliado')
+    if (mov.reversado === 1) throw new Error('Este movimiento ya fue reversado')
+
+    await tx.execute(
+      'UPDATE movimientos_bancarios SET validado = 0, validado_por = NULL, validado_at = NULL WHERE id = ? AND empresa_id = ?',
+      [movimientoId, empresaId]
+    )
+  })
+}
+
+// ─── Desconciliar movimiento caja fuerte (flip puro, sin saldo) ─
+
+export async function desconciliarMovCajaFuerte(
+  movimientoId: string,
+  empresaId: string
+): Promise<void> {
+  await db.writeTransaction(async (tx) => {
+    const result = await tx.execute(
+      'SELECT validado, reversado FROM mov_caja_fuerte WHERE id = ? AND empresa_id = ?',
+      [movimientoId, empresaId]
+    )
+    if (!result.rows?.length) throw new Error('Movimiento no encontrado')
+    const mov = result.rows.item(0) as { validado: number; reversado: number }
+    if (mov.validado === 0) throw new Error('Este movimiento ya está desconciliado')
+    if (mov.reversado === 1) throw new Error('Este movimiento ya fue reversado')
+
+    await tx.execute(
+      'UPDATE mov_caja_fuerte SET validado = 0, validado_por = NULL, validado_at = NULL WHERE id = ? AND empresa_id = ?',
+      [movimientoId, empresaId]
+    )
+  })
+}
+
 // ─── Reversar movimiento bancario ────────────────────────────
 
 export async function reversarMovBancario(params: ReversarMovParams): Promise<ReversarResult> {

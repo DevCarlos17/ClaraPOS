@@ -2,11 +2,13 @@ import { render, screen } from '@testing-library/react'
 import { MovimientosTable, type MovimientoTableRow } from '../movimientos-table'
 
 /**
- * Cambio `desconciliar-reverso-historico-tesoreria`: primera cobertura de
- * `movimientos-table.tsx`. Cubre el gate de visibilidad del nuevo boton
- * "Desconciliar" en `HistoricoRow` (Phase 1/2 de tasks.md) y fija por
- * primera vez en codigo el comportamiento existente de "Rechazar" en
- * `PendienteRow` (regresion, Phase 1.6).
+ * Cambio `split-desconciliar-reversar-historico`: separa "Desconciliar"
+ * (flip de estado puro, origin-agnostico, via `onDesconciliar`) de
+ * "Reversar" (el reverso real que abre `ReversoModal`, antes mal etiquetado
+ * "Desconciliar", via `onReversar`, gate restringido a
+ * `TRANSFERENCIA_CLIENTE`). Ambos botones coexisten de forma independiente
+ * en `HistoricoRow`. Se mantiene la regresion de "Rechazar" en
+ * `PendienteRow` (Phase 1.6 original).
  */
 
 function buildRow(overrides: Partial<MovimientoTableRow> = {}): MovimientoTableRow {
@@ -26,14 +28,14 @@ function buildRow(overrides: Partial<MovimientoTableRow> = {}): MovimientoTableR
   }
 }
 
-describe('MovimientosTable — Historico — boton Desconciliar', () => {
+describe('MovimientosTable — Historico — boton Reversar (antes "Desconciliar")', () => {
   it('se renderiza cuando validado=1, reversado=0 y origen=TRANSFERENCIA_CLIENTE', () => {
     const onReversar = vi.fn()
     const row = buildRow({ validado: 1, reversado: 0, origen: 'TRANSFERENCIA_CLIENTE', onReversar })
 
     render(<MovimientosTable movimientos={[row]} modo="historico" />)
 
-    expect(screen.getByRole('button', { name: 'Desconciliar' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reversar' })).toBeInTheDocument()
   })
 
   it('NO se renderiza cuando validado=0 (va por "Rechazar" en Pendientes)', () => {
@@ -42,7 +44,7 @@ describe('MovimientosTable — Historico — boton Desconciliar', () => {
 
     render(<MovimientosTable movimientos={[row]} modo="historico" />)
 
-    expect(screen.queryByRole('button', { name: 'Desconciliar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reversar' })).not.toBeInTheDocument()
   })
 
   it('MANDATORIO: NO se renderiza cuando reversado=1 — guard anti reverso-de-reverso', () => {
@@ -51,7 +53,7 @@ describe('MovimientosTable — Historico — boton Desconciliar', () => {
 
     render(<MovimientosTable movimientos={[row]} modo="historico" />)
 
-    expect(screen.queryByRole('button', { name: 'Desconciliar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reversar' })).not.toBeInTheDocument()
   })
 
   it('NO se renderiza cuando el origen no es TRANSFERENCIA_CLIENTE', () => {
@@ -60,7 +62,16 @@ describe('MovimientosTable — Historico — boton Desconciliar', () => {
 
     render(<MovimientosTable movimientos={[row]} modo="historico" />)
 
-    expect(screen.queryByRole('button', { name: 'Desconciliar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reversar' })).not.toBeInTheDocument()
+  })
+
+  it('NO se renderiza para origen TRASPASO (el reverso real solo aplica a TRANSFERENCIA_CLIENTE)', () => {
+    const onReversar = vi.fn()
+    const row = buildRow({ validado: 1, reversado: 0, origen: 'TRASPASO', onReversar })
+
+    render(<MovimientosTable movimientos={[row]} modo="historico" />)
+
+    expect(screen.queryByRole('button', { name: 'Reversar' })).not.toBeInTheDocument()
   })
 
   it('al hacer click invoca onReversar con el id del movimiento correcto', async () => {
@@ -70,10 +81,78 @@ describe('MovimientosTable — Historico — boton Desconciliar', () => {
     const { default: userEvent } = await import('@testing-library/user-event')
     render(<MovimientosTable movimientos={[row]} modo="historico" />)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Desconciliar' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Reversar' }))
 
     expect(onReversar).toHaveBeenCalledTimes(1)
     expect(onReversar).toHaveBeenCalledWith('mov-xyz')
+  })
+})
+
+describe('MovimientosTable — Historico — boton Desconciliar (nuevo, flip de estado puro)', () => {
+  it('se renderiza con CUALQUIER origen (incl. TRASPASO) cuando validado=1, reversado=0', () => {
+    const onDesconciliar = vi.fn()
+    const row = buildRow({ validado: 1, reversado: 0, origen: 'TRASPASO', onDesconciliar })
+
+    render(<MovimientosTable movimientos={[row]} modo="historico" />)
+
+    expect(screen.getByRole('button', { name: 'Desconciliar' })).toBeInTheDocument()
+  })
+
+  it('se renderiza tambien para TRANSFERENCIA_CLIENTE (coexiste con Reversar)', () => {
+    const onDesconciliar = vi.fn()
+    const onReversar = vi.fn()
+    const row = buildRow({
+      validado: 1,
+      reversado: 0,
+      origen: 'TRANSFERENCIA_CLIENTE',
+      onDesconciliar,
+      onReversar,
+    })
+
+    render(<MovimientosTable movimientos={[row]} modo="historico" />)
+
+    expect(screen.getByRole('button', { name: 'Desconciliar' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reversar' })).toBeInTheDocument()
+  })
+
+  it('NO se renderiza cuando validado=0', () => {
+    const onDesconciliar = vi.fn()
+    const row = buildRow({ validado: 0, reversado: 0, origen: 'PAGO_PROVEEDOR', onDesconciliar })
+
+    render(<MovimientosTable movimientos={[row]} modo="historico" />)
+
+    expect(screen.queryByRole('button', { name: 'Desconciliar' })).not.toBeInTheDocument()
+  })
+
+  it('MANDATORIO: NO se renderiza cuando reversado=1 — guard anti reverso-de-reverso', () => {
+    const onDesconciliar = vi.fn()
+    const row = buildRow({ validado: 1, reversado: 1, origen: 'TRASPASO', onDesconciliar })
+
+    render(<MovimientosTable movimientos={[row]} modo="historico" />)
+
+    expect(screen.queryByRole('button', { name: 'Desconciliar' })).not.toBeInTheDocument()
+  })
+
+  it('al hacer click invoca onDesconciliar con el id correcto, SIN tocar onReversar', async () => {
+    const onDesconciliar = vi.fn()
+    const onReversar = vi.fn()
+    const row = buildRow({
+      id: 'mov-xyz',
+      validado: 1,
+      reversado: 0,
+      origen: 'PAGO_PROVEEDOR',
+      onDesconciliar,
+      onReversar,
+    })
+
+    const { default: userEvent } = await import('@testing-library/user-event')
+    render(<MovimientosTable movimientos={[row]} modo="historico" />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Desconciliar' }))
+
+    expect(onDesconciliar).toHaveBeenCalledTimes(1)
+    expect(onDesconciliar).toHaveBeenCalledWith('mov-xyz')
+    expect(onReversar).not.toHaveBeenCalled()
   })
 })
 

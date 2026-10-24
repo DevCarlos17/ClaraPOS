@@ -34,10 +34,12 @@ import {
   useMovCajaFuerteFiltrados,
   type MovCajaFuerte,
 } from '../hooks/use-mov-caja-fuerte'
-import { useTraspasos, reversarTraspaso, findTraspasoByMovId, validarTraspaso, type TraspasoEnriquecido } from '../hooks/use-traspasos'
+import { useTraspasos, reversarTraspaso, findTraspasoByMovId, validarTraspaso, desvalidarTraspaso, type TraspasoEnriquecido } from '../hooks/use-traspasos'
 import {
   validarMovBancario,
   validarMovCajaFuerte,
+  desconciliarMovBancario,
+  desconciliarMovCajaFuerte,
 } from '../hooks/use-conciliacion-tesoreria'
 import { CuentasOverview } from './cuentas-overview'
 import { resolverCuentaSeleccionadaViva } from '../utils/resolver-cuenta-seleccionada-viva'
@@ -64,6 +66,7 @@ function toMovRow(
   mov: MovBancario | MovCajaFuerte,
   onValidar?: (id: string) => void,
   onReversar?: (id: string) => void,
+  onDesconciliar?: (id: string) => void,
 ): MovimientoTableRow {
   return {
     id: mov.id,
@@ -79,6 +82,7 @@ function toMovRow(
     reversado: mov.reversado,
     onValidar,
     onReversar,
+    onDesconciliar,
   }
 }
 
@@ -336,7 +340,7 @@ export function ConciliacionTesoreria() {
     }
   }
 
-  async function handleDesconciliarMov(id: string) {
+  async function handleReversarHistorico(id: string) {
     if (!selectedCuenta || !user?.empresa_id) return
 
     if (selectedCuenta.tipo === 'BANCO') {
@@ -359,6 +363,36 @@ export function ConciliacionTesoreria() {
       } else {
         setTraspasoIdParaReversar(null)
       }
+    }
+  }
+
+  async function handleDesconciliarHistorico(id: string) {
+    if (!selectedCuenta || !user?.empresa_id) return
+
+    try {
+      const mov =
+        selectedCuenta.tipo === 'BANCO'
+          ? historicoBancoResult.data.find((m) => m.id === id)
+          : historicoCajaResult.data.find((m) => m.id === id)
+      if (!mov) return
+
+      if (mov.origen === 'TRASPASO') {
+        const traspasoId = await findTraspasoByMovId(id, user.empresa_id)
+        if (traspasoId) {
+          await desvalidarTraspaso(traspasoId, user.empresa_id)
+          toast.success('Traspaso desconciliado en ambas cuentas')
+          return
+        }
+      }
+
+      if (selectedCuenta.tipo === 'BANCO') {
+        await desconciliarMovBancario(id, user.empresa_id)
+      } else {
+        await desconciliarMovCajaFuerte(id, user.empresa_id)
+      }
+      toast.success('Movimiento desconciliado')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al desconciliar')
     }
   }
 
@@ -389,7 +423,7 @@ export function ConciliacionTesoreria() {
   )
 
   const historicoMovRows: MovimientoTableRow[] = historicoResult.data.map((mov) =>
-    toMovRow(mov, undefined, handleDesconciliarMov)
+    toMovRow(mov, undefined, handleReversarHistorico, handleDesconciliarHistorico)
   )
 
   // ─── Helpers de exportación ──────────────────────────────────
