@@ -837,6 +837,11 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     // 5. Por cada pago: calcular monto_usd e insertar
     let totalAbonadoUsd = new Decimal(0)
     const isSafWithAssignments = discrepancy?.mode === 'SAF' && !!discrepancy.invoiceAssignments?.length
+    // Trazabilidad ingreso <-> pago (change trazabilidad-pago-en-venta-simple):
+    // correlacion paralela a `pagos[]`, un slot por iteracion (incl. `null` en
+    // el branch de monto capeado a cero) para que el INDICE nunca se desaliene
+    // entre este loop (Paso 5) y el de Paso 8, que consume `pagoIdsPorPago[i]`.
+    const pagoIdsPorPago: Array<{ pagoId: string; montoUsd: Decimal } | null> = []
     for (const pago of pagos) {
       const pagoId = uuidv4()
       const montoUsd = pago.moneda === 'BS' ? bsToUsd(pago.monto, tasa) : new Decimal(pago.monto)
@@ -858,6 +863,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       // No insertar si el monto capeado es cero (factura ya cubierta por pagos anteriores)
       if (pagoMonto.lte(new Decimal('0.001'))) {
         totalAbonadoUsd = totalAbonadoUsd.plus(isSafWithAssignments ? pagoMontoUsd : montoUsd)
+        pagoIdsPorPago.push(null)
         continue
       }
 
@@ -881,6 +887,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           usuario_id,
         ]
       )
+      pagoIdsPorPago.push({ pagoId, montoUsd: pagoMontoUsd })
 
       if (montoMovVenta.gt(0)) {
         const movMetodoId = uuidv4()
@@ -1715,7 +1722,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
       // Resolver banco_empresa_id por metodo de cobro para contabilidad y movimientos bancarios
       const pagosContadoContab: Array<{ monto_usd: number; banco_empresa_id: string | null }> = []
-      for (const pago of pagos) {
+      for (const [i, pago] of pagos.entries()) {
         const montoUsd = pago.moneda === 'BS' ? bsToUsd(pago.monto, tasa).toNumber() : pago.monto
 
         // Fetch metodo: banco_empresa_id + deposito_directo
@@ -1787,6 +1794,21 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
             [toStorageString(saldoNuevo), now, bancoId]
           )
+
+          // Trazabilidad ingreso <-> pago (change trazabilidad-pago-en-venta-simple):
+          // tabla puente append-only que conecta este INGRESO bancario directo
+          // con el pago que representa. Mismo shape que `use-cxc.ts`
+          // (aplicarPagoFacturaEnTx). `pagoIdsPorPago[i]` es `null` cuando Paso 5
+          // capeo este leg a cero (modo SAF) — ese INGRESO queda LEGACY (diferido,
+          // ver design.md), sin fila puente.
+          const correlacion = pagoIdsPorPago[i]
+          if (correlacion) {
+            await tx.execute(
+              `INSERT INTO movimientos_bancarios_pagos (id, empresa_id, ingreso_id, pago_id, monto_aplicado_usd, created_at, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              [uuidv4(), empresa_id, movBancoId, correlacion.pagoId, toStorageString(correlacion.montoUsd), now, usuario_id]
+            )
+          }
         }
       }
 

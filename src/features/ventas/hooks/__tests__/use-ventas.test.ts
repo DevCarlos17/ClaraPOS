@@ -171,6 +171,24 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
      * Ausente/clave sin valor = sin fila (dispara `throw new Error('sin-cuenta')`).
      */
     cuentasConfig?: { gastos_generales?: string; PERDIDA_DIFERENCIAL_CAMBIARIO?: string }
+    /**
+     * Paso 8 (trazabilidad-pago-en-venta-simple): `banco_empresa_id`/`deposito_directo`
+     * por `metodo_cobro_id`, leido por `SELECT banco_empresa_id, deposito_directo FROM
+     * metodos_cobro WHERE id = ?`. Metodo ausente en el mapa = `{ banco_empresa_id: null,
+     * deposito_directo: 0 }` (mismo default que el hardcode anterior — preserva
+     * regresion para fixtures pre-existentes que no conocen este campo).
+     */
+    metodosCobro?: Record<string, { banco_empresa_id: string | null; deposito_directo: number }>
+    /**
+     * Paso 8, rama de deposito directo: `saldo_actual`/`moneda_id` del banco, leido por
+     * `SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ?`.
+     */
+    bancosEmpresa?: Record<string, { saldo_actual: string; moneda_id: string }>
+    /**
+     * `codigo_iso` por `moneda_id` de banco, leido por `SELECT codigo_iso FROM monedas
+     * WHERE id = ?`. Default: `'moneda-bs'` -> `'VES'`, cualquier otro id -> `'USD'`.
+     */
+    monedasCodigoIso?: Record<string, string>
   }
 
   /**
@@ -254,7 +272,19 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
             return { rows: { length: 1, item: () => ({ stock: p?.stock ?? '0.000' }) } }
           }
           if (sql.startsWith('SELECT banco_empresa_id, deposito_directo FROM metodos_cobro')) {
-            return { rows: { length: 1, item: () => ({ banco_empresa_id: null, deposito_directo: 0 }) } }
+            const metodoId = params[0] as string
+            const row = opts.metodosCobro?.[metodoId] ?? { banco_empresa_id: null, deposito_directo: 0 }
+            return { rows: { length: 1, item: () => row } }
+          }
+          if (sql.startsWith('SELECT saldo_actual, moneda_id FROM bancos_empresa')) {
+            const bancoId = params[0] as string
+            const row = opts.bancosEmpresa?.[bancoId]
+            return row ? { rows: { length: 1, item: () => row } } : { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('SELECT codigo_iso FROM monedas WHERE id = ?')) {
+            const monedaId = params[0] as string
+            const codigo = opts.monedasCodigoIso?.[monedaId] ?? (monedaId === 'moneda-bs' ? 'VES' : 'USD')
+            return { rows: { length: 1, item: () => ({ codigo_iso: codigo }) } }
           }
           if (sql.startsWith('SELECT r.producto_id, r.cantidad, p.stock, p.nombre FROM recetas')) {
             const servicioId = params[0] as string
@@ -419,7 +449,19 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
             return { rows: { length: 1, item: () => ({ stock: p?.stock ?? '0.000' }) } }
           }
           if (sql.startsWith('SELECT banco_empresa_id, deposito_directo FROM metodos_cobro')) {
-            return { rows: { length: 1, item: () => ({ banco_empresa_id: null, deposito_directo: 0 }) } }
+            const metodoId = params[0] as string
+            const row = opts.metodosCobro?.[metodoId] ?? { banco_empresa_id: null, deposito_directo: 0 }
+            return { rows: { length: 1, item: () => row } }
+          }
+          if (sql.startsWith('SELECT saldo_actual, moneda_id FROM bancos_empresa')) {
+            const bancoId = params[0] as string
+            const row = opts.bancosEmpresa?.[bancoId]
+            return row ? { rows: { length: 1, item: () => row } } : { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('SELECT codigo_iso FROM monedas WHERE id = ?')) {
+            const monedaId = params[0] as string
+            const codigo = opts.monedasCodigoIso?.[monedaId] ?? (monedaId === 'moneda-bs' ? 'VES' : 'USD')
+            return { rows: { length: 1, item: () => ({ codigo_iso: codigo }) } }
           }
           if (sql.startsWith('SELECT r.producto_id, r.cantidad, p.stock, p.nombre FROM recetas')) {
             const servicioId = params[0] as string
@@ -1437,6 +1479,253 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       // 20 (anterior) + 30 (FAC, monto total — sin SAF que lo netee) = 50
       expect(facClienteUpdate!.params).toContain('50.00000000')
       expect(clienteState.saldo_pendiente_usd).toBe('50.00000000')
+    })
+  })
+
+  describe('crearVenta — trazabilidad movimientos_bancarios_pagos (capa simple, change trazabilidad-pago-en-venta-simple)', () => {
+    function pagoDirectoFixture() {
+      return {
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '100.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '100.000' },
+      }
+    }
+
+    it('pago directo simple (100% transferencia, deposito_directo=1): 1 fila puente con pago_id/monto_aplicado_usd correctos', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoDirectoFixture(),
+        metodosCobro: { 'metodo-transferencia': { banco_empresa_id: 'banco-1', deposito_directo: 1 } },
+        bancosEmpresa: { 'banco-1': { saldo_actual: '0.00000000', moneda_id: 'moneda-usd' } },
+      })
+
+      await crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 3, precio_unitario_usd: 10 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-transferencia', moneda: 'USD', monto: 30 })],
+        })
+      )
+
+      const pagoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO pagos'))
+      expect(pagoInsert).toBeDefined()
+      const pagoId = pagoInsert!.params[0] as string
+
+      const movBancoInsert = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_bancarios') && !c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos')
+      )
+      expect(movBancoInsert).toBeDefined()
+      const movBancoId = movBancoInsert!.params[0] as string
+
+      const puenteInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+      expect(puenteInserts).toHaveLength(1)
+      const [id, empresaId, ingresoId, pagoIdPuente, montoAplicado] = puenteInserts[0]!.params as string[]
+      expect(id).toBeTruthy()
+      expect(empresaId).toBe('emp-1')
+      expect(ingresoId).toBe(movBancoId)
+      expect(pagoIdPuente).toBe(pagoId)
+      expect(montoAplicado).toBe(toStorageString(30))
+    })
+
+    it('pago mixto (transferencia $60 + efectivo $40): exactamente 1 fila puente para el leg directo, 0 para el leg efectivo', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoDirectoFixture(),
+        metodosCobro: {
+          'metodo-transferencia': { banco_empresa_id: 'banco-1', deposito_directo: 1 },
+          'metodo-efectivo': { banco_empresa_id: null, deposito_directo: 0 },
+        },
+        bancosEmpresa: { 'banco-1': { saldo_actual: '0.00000000', moneda_id: 'moneda-usd' } },
+      })
+
+      await crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 10, precio_unitario_usd: 10 })],
+          pagos: [
+            pago({ metodo_cobro_id: 'metodo-transferencia', moneda: 'USD', monto: 60 }),
+            pago({ metodo_cobro_id: 'metodo-efectivo', moneda: 'USD', monto: 40 }),
+          ],
+        })
+      )
+
+      const pagoInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO pagos'))
+      expect(pagoInserts).toHaveLength(2)
+      const pagoTransferencia = pagoInserts.find((c) => c.params.includes('metodo-transferencia'))
+      expect(pagoTransferencia).toBeDefined()
+      const pagoTransferenciaId = pagoTransferencia!.params[0] as string
+
+      const puenteInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+      expect(puenteInserts).toHaveLength(1)
+      expect(puenteInserts[0]!.params[3]).toBe(pagoTransferenciaId)
+      expect(puenteInserts[0]!.params[4]).toBe(toStorageString(60))
+    })
+
+    it('100% efectivo (deposito_directo=0): 0 filas puente, crearVenta no revienta', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoDirectoFixture(),
+        metodosCobro: { 'metodo-efectivo': { banco_empresa_id: null, deposito_directo: 0 } },
+      })
+
+      await crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 5, precio_unitario_usd: 10 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-efectivo', moneda: 'USD', monto: 50 })],
+        })
+      )
+
+      const puenteInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+      expect(puenteInserts).toHaveLength(0)
+      const pagoInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO pagos'))
+      expect(pagoInserts).toHaveLength(1)
+    })
+
+    it('monto capeado, no recalculado (modo SAF-FACTURAS): monto_aplicado_usd del puente == pagoMontoUsd capeado de Paso 5, NO el monto crudo que Paso 8 recalcula', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoDirectoFixture(),
+        metodosCobro: { 'metodo-transferencia': { banco_empresa_id: 'banco-1', deposito_directo: 1 } },
+        bancosEmpresa: { 'banco-1': { saldo_actual: '0.00000000', moneda_id: 'moneda-usd' } },
+      })
+
+      await crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          cliente_id: 'cliente-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          // Pago de $15 sobre una factura de $10: el excedente ($5) se desvia via
+          // SAF-FACTURAS (invoiceAssignments) sin ejecutar su machinery real —
+          // discrepancy.montoUsd=0 evita por completo el switch de Paso 7c (gate
+          // `discrepancy.montoUsd > 0.001`), y el item de invoiceAssignments con
+          // montoUsd=0.0001 (<=0.001) hace que, si el switch SI corriera, el loop
+          // de Paso A lo saltee (`continue`) sin llamar aplicarPagoFacturaEnTx.
+          // Solo se necesita `isSafWithAssignments=true` (longitud > 0) para que
+          // Paso 5 capee pagoMontoUsd a $10 (el monto REAL insertado en pagos).
+          pagos: [pago({ metodo_cobro_id: 'metodo-transferencia', moneda: 'USD', monto: 15 })],
+          discrepancy: {
+            mode: 'SAF',
+            montoUsd: 0,
+            montoBs: 0,
+            clienteId: 'cliente-1',
+            invoiceAssignments: [{ ventaId: 'venta-otra', nroFactura: 'F-OTRA', montoUsd: 0.0001 }],
+          },
+        })
+      )
+
+      const pagoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO pagos'))
+      expect(pagoInsert).toBeDefined()
+      expect(pagoInsert!.params[7]).toBe(toStorageString(10)) // monto_usd capeado, no 15
+
+      const movBancoInsert = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_bancarios') && !c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos')
+      )
+      expect(movBancoInsert).toBeDefined()
+      // Paso 8 recalcula el monto crudo sin capear — comportamiento preexistente, sin cambios.
+      expect(movBancoInsert!.params[3]).toBe(toStorageString(15))
+
+      const puenteInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+      expect(puenteInserts).toHaveLength(1)
+      // El puente usa el monto CAPEADO de Paso 5 (10), no el crudo de Paso 8 (15).
+      expect(puenteInserts[0]!.params[4]).toBe(toStorageString(10))
+    })
+
+    it('cap SAF a cero (branch continue de Paso 5): el leg capeado a cero no genera fila puente, pero el leg valido de la MISMA venta SI genera la suya (el indice no se desalinea)', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoDirectoFixture(),
+        metodosCobro: {
+          'metodo-transferencia': { banco_empresa_id: 'banco-1', deposito_directo: 1 },
+        },
+        bancosEmpresa: { 'banco-1': { saldo_actual: '0.00000000', moneda_id: 'moneda-usd' } },
+      })
+
+      await crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          cliente_id: 'cliente-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          // leg 0: cubre el 100% de la factura ($10) -> genera pagos+puente normal.
+          // leg 1: excedente SAF ($5) sobre una factura YA cubierta -> Paso 5 capea
+          // su pagoMontoUsd a 0 (totalUsd - totalAbonadoUsd = 0) -> push(null),
+          // continue -> NO inserta en pagos NI en el puente. Paso 8 SI crea su
+          // propio movimientos_bancarios (monto crudo sin capear, comportamiento
+          // preexistente — ingreso LEGACY documentado en design.md) para AMBOS
+          // legs — el punto del test es que el puente NO se crea para el leg nulo
+          // y que el leg valido (indice 0) sigue correlacionando correctamente.
+          pagos: [
+            pago({ metodo_cobro_id: 'metodo-transferencia', moneda: 'USD', monto: 10 }),
+            pago({ metodo_cobro_id: 'metodo-transferencia', moneda: 'USD', monto: 5 }),
+          ],
+          discrepancy: {
+            mode: 'SAF',
+            montoUsd: 0,
+            montoBs: 0,
+            clienteId: 'cliente-1',
+            invoiceAssignments: [{ ventaId: 'venta-otra', nroFactura: 'F-OTRA', montoUsd: 0.0001 }],
+          },
+        })
+      )
+
+      const pagoInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO pagos'))
+      expect(pagoInserts).toHaveLength(1) // el leg capeado a cero NUNCA inserta en pagos
+      const pagoValidoId = pagoInserts[0]!.params[0] as string
+
+      const movBancoInserts = calls.filter(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_bancarios') && !c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos')
+      )
+      expect(movBancoInserts).toHaveLength(2) // Paso 8 SI crea 2 ingresos (comportamiento preexistente, sin cambios)
+
+      const puenteInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+      expect(puenteInserts).toHaveLength(1) // solo el leg valido genera puente
+      expect(puenteInserts[0]!.params[2]).toBe(movBancoInserts[0]!.params[0]) // ingreso_id = el PRIMER ingreso (leg 0)
+      expect(puenteInserts[0]!.params[3]).toBe(pagoValidoId)
+      expect(puenteInserts[0]!.params[4]).toBe(toStorageString(10))
+    })
+
+    it('[regresion] las sentencias preexistentes de crearVenta (INSERT pagos, INSERT movimientos_bancarios, UPDATE bancos_empresa) mantienen su SQL/params exactos tras el wiring, y el puente nunca reordena nada', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoDirectoFixture(),
+        metodosCobro: { 'metodo-transferencia': { banco_empresa_id: 'banco-1', deposito_directo: 1 } },
+        bancosEmpresa: { 'banco-1': { saldo_actual: '0.00000000', moneda_id: 'moneda-usd' } },
+      })
+
+      await crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 3, precio_unitario_usd: 10 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-transferencia', moneda: 'USD', monto: 30 })],
+        })
+      )
+
+      const pagoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO pagos'))
+      expect(pagoInsert!.sql).toContain(
+        'INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, is_reversed)'
+      )
+      expect(pagoInsert!.params).toHaveLength(14)
+
+      const movMetodoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro'))
+      expect(movMetodoInsert).toBeDefined()
+
+      const movBancoInsert = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_bancarios') && !c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos')
+      )
+      expect(movBancoInsert!.sql).toContain(
+        "VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, ?, ?, ?, 'VENTA', ?, 0, ?, ?, ?, ?)"
+      )
+      expect(movBancoInsert!.params).toHaveLength(12)
+
+      const updateBancoCall = calls.find((c) => c.sql.startsWith('UPDATE bancos_empresa SET saldo_actual'))
+      expect(updateBancoCall).toBeDefined()
+
+      const kardexInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+      expect(kardexInsert).toBeDefined()
+
+      // El puente (si existe) se inserta ESTRICTAMENTE despues del UPDATE
+      // bancos_empresa — prueba de aditividad: ninguna sentencia preexistente
+      // fue reordenada para insertar el puente.
+      const updateBancoIdx = calls.indexOf(updateBancoCall!)
+      const puenteIdx = calls.findIndex((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+      if (puenteIdx !== -1) {
+        expect(puenteIdx).toBeGreaterThan(updateBancoIdx)
+      }
     })
   })
 })
