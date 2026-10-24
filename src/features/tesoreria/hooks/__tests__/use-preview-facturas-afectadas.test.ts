@@ -28,7 +28,15 @@ beforeEach(() => {
 describe('previewFacturasAfectadas — preview read-only de facturas afectadas por reverso de tesoreria', () => {
   it('escenario simple: 1 fila puente hacia 1 pago con venta_id no-NULL -> 1 factura directa', async () => {
     mockedGetAll.mockResolvedValueOnce([
-      { pago_id: 'pago-1', monto_aplicado_usd: '50.00000000', venta_id: 'venta-1', nro_factura: 'F-100' },
+      {
+        pago_id: 'pago-1',
+        monto_aplicado_usd: '50.00000000',
+        venta_id: 'venta-1',
+        nro_factura: 'F-100',
+        tasa: '40.0000',
+        metodo_nombre: 'EFECTIVO USD',
+        codigo_iso: 'USD',
+      },
     ])
     mockedDetectarLoteSafDePago.mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
 
@@ -36,7 +44,15 @@ describe('previewFacturasAfectadas — preview read-only de facturas afectadas p
 
     expect(resultado.estado).toBe('OK')
     expect(resultado.facturasDirectas).toEqual([
-      { ventaId: 'venta-1', nroFactura: 'F-100', montoAplicadoUsd: 50 },
+      {
+        ventaId: 'venta-1',
+        nroFactura: 'F-100',
+        montoAplicadoUsd: 50,
+        montoAplicadoNativo: 2000,
+        monedaCodigo: 'USD',
+        metodoNombre: 'EFECTIVO USD',
+        tasa: 40,
+      },
     ])
     expect(resultado.facturasSaf).toEqual([])
     expect(resultado.totalUsd).toBe(50)
@@ -49,10 +65,76 @@ describe('previewFacturasAfectadas — preview read-only de facturas afectadas p
     expect(mockedDetectarLoteSafDePago).toHaveBeenCalledWith('emp-1', 'pago-1')
   })
 
+  it('factura directa incluye moneda nativa y metodo (deriva montoAplicadoNativo = montoAplicadoUsd * tasa)', async () => {
+    mockedGetAll.mockResolvedValueOnce([
+      {
+        pago_id: 'pago-x',
+        monto_aplicado_usd: '1.00000000',
+        venta_id: 'venta-x',
+        nro_factura: 'F-X',
+        tasa: '500.0000',
+        metodo_nombre: 'BANESCO PAGO MOVIL',
+        codigo_iso: 'VES',
+      },
+    ])
+    mockedDetectarLoteSafDePago.mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
+
+    const resultado = await previewFacturasAfectadas('emp-1', 'ingreso-x')
+
+    expect(resultado.facturasDirectas).toEqual([
+      {
+        ventaId: 'venta-x',
+        nroFactura: 'F-X',
+        montoAplicadoUsd: 1,
+        montoAplicadoNativo: 500,
+        monedaCodigo: 'VES',
+        metodoNombre: 'BANESCO PAGO MOVIL',
+        tasa: 500,
+      },
+    ])
+  })
+
+  it('monto nativo se deriva de montoAplicadoUsd*tasa de la fila puente, NO de pagos.monto completo', async () => {
+    mockedGetAll.mockResolvedValueOnce([
+      {
+        pago_id: 'pago-parcial',
+        monto_aplicado_usd: '1.00000000', // fila puente: solo $1 aplicado de este abono
+        monto: '1000.00000000', // monto COMPLETO del pago (decoy — no debe leerse)
+        venta_id: 'venta-parcial',
+        nro_factura: 'F-PARCIAL',
+        tasa: '500.0000',
+        metodo_nombre: 'BANESCO PAGO MOVIL',
+        codigo_iso: 'VES',
+      },
+    ])
+    mockedDetectarLoteSafDePago.mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
+
+    const resultado = await previewFacturasAfectadas('emp-1', 'ingreso-parcial')
+
+    expect(resultado.facturasDirectas[0]?.montoAplicadoNativo).toBe(500)
+    expect(resultado.facturasDirectas[0]?.montoAplicadoNativo).not.toBe(1000)
+  })
+
   it('escenario abono-global: ingreso 38201beb con 2 filas puente ($1 c/u) -> facturas 8954d635/ab7d1bab, total=$2', async () => {
     mockedGetAll.mockResolvedValueOnce([
-      { pago_id: 'pago-A', monto_aplicado_usd: '1.00000000', venta_id: '8954d635', nro_factura: 'F-A' },
-      { pago_id: 'pago-B', monto_aplicado_usd: '1.00000000', venta_id: 'ab7d1bab', nro_factura: 'F-B' },
+      {
+        pago_id: 'pago-A',
+        monto_aplicado_usd: '1.00000000',
+        venta_id: '8954d635',
+        nro_factura: 'F-A',
+        tasa: '40.0000',
+        metodo_nombre: 'ZELLE',
+        codigo_iso: 'USD',
+      },
+      {
+        pago_id: 'pago-B',
+        monto_aplicado_usd: '1.00000000',
+        venta_id: 'ab7d1bab',
+        nro_factura: 'F-B',
+        tasa: '40.0000',
+        metodo_nombre: 'ZELLE',
+        codigo_iso: 'USD',
+      },
     ])
     mockedDetectarLoteSafDePago.mockResolvedValue({ generatedLote: false, facturasAfectadas: [] })
 
@@ -60,8 +142,24 @@ describe('previewFacturasAfectadas — preview read-only de facturas afectadas p
 
     expect(resultado.estado).toBe('OK')
     expect(resultado.facturasDirectas).toEqual([
-      { ventaId: '8954d635', nroFactura: 'F-A', montoAplicadoUsd: 1 },
-      { ventaId: 'ab7d1bab', nroFactura: 'F-B', montoAplicadoUsd: 1 },
+      {
+        ventaId: '8954d635',
+        nroFactura: 'F-A',
+        montoAplicadoUsd: 1,
+        montoAplicadoNativo: 40,
+        monedaCodigo: 'USD',
+        metodoNombre: 'ZELLE',
+        tasa: 40,
+      },
+      {
+        ventaId: 'ab7d1bab',
+        nroFactura: 'F-B',
+        montoAplicadoUsd: 1,
+        montoAplicadoNativo: 40,
+        monedaCodigo: 'USD',
+        metodoNombre: 'ZELLE',
+        tasa: 40,
+      },
     ])
     expect(resultado.totalUsd).toBe(2)
     expect(mockedDetectarLoteSafDePago).toHaveBeenCalledTimes(2)
@@ -69,8 +167,20 @@ describe('previewFacturasAfectadas — preview read-only de facturas afectadas p
 
   it('escenario SAF: 1 pago sin venta_id cuyo detectarLoteSafDePago devuelve generatedLote=true -> factura etiquetada via facturasSaf, distinta de facturasDirectas', async () => {
     mockedGetAll.mockResolvedValueOnce([
-      { pago_id: 'pago-anticipo', monto_aplicado_usd: '30.00000000', venta_id: null, nro_factura: null },
+      {
+        pago_id: 'pago-anticipo',
+        monto_aplicado_usd: '30.00000000',
+        venta_id: null,
+        nro_factura: null,
+        tasa: '500.0000',
+        metodo_nombre: 'BANESCO PAGO MOVIL',
+        codigo_iso: 'VES',
+      },
     ])
+    // detectarLoteSafDePago sigue devolviendo SOLO {ventaId, nroFactura,
+    // montoAplicadoUsd} — moneda/metodo/tasa NO vienen de aqui (prueba de
+    // que el enriquecimiento ocurre en el spread del loop, con los campos
+    // de la FILA PUENTE, no modificando este mock/contrato).
     mockedDetectarLoteSafDePago.mockResolvedValueOnce({
       generatedLote: true,
       loteId: 'lote-1',
@@ -83,7 +193,17 @@ describe('previewFacturasAfectadas — preview read-only de facturas afectadas p
     const resultado = await previewFacturasAfectadas('emp-1', 'ingreso-saf')
 
     expect(resultado.facturasDirectas).toEqual([])
-    expect(resultado.facturasSaf).toEqual([{ ventaId: 'venta-D', nroFactura: 'F-D', montoAplicadoUsd: 30 }])
+    expect(resultado.facturasSaf).toEqual([
+      {
+        ventaId: 'venta-D',
+        nroFactura: 'F-D',
+        montoAplicadoUsd: 30,
+        montoAplicadoNativo: 15000,
+        monedaCodigo: 'VES',
+        metodoNombre: 'BANESCO PAGO MOVIL',
+        tasa: 500,
+      },
+    ])
     expect(resultado.totalUsd).toBe(30)
     expect(mockedDetectarLoteSafDePago).toHaveBeenCalledWith('emp-1', 'pago-anticipo')
   })
@@ -95,7 +215,15 @@ describe('previewFacturasAfectadas — preview read-only de facturas afectadas p
     // enviado contiene la clausula, y que el resultado se deriva exactamente
     // de la fila sobreviviente (no un hardcode).
     mockedGetAll.mockResolvedValueOnce([
-      { pago_id: 'pago-vivo', monto_aplicado_usd: '20.00000000', venta_id: 'venta-vivo', nro_factura: 'F-VIVO' },
+      {
+        pago_id: 'pago-vivo',
+        monto_aplicado_usd: '20.00000000',
+        venta_id: 'venta-vivo',
+        nro_factura: 'F-VIVO',
+        tasa: '40.0000',
+        metodo_nombre: 'EFECTIVO USD',
+        codigo_iso: 'USD',
+      },
     ])
     mockedDetectarLoteSafDePago.mockResolvedValueOnce({ generatedLote: false, facturasAfectadas: [] })
 
@@ -105,7 +233,15 @@ describe('previewFacturasAfectadas — preview read-only de facturas afectadas p
     expect(sql).toContain('is_reversed')
 
     expect(resultado.facturasDirectas).toEqual([
-      { ventaId: 'venta-vivo', nroFactura: 'F-VIVO', montoAplicadoUsd: 20 },
+      {
+        ventaId: 'venta-vivo',
+        nroFactura: 'F-VIVO',
+        montoAplicadoUsd: 20,
+        montoAplicadoNativo: 800,
+        monedaCodigo: 'USD',
+        metodoNombre: 'EFECTIVO USD',
+        tasa: 40,
+      },
     ])
     expect(resultado.totalUsd).toBe(20)
   })

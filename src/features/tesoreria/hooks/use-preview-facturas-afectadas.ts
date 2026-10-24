@@ -12,6 +12,19 @@ export interface FacturaAfectadaPreview {
   ventaId: string
   nroFactura: string
   montoAplicadoUsd: number
+  /**
+   * Monto equivalente en la moneda nativa del pago (`montoAplicadoUsd *
+   * tasa`), NUNCA leido de `pagos.monto` (ese es el monto COMPLETO del
+   * pago, no el aplicado a esta fila puente especifica — ver docstring de
+   * `previewFacturasAfectadas`).
+   */
+  montoAplicadoNativo: number
+  /** `monedas.codigo_iso` crudo (p.ej. 'VES', 'USD'), tomado de la fila puente. */
+  monedaCodigo: string
+  /** `metodos_cobro.nombre` del pago que origino esta fila puente. */
+  metodoNombre: string
+  /** Tasa de cambio vigente al momento del pago (`pagos.tasa`). */
+  tasa: number
 }
 
 export type EstadoPreviewFacturasAfectadas = 'OK' | 'LEGACY'
@@ -35,6 +48,12 @@ interface BridgeRow {
   monto_aplicado_usd: string
   venta_id: string | null
   nro_factura: string | null
+  /** `pagos.tasa` — tasa vigente al momento del pago. */
+  tasa: string
+  /** `metodos_cobro.nombre`, via JOIN `pagos.metodo_cobro_id`. */
+  metodo_nombre: string
+  /** `monedas.codigo_iso`, via LEFT JOIN `pagos.moneda_id`. */
+  codigo_iso: string | null
 }
 
 /**
@@ -66,10 +85,13 @@ export async function previewFacturasAfectadas(
   ingresoId: string
 ): Promise<PreviewFacturasAfectadas> {
   const bridgeRows = await db.getAll<BridgeRow>(
-    `SELECT mbp.pago_id, mbp.monto_aplicado_usd, p.venta_id, v.nro_factura
+    `SELECT mbp.pago_id, mbp.monto_aplicado_usd, p.venta_id, v.nro_factura,
+            p.tasa, mc.nombre AS metodo_nombre, mon.codigo_iso
      FROM movimientos_bancarios_pagos mbp
      JOIN pagos p ON p.id = mbp.pago_id
      LEFT JOIN ventas v ON v.id = p.venta_id
+     JOIN metodos_cobro mc ON mc.id = p.metodo_cobro_id
+     LEFT JOIN monedas mon ON mon.id = p.moneda_id
      WHERE mbp.ingreso_id = ? AND mbp.empresa_id = ? AND (p.is_reversed IS NULL OR p.is_reversed = 0)`,
     [ingresoId, empresaId]
   )
@@ -82,17 +104,44 @@ export async function previewFacturasAfectadas(
   const facturasSaf: FacturaAfectadaPreview[] = []
 
   for (const row of bridgeRows) {
+    // Campos de moneda/metodo/tasa de la FILA PUENTE — se derivan una sola
+    // vez por fila y se reusan tanto para el push directo como para el
+    // enriquecimiento de las entradas SAF de esta misma fila (ver spec
+    // Requirement "Resolucion de facturas via SAF": ambos arreglos reciben
+    // los mismos campos, tomados del mismo pago_id, nunca de
+    // `detectarLoteSafDePago`).
+    const montoAplicadoUsd = new Decimal(row.monto_aplicado_usd)
+    const tasa = new Decimal(row.tasa)
+    const montoAplicadoNativo = montoAplicadoUsd.times(tasa).toNumber()
+    const monedaCodigo = row.codigo_iso ?? 'USD'
+    const metodoNombre = row.metodo_nombre
+
     if (row.venta_id) {
       facturasDirectas.push({
         ventaId: row.venta_id,
         nroFactura: row.nro_factura ?? '',
-        montoAplicadoUsd: new Decimal(row.monto_aplicado_usd).toNumber(),
+        montoAplicadoUsd: montoAplicadoUsd.toNumber(),
+        montoAplicadoNativo,
+        monedaCodigo,
+        metodoNombre,
+        tasa: tasa.toNumber(),
       })
     }
 
     const detalle = await detectarLoteSafDePago(empresaId, row.pago_id)
     if (detalle.generatedLote) {
-      facturasSaf.push(...detalle.facturasAfectadas)
+      // Enriquecimiento en el SPREAD del loop — `detectarLoteSafDePago`
+      // (reversa-pago-saf.ts) NO se modifica, permanece puro/compartido
+      // con `use-reverso-abono-directo.ts`.
+      facturasSaf.push(
+        ...detalle.facturasAfectadas.map((f) => ({
+          ...f,
+          montoAplicadoNativo,
+          monedaCodigo,
+          metodoNombre,
+          tasa: tasa.toNumber(),
+        }))
+      )
     }
   }
 
