@@ -485,6 +485,74 @@ describe('ReversoModal — panel no muta datos', () => {
   })
 })
 
+describe('ReversoModal — lista de facturas afectadas scrolleable', () => {
+  it('envuelve las filas de facturas en un wrapper con scroll acotado (max-h + overflow-y-auto)', async () => {
+    mockedPreviewFacturasAfectadas.mockResolvedValue({
+      estado: 'OK',
+      facturasDirectas: [
+        {
+          ventaId: 'venta-A',
+          nroFactura: 'F-A',
+          montoAplicadoUsd: 1,
+          montoAplicadoNativo: 500,
+          monedaCodigo: 'VES',
+          metodoNombre: 'BANESCO PAGO MOVIL',
+          tasa: 500,
+        },
+      ],
+      facturasSaf: [],
+      totalUsd: 1,
+    })
+
+    render(
+      <ReversoModal isOpen onClose={vi.fn()} movimiento={movimiento()} monedaSimbolo="$" />
+    )
+
+    await screen.findByText('F-A')
+    const scrollWrapper = screen.getByTestId('preview-facturas-lista-scroll')
+    expect(scrollWrapper.className).toContain('overflow-y-auto')
+    expect(scrollWrapper.className).toContain('max-h-')
+  })
+
+  it('regresion con mas de 5 facturas (3 directas + 3 SAF): "Total afectado" sigue visible y queda FUERA del wrapper de scroll', async () => {
+    const facturaDirecta = (n: number) => ({
+      ventaId: `venta-dir-${n}`,
+      nroFactura: `F-DIR-${n}`,
+      montoAplicadoUsd: 10,
+      montoAplicadoNativo: 5000,
+      monedaCodigo: 'VES',
+      metodoNombre: 'BANESCO PAGO MOVIL',
+      tasa: 500,
+    })
+    const facturaSaf = (n: number) => ({
+      ventaId: `venta-saf-${n}`,
+      nroFactura: `F-SAF-${n}`,
+      montoAplicadoUsd: 5,
+      montoAplicadoNativo: 2500,
+      monedaCodigo: 'VES',
+      metodoNombre: 'BANESCO PAGO MOVIL',
+      tasa: 500,
+    })
+
+    mockedPreviewFacturasAfectadas.mockResolvedValue({
+      estado: 'OK',
+      facturasDirectas: [facturaDirecta(1), facturaDirecta(2), facturaDirecta(3)],
+      facturasSaf: [facturaSaf(1), facturaSaf(2), facturaSaf(3)],
+      totalUsd: 45,
+    })
+
+    render(
+      <ReversoModal isOpen onClose={vi.fn()} movimiento={movimiento()} monedaSimbolo="$" />
+    )
+
+    await screen.findByText('F-DIR-1')
+    expect(screen.getByText('Total afectado')).toBeInTheDocument()
+
+    const scrollWrapper = screen.getByTestId('preview-facturas-lista-scroll')
+    expect(scrollWrapper.textContent).not.toContain('Total afectado')
+  })
+})
+
 // ─── Slice 2b-ii: wiring del submit al orquestador + PIN gate ──────────
 
 describe('ReversoModal — submit, origen TRANSFERENCIA_CLIENTE (orquestador nuevo)', () => {
