@@ -217,7 +217,7 @@ describe('ReversoModal — panel de facturas afectadas, estado OK', () => {
     expect(screen.getByText(/cargando/i)).toBeInTheDocument()
   })
 
-  it('con facturas directas y via SAF: lista ambos grupos distinguidos, cada fila con su nro_factura y monto, y el total', async () => {
+  it('con facturas directas y via SAF: lista ambos grupos distinguidos, cada fila con su nro_factura y monto NATIVO, sin metodo por linea, y el total en moneda nativa', async () => {
     mockedPreviewFacturasAfectadas.mockResolvedValue({
       estado: 'OK',
       facturasDirectas: [
@@ -256,13 +256,81 @@ describe('ReversoModal — panel de facturas afectadas, estado OK', () => {
     // "saldo a favor" — se usa el label especifico del grupo (unico en el
     // DOM) para evitar ambiguedad con ese nuevo mensaje de bloqueo.
     expect(screen.getByText(/afectada por saldo a favor \(saf\)/i)).toBeInTheDocument()
-    expect(screen.getByText('$31.00')).toBeInTheDocument()
-    // Monto dual-moneda (via formatMontoPago) + metodo de pago, uniforme en
-    // ambos arreglos (directa y SAF) — spec Requirement "Renderizado
-    // dual-moneda y metodo de pago en el panel".
-    expect(screen.getAllByText('$1.00 (Bs. 500,00)')).toHaveLength(1)
-    expect(screen.getAllByText('$30.00 (Bs. 15.000,00)')).toHaveLength(1)
-    expect(screen.getAllByText('BANESCO PAGO MOVIL')).toHaveLength(2)
+    // Monto en moneda NATIVA por linea (sin forzar bimonetario) — spec
+    // Requirement MODIFIED "Renderizado de facturas afectadas en el panel".
+    expect(screen.getByText('Bs. 500,00')).toBeInTheDocument()
+    expect(screen.getByText('Bs. 15.000,00')).toBeInTheDocument()
+    // Total afectado en la MISMA moneda nativa (500 + 15000 Bs), no fuerza USD.
+    expect(screen.getByText('Bs. 15.500,00')).toBeInTheDocument()
+    expect(screen.queryByText('$31.00')).not.toBeInTheDocument()
+    // El metodo de pago se movio al header del modal: una sola aparicion
+    // en todo el DOM (la del header), cero repeticiones bajo nro_factura.
+    expect(screen.getAllByText('BANESCO PAGO MOVIL')).toHaveLength(1)
+  })
+
+  it('entrada con monedaCodigo="USD": la linea muestra formatUsd(montoAplicadoUsd), no formatBs', async () => {
+    mockedPreviewFacturasAfectadas.mockResolvedValue({
+      estado: 'OK',
+      facturasDirectas: [
+        {
+          ventaId: 'venta-B',
+          nroFactura: 'F-B',
+          montoAplicadoUsd: 25,
+          montoAplicadoNativo: 25,
+          monedaCodigo: 'USD',
+          metodoNombre: 'ZELLE',
+          tasa: 1,
+        },
+      ],
+      facturasSaf: [],
+      totalUsd: 25,
+    })
+
+    render(
+      <ReversoModal isOpen onClose={vi.fn()} movimiento={movimiento()} monedaSimbolo="$" />
+    )
+
+    expect(await screen.findByText('F-B')).toBeInTheDocument()
+    // "$25.00" aparece dos veces: la linea de la factura y "Total afectado"
+    // (unica entrada, mismo monto nativo) — ninguna en Bs.
+    expect(screen.getAllByText('$25.00')).toHaveLength(2)
+    expect(screen.queryByText(/Bs\./)).not.toBeInTheDocument()
+  })
+
+  it('"Total afectado" en moneda nativa: 2 entradas en Bs (500+300) muestra formatBs(800), no fuerza USD', async () => {
+    mockedPreviewFacturasAfectadas.mockResolvedValue({
+      estado: 'OK',
+      facturasDirectas: [
+        {
+          ventaId: 'venta-A',
+          nroFactura: 'F-A',
+          montoAplicadoUsd: 1,
+          montoAplicadoNativo: 500,
+          monedaCodigo: 'VES',
+          metodoNombre: 'BANESCO PAGO MOVIL',
+          tasa: 500,
+        },
+      ],
+      facturasSaf: [
+        {
+          ventaId: 'venta-D',
+          nroFactura: 'F-D',
+          montoAplicadoUsd: 0.6,
+          montoAplicadoNativo: 300,
+          monedaCodigo: 'VES',
+          metodoNombre: 'BANESCO PAGO MOVIL',
+          tasa: 500,
+        },
+      ],
+      totalUsd: 1.6,
+    })
+
+    render(
+      <ReversoModal isOpen onClose={vi.fn()} movimiento={movimiento()} monedaSimbolo="$" />
+    )
+
+    expect(await screen.findByText('Bs. 800,00')).toBeInTheDocument()
+    expect(screen.queryByText('$1.60')).not.toBeInTheDocument()
   })
 
   it('estado OK con 0 facturas (sin facturas asociadas, trazabilidad confirmada): copy distinto de LEGACY', async () => {
@@ -297,6 +365,94 @@ describe('ReversoModal — panel de facturas afectadas, estado LEGACY', () => {
 
     expect(await screen.findByText(/sin trazabilidad/i)).toBeInTheDocument()
     expect(screen.queryByText(/no se encontraron facturas/i)).not.toBeInTheDocument()
+  })
+
+  it('NO existe la fila "Método abono" (sin facturas resueltas no hay metodo que derivar)', async () => {
+    mockedPreviewFacturasAfectadas.mockResolvedValue({
+      estado: 'LEGACY',
+      facturasDirectas: [],
+      facturasSaf: [],
+      totalUsd: 0,
+    })
+
+    render(
+      <ReversoModal isOpen onClose={vi.fn()} movimiento={movimiento()} monedaSimbolo="$" />
+    )
+
+    await screen.findByText(/sin trazabilidad/i)
+    expect(screen.queryByText('Método abono')).not.toBeInTheDocument()
+  })
+})
+
+describe('ReversoModal — metodo abono en el header (una sola vez)', () => {
+  it('estado OK con facturasDirectas: muestra "Método abono" una sola vez con el metodoNombre de facturasDirectas[0]', async () => {
+    mockedPreviewFacturasAfectadas.mockResolvedValue({
+      estado: 'OK',
+      facturasDirectas: [
+        {
+          ventaId: 'venta-A',
+          nroFactura: 'F-A',
+          montoAplicadoUsd: 1,
+          montoAplicadoNativo: 500,
+          monedaCodigo: 'VES',
+          metodoNombre: 'BANESCO PAGO MOVIL',
+          tasa: 500,
+        },
+      ],
+      facturasSaf: [],
+      totalUsd: 1,
+    })
+
+    render(
+      <ReversoModal isOpen onClose={vi.fn()} movimiento={movimiento()} monedaSimbolo="$" />
+    )
+
+    await screen.findByText('F-A')
+    expect(screen.getByText('Método abono')).toBeInTheDocument()
+    expect(screen.getAllByText('BANESCO PAGO MOVIL')).toHaveLength(1)
+  })
+
+  it('estado OK solo con facturasSaf (sin directas): deriva el metodoNombre de facturasSaf[0]', async () => {
+    mockedPreviewFacturasAfectadas.mockResolvedValue({
+      estado: 'OK',
+      facturasDirectas: [],
+      facturasSaf: [
+        {
+          ventaId: 'venta-D',
+          nroFactura: 'F-D',
+          montoAplicadoUsd: 30,
+          montoAplicadoNativo: 15000,
+          monedaCodigo: 'VES',
+          metodoNombre: 'ZELLE',
+          tasa: 500,
+        },
+      ],
+      totalUsd: 30,
+    })
+
+    render(
+      <ReversoModal isOpen onClose={vi.fn()} movimiento={movimiento()} monedaSimbolo="$" />
+    )
+
+    await screen.findByText('F-D')
+    expect(screen.getByText('Método abono')).toBeInTheDocument()
+    expect(screen.getByText('ZELLE')).toBeInTheDocument()
+  })
+
+  it('estado OK sin facturas (ni directas ni SAF): NO muestra la fila "Método abono"', async () => {
+    mockedPreviewFacturasAfectadas.mockResolvedValue({
+      estado: 'OK',
+      facturasDirectas: [],
+      facturasSaf: [],
+      totalUsd: 0,
+    })
+
+    render(
+      <ReversoModal isOpen onClose={vi.fn()} movimiento={movimiento()} monedaSimbolo="$" />
+    )
+
+    await screen.findByText(/no se encontraron facturas/i)
+    expect(screen.queryByText('Método abono')).not.toBeInTheDocument()
   })
 })
 
