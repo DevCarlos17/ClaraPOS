@@ -16,8 +16,6 @@ import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
-import { formatMontoPago } from '@/features/ventas/utils/factura-export'
-import type { ReciboPagoLinea } from '@/features/ventas/utils/recibo-pagos'
 import { reversarMovBancario, reversarMovCajaFuerte } from '../hooks/use-conciliacion-tesoreria'
 import { reversarTraspaso } from '../hooks/use-traspasos'
 import { reversarAbonoDirectoDesdeTesoreria } from '../hooks/use-reverso-abono-directo'
@@ -54,27 +52,32 @@ const ORIGEN_LABELS: Record<string, string> = {
 }
 
 /**
- * Mapea una `FacturaAfectadaPreview` al shape `ReciboPagoLinea` que espera
- * `formatMontoPago` (reusado de "Consulta de Factura" — ver exploracion
- * `sdd/reverso-abono-tesoreria/explore-preview-presentacion`). `tasa` ya es
- * un valor DERIVADO (usd*tasa, no una moneda nativa real distinta), por lo
- * que se fuerza `moneda: 'USD'` + `forzarBimonetario: true` para mostrar
- * SIEMPRE "$X (Bs. Y)" de forma uniforme (spec Requirement "Renderizado
- * dual-moneda y metodo de pago en el panel", mismo formato en ambos
- * arreglos) — mapear `moneda` desde `monedaCodigo` colapsaria a Bs-primario
- * cuando no coincide con la presentacion ('USD'), contradiciendo el
- * ejemplo bloqueado de la spec.
+ * Monto de una factura afectada en su MONEDA NATIVA (spec Requirement
+ * MODIFIED "Renderizado de facturas afectadas en el panel"): VES muestra
+ * el monto aplicado en Bs, cualquier otra moneda muestra el monto
+ * aplicado en USD. Reemplaza el bimonetario forzado anterior
+ * (`formatMontoPago` + `aLineaPago`) — el metodo de pago ya no se repite
+ * por linea, se movio al header del modal (ver `metodoAbono` mas abajo).
  */
-function aLineaPago(f: FacturaAfectadaPreview): ReciboPagoLinea {
-  return {
-    metodoCobroId: f.ventaId,
-    metodoNombre: f.metodoNombre,
-    moneda: 'USD',
-    montoNativo: f.montoAplicadoUsd,
-    montoUsd: f.montoAplicadoUsd,
-    montoBs: f.montoAplicadoNativo,
-    forzarBimonetario: true,
-  }
+function montoFacturaNativo(f: FacturaAfectadaPreview): string {
+  return f.monedaCodigo === 'VES' ? formatBs(f.montoAplicadoNativo) : formatUsd(f.montoAplicadoUsd)
+}
+
+/**
+ * Suma de montos nativos de un conjunto de facturas afectadas (pago
+ * directo + SAF) en la MISMA moneda nativa que las lineas individuales —
+ * un abono = un metodo/moneda, la primera entrada decide la moneda. Nunca
+ * fuerza USD como el `preview.totalUsd` del hook (spec Requirement
+ * MODIFIED, "Total afectado en moneda nativa").
+ */
+function totalAfectadoNativo(entradas: FacturaAfectadaPreview[]): string {
+  if (entradas.length === 0) return formatUsd(0)
+  const esNativoVes = entradas[0].monedaCodigo === 'VES'
+  const total = entradas.reduce(
+    (acc, f) => acc + (esNativoVes ? f.montoAplicadoNativo : f.montoAplicadoUsd),
+    0
+  )
+  return esNativoVes ? formatBs(total) : formatUsd(total)
 }
 
 export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, traspasoId }: Props) {
@@ -243,6 +246,15 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
   if (!movimiento) return null
 
   const monto = parseFloat(movimiento.monto)
+  // Metodo del abono — atributo del ABONO completo (un pago_id = un
+  // metodo), no de cada factura. Se muestra UNA VEZ en el header (spec
+  // Requirement ADDED "Metodo de pago unico en el header del panel de
+  // reverso"); se omite si no hay facturas resueltas (estado LEGACY o sin
+  // facturasDirectas/facturasSaf).
+  const metodoAbono =
+    preview?.estado === 'OK'
+      ? (preview.facturasDirectas[0] ?? preview.facturasSaf[0])?.metodoNombre
+      : undefined
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -276,6 +288,12 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
                 {monedaSimbolo === '$' ? formatUsd(monto) : formatBs(monto)}
               </span>
             </div>
+            {metodoAbono && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Método abono</span>
+                <span>{metodoAbono}</span>
+              </div>
+            )}
           </div>
 
           {/* Warning si forma parte de un traspaso */}
@@ -335,13 +353,8 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
                         <ul className="mt-1 space-y-1">
                           {preview.facturasDirectas.map((f) => (
                             <li key={f.ventaId} className="flex justify-between gap-2">
-                              <span>
-                                {f.nroFactura}
-                                <span className="block text-xs text-muted-foreground">
-                                  {f.metodoNombre}
-                                </span>
-                              </span>
-                              <span className="shrink-0">{formatMontoPago(aLineaPago(f), 'USD')}</span>
+                              <span>{f.nroFactura}</span>
+                              <span className="shrink-0">{montoFacturaNativo(f)}</span>
                             </li>
                           ))}
                         </ul>
@@ -356,13 +369,8 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
                         <ul className="mt-1 space-y-1">
                           {preview.facturasSaf.map((f) => (
                             <li key={f.ventaId} className="flex justify-between gap-2">
-                              <span>
-                                {f.nroFactura}
-                                <span className="block text-xs text-muted-foreground">
-                                  {f.metodoNombre}
-                                </span>
-                              </span>
-                              <span className="shrink-0">{formatMontoPago(aLineaPago(f), 'USD')}</span>
+                              <span>{f.nroFactura}</span>
+                              <span className="shrink-0">{montoFacturaNativo(f)}</span>
                             </li>
                           ))}
                         </ul>
@@ -371,7 +379,9 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
 
                     <div className="flex justify-between border-t pt-2 font-semibold">
                       <span>Total afectado</span>
-                      <span>{formatUsd(preview.totalUsd)}</span>
+                      <span>
+                        {totalAfectadoNativo([...preview.facturasDirectas, ...preview.facturasSaf])}
+                      </span>
                     </div>
                     <p className="text-xs text-muted-foreground">
                       Este total equivale al monto del reverso.
