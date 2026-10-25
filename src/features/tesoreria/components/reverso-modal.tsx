@@ -345,37 +345,42 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
                 preview?.estado === 'OK' &&
                 (preview.facturasDirectas.length > 0 || preview.facturasSaf.length > 0) && (
                   <div className="space-y-3">
-                    {preview.facturasDirectas.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold uppercase text-muted-foreground">
-                          Pago directo
-                        </p>
-                        <ul className="mt-1 space-y-1">
-                          {preview.facturasDirectas.map((f) => (
-                            <li key={f.ventaId} className="flex justify-between gap-2">
-                              <span>{f.nroFactura}</span>
-                              <span className="shrink-0">{montoFacturaNativo(f)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                    <div
+                      data-testid="preview-facturas-lista-scroll"
+                      className="max-h-48 overflow-y-auto space-y-3"
+                    >
+                      {preview.facturasDirectas.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase text-muted-foreground">
+                            Pago directo
+                          </p>
+                          <ul className="mt-1 space-y-1">
+                            {preview.facturasDirectas.map((f) => (
+                              <li key={f.ventaId} className="flex justify-between gap-2">
+                                <span>{f.nroFactura}</span>
+                                <span className="shrink-0">{montoFacturaNativo(f)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
 
-                    {preview.facturasSaf.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold uppercase text-muted-foreground">
-                          Afectada por saldo a favor (SAF)
-                        </p>
-                        <ul className="mt-1 space-y-1">
-                          {preview.facturasSaf.map((f) => (
-                            <li key={f.ventaId} className="flex justify-between gap-2">
-                              <span>{f.nroFactura}</span>
-                              <span className="shrink-0">{montoFacturaNativo(f)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                      {preview.facturasSaf.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase text-muted-foreground">
+                            Afectada por saldo a favor (SAF)
+                          </p>
+                          <ul className="mt-1 space-y-1">
+                            {preview.facturasSaf.map((f) => (
+                              <li key={f.ventaId} className="flex justify-between gap-2">
+                                <span>{f.nroFactura}</span>
+                                <span className="shrink-0">{montoFacturaNativo(f)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
 
                     <div className="flex justify-between border-t pt-2 font-semibold">
                       <span>Total afectado</span>
