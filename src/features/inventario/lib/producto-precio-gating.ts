@@ -14,6 +14,7 @@
  */
 
 import Decimal from 'decimal.js'
+import { usdToBs, bsToUsd } from '@/lib/currency'
 
 /**
  * Calcula el PVP proyectado que preserva el margen % configurado para un
@@ -175,4 +176,65 @@ export function fijarCostoYCascada(p: {
 export function calcularMargenPreservandoPvp(costo: Decimal, pvp: Decimal): Decimal {
   if (costo.lte(0) || pvp.lte(0)) return new Decimal(0)
   return pvp.minus(costo).dividedBy(costo).times(100)
+}
+
+/**
+ * Resultado comun de las 3 cascadas bidireccionales del modo "Editar manual
+ * todo" (sandbox Tasa Paralela en ProductoForm): dado el valor editado por
+ * el usuario en UNO de los 3 campos (Margen %, Precio Venta $, Precio Venta
+ * Bs) de un nivel de precio, calcula los otros dos. Ver
+ * `openspec/changes/producto-precio-venta-bs-editable-bidireccional/`.
+ */
+export interface CascadaManualResultado {
+  margenPct: Decimal
+  pvpUsd: Decimal
+  pvpBs: Decimal
+}
+
+/**
+ * El usuario edito el Margen % de un nivel: deriva Precio Venta $ (preserva
+ * el margen, clampado a 0 via `calcularPrecioPreservandoMargenD`) y Precio
+ * Venta Bs (`usdToBs` sobre el PVP $ resultante). El margen de entrada se
+ * retorna sin cambios (es la fuente de verdad en esta cascada).
+ */
+export function cascadaDesdeMargenManual(
+  costo: Decimal,
+  margenPct: Decimal,
+  tasaInterna: Decimal
+): CascadaManualResultado {
+  const pvpUsd = calcularPrecioPreservandoMargenD(costo, margenPct)
+  return { margenPct, pvpUsd, pvpBs: usdToBs(pvpUsd, tasaInterna) }
+}
+
+/**
+ * El usuario edito el Precio Venta $ de un nivel: deriva Margen %
+ * (`calcularMargenPreservandoPvp`, con guard interno costo/pvp <= 0 -> 0,
+ * sin lanzar excepcion ni dividir por cero) y Precio Venta Bs (`usdToBs`).
+ * El PVP $ de entrada se retorna sin cambios.
+ */
+export function cascadaDesdePvpUsdManual(
+  costo: Decimal,
+  pvpUsd: Decimal,
+  tasaInterna: Decimal
+): CascadaManualResultado {
+  return {
+    margenPct: calcularMargenPreservandoPvp(costo, pvpUsd),
+    pvpUsd,
+    pvpBs: usdToBs(pvpUsd, tasaInterna),
+  }
+}
+
+/**
+ * El usuario edito el Precio Venta Bs de un nivel: deriva Precio Venta $
+ * (`bsToUsd`, con guard interno tasa <= 0 -> 0, sin NaN/Infinity) y Margen %
+ * a partir de ese PVP $ resultante. El PVP Bs de entrada se retorna sin
+ * cambios.
+ */
+export function cascadaDesdePvpBsManual(
+  costo: Decimal,
+  pvpBs: Decimal,
+  tasaInterna: Decimal
+): CascadaManualResultado {
+  const pvpUsd = bsToUsd(pvpBs, tasaInterna)
+  return { margenPct: calcularMargenPreservandoPvp(costo, pvpUsd), pvpUsd, pvpBs }
 }
