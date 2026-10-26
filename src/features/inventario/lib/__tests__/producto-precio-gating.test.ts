@@ -10,6 +10,7 @@ import {
   cascadaDesdeMargenManual,
   cascadaDesdePvpUsdManual,
   cascadaDesdePvpBsManual,
+  hayMargenNegativoEnNiveles,
 } from '../producto-precio-gating'
 
 describe('calcularPrecioPreservandoMargen', () => {
@@ -251,5 +252,24 @@ describe('cascadaDesdePvpBsManual', () => {
     expect(resultado.pvpUsd.toFixed(2)).toBe('150.00')
     expect(resultado.margenPct.toFixed(2)).toBe('0.00')
     expect(resultado.margenPct.isNaN()).toBe(false)
+  })
+})
+
+describe('hayMargenNegativoEnNiveles', () => {
+  it('ningun nivel negativo -> false', () => {
+    expect(hayMargenNegativoEnNiveles(['50.00', '30.00', '10.00'])).toBe(false)
+  })
+
+  it('un nivel negativo (mayor) entre 3 -> true', () => {
+    expect(hayMargenNegativoEnNiveles(['50.00', '-5.00', '10.00'])).toBe(true)
+  })
+
+  it('niveles ausentes (null, tenant sin mayor/especial) se ignoran, no cuentan como negativos', () => {
+    expect(hayMargenNegativoEnNiveles(['-1.00', null, null])).toBe(true)
+    expect(hayMargenNegativoEnNiveles(['5.00', null, null])).toBe(false)
+  })
+
+  it('string vacio (campo en blanco) no se considera negativo', () => {
+    expect(hayMargenNegativoEnNiveles(['', '30.00', ''])).toBe(false)
   })
 })

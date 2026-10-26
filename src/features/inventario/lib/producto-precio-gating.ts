@@ -238,3 +238,21 @@ export function cascadaDesdePvpBsManual(
   const pvpUsd = bsToUsd(pvpBs, tasaInterna)
   return { margenPct: calcularMargenPreservandoPvp(costo, pvpUsd), pvpUsd, pvpBs }
 }
+
+/**
+ * Bloqueo de "Confirmar cambios" del modo "Editar manual todo" (sandbox Tasa
+ * Paralela): `true` si CUALQUIER margen % de la lista es negativo. Extraida
+ * como funcion pura (en vez de vivir como closure sobre el estado del
+ * componente) para que sea unit-testeable sin montar `ProductoForm` — el
+ * caller (`hayMargenNegativoManual` en producto-form.tsx) solo arma el
+ * array con los margenes de los niveles VISIBLES para ese tenant (Detal
+ * siempre, Mayor/Especial `null` si el nivel no esta activo).
+ *
+ * `null` y string vacio ("" , campo en blanco) se ignoran — no cuentan como
+ * negativos. Un string con un numero negativo valido (ej. "-5.00", escrito
+ * por una cascada `cascadaDesde{Pvp,Margen}*Manual` cuando el PVP quedo por
+ * debajo del costo) SI cuenta.
+ */
+export function hayMargenNegativoEnNiveles(margenes: (string | null)[]): boolean {
+  return margenes.some((m) => m !== null && m.trim() !== '' && parseFloat(m) < 0)
+}
