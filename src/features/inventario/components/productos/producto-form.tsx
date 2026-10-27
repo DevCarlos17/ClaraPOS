@@ -30,6 +30,10 @@ import {
   calcularCostoDesdeNivel,
   fijarCostoYCascada,
   calcularMargenPreservandoPvp,
+  cascadaDesdeMargenManual,
+  cascadaDesdePvpUsdManual,
+  cascadaDesdePvpBsManual,
+  hayMargenNegativoEnNiveles,
 } from '@/features/inventario/lib/producto-precio-gating'
 import { useCatalogoGlobal } from '@/features/inventario/hooks/use-catalogo-global'
 import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
@@ -494,6 +498,26 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [sbManualMargenDetal, setSbManualMargenDetal] = useState('')
   const [sbManualMargenMayor, setSbManualMargenMayor] = useState('')
   const [sbManualMargenEspecial, setSbManualMargenEspecial] = useState('')
+  // Precio Venta $/Bs manuales del modo "Editar manual todo" — mismo
+  // contrato de mascara completa que los campos reales del form (ref de
+  // precision completa + display mascarado a 2 decimales, revelado a
+  // precision completa en onFocus): a diferencia de `sbManualMargen*`
+  // (nunca se persiste, no necesita ref), estos 2 campos alimentan
+  // `setPrecioVentaCompleto`/etc al confirmar, asi que SI necesitan el ref
+  // para no repetir el bug de `sdd/producto-form-mascara-decimales`. Ver
+  // design.md, seccion "State / Refs nuevos".
+  const [sbManualPvpUsdDetal, setSbManualPvpUsdDetal] = useState('')
+  const [sbManualPvpUsdMayor, setSbManualPvpUsdMayor] = useState('')
+  const [sbManualPvpUsdEspecial, setSbManualPvpUsdEspecial] = useState('')
+  const sbManualPvpUsdDetalFullRef = useRef(0)
+  const sbManualPvpUsdMayorFullRef = useRef(0)
+  const sbManualPvpUsdEspecialFullRef = useRef(0)
+  const [sbManualPvpBsDetal, setSbManualPvpBsDetal] = useState('')
+  const [sbManualPvpBsMayor, setSbManualPvpBsMayor] = useState('')
+  const [sbManualPvpBsEspecial, setSbManualPvpBsEspecial] = useState('')
+  const sbManualPvpBsDetalFullRef = useRef(0)
+  const sbManualPvpBsMayorFullRef = useRef(0)
+  const sbManualPvpBsEspecialFullRef = useRef(0)
   // Valores a persistir en handleSubmit. `undefined` = el usuario nunca tocó
   // el sandbox en esta sesion del form -> NO se envia el campo (no se toca
   // lo que ya hay en DB). Se llenan solo en `handleConfirmarSandbox` o al
@@ -853,6 +877,32 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     tasaParalelaFullRef.current = fullValue
     setTasaParalelaStr(displayVal)
   }
+  /** Igual que `setPrecioVentaCompleto`/etc, pero para el Precio Venta $ manual del sandbox (modo "Editar manual todo", por nivel). */
+  function setSbManualPvpUsdDetalCompleto(fullValue: number, displayVal: string) {
+    sbManualPvpUsdDetalFullRef.current = fullValue
+    setSbManualPvpUsdDetal(displayVal)
+  }
+  function setSbManualPvpUsdMayorCompleto(fullValue: number, displayVal: string) {
+    sbManualPvpUsdMayorFullRef.current = fullValue
+    setSbManualPvpUsdMayor(displayVal)
+  }
+  function setSbManualPvpUsdEspecialCompleto(fullValue: number, displayVal: string) {
+    sbManualPvpUsdEspecialFullRef.current = fullValue
+    setSbManualPvpUsdEspecial(displayVal)
+  }
+  /** Igual que `setSbManualPvpUsd*Completo`, pero para el Precio Venta Bs manual del sandbox. */
+  function setSbManualPvpBsDetalCompleto(fullValue: number, displayVal: string) {
+    sbManualPvpBsDetalFullRef.current = fullValue
+    setSbManualPvpBsDetal(displayVal)
+  }
+  function setSbManualPvpBsMayorCompleto(fullValue: number, displayVal: string) {
+    sbManualPvpBsMayorFullRef.current = fullValue
+    setSbManualPvpBsMayor(displayVal)
+  }
+  function setSbManualPvpBsEspecialCompleto(fullValue: number, displayVal: string) {
+    sbManualPvpBsEspecialFullRef.current = fullValue
+    setSbManualPvpBsEspecial(displayVal)
+  }
 
   /**
    * Mascara visual (onFocus/onBlur) del Precio Venta en Bs, para cualquier
@@ -1129,6 +1179,130 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     return new Decimal(cf).times(tp).dividedBy(tasaValor)
   }
 
+  // === Modo "Editar manual todo" — cascada bidireccional Margen/PVP $/PVP Bs ===
+  //
+  // 9 handlers (3 campos x 3 niveles): cada uno compone una de las 3
+  // funciones puras nuevas (`cascadaDesde{Margen,PvpUsd,PvpBs}Manual`) con
+  // el costo contable del preview + la tasa interna vigente, y escribe los
+  // OTROS 2 campos del mismo nivel (el campo editado se retorna sin cambios
+  // por la cascada, asi que no necesita reescribirse a si mismo salvo para
+  // guardar el companion de precision completa en los 2 campos PVP). Ver
+  // design.md, seccion "Handlers — producto-form.tsx".
+
+  function handleSbManualMargenDetalChange(val: string) {
+    setSbManualMargenDetal(val)
+    const costo = calcularCostoContablePreview()
+    const margenN = parseFloat(val)
+    if (!costo || isNaN(margenN) || tasaValor <= 0) return
+    const { pvpUsd, pvpBs } = cascadaDesdeMargenManual(costo, new Decimal(margenN), new Decimal(tasaValor))
+    setSbManualPvpUsdDetalCompleto(pvpUsd.toNumber(), toMaskedDisplay(pvpUsd.toNumber()))
+    setSbManualPvpBsDetalCompleto(pvpBs.toNumber(), toMaskedDisplay(pvpBs.toNumber()))
+  }
+
+  function handleSbManualPvpUsdDetalChange(val: string) {
+    const num = parseFloat(val)
+    // val crudo (sanitizado por `soloNumeroPositivo` en el onChange del
+    // JSX), nunca el display ya enmascarado — el companion de precision
+    // completa ES lo tipeado.
+    setSbManualPvpUsdDetalCompleto(isNaN(num) ? 0 : num, val)
+    const costo = calcularCostoContablePreview()
+    if (!costo || isNaN(num) || tasaValor <= 0) return
+    const { margenPct, pvpBs } = cascadaDesdePvpUsdManual(costo, new Decimal(num), new Decimal(tasaValor))
+    setSbManualMargenDetal(margenPct.toFixed(2))
+    setSbManualPvpBsDetalCompleto(pvpBs.toNumber(), toMaskedDisplay(pvpBs.toNumber()))
+  }
+
+  function handleSbManualPvpBsDetalChange(val: string) {
+    const num = parseFloat(val)
+    setSbManualPvpBsDetalCompleto(isNaN(num) ? 0 : num, val)
+    const costo = calcularCostoContablePreview()
+    if (!costo || isNaN(num) || tasaValor <= 0) return
+    const { margenPct, pvpUsd } = cascadaDesdePvpBsManual(costo, new Decimal(num), new Decimal(tasaValor))
+    setSbManualMargenDetal(margenPct.toFixed(2))
+    setSbManualPvpUsdDetalCompleto(pvpUsd.toNumber(), toMaskedDisplay(pvpUsd.toNumber()))
+  }
+
+  function handleSbManualMargenMayorChange(val: string) {
+    setSbManualMargenMayor(val)
+    const costo = calcularCostoContablePreview()
+    const margenN = parseFloat(val)
+    if (!costo || isNaN(margenN) || tasaValor <= 0) return
+    const { pvpUsd, pvpBs } = cascadaDesdeMargenManual(costo, new Decimal(margenN), new Decimal(tasaValor))
+    setSbManualPvpUsdMayorCompleto(pvpUsd.toNumber(), toMaskedDisplay(pvpUsd.toNumber()))
+    setSbManualPvpBsMayorCompleto(pvpBs.toNumber(), toMaskedDisplay(pvpBs.toNumber()))
+  }
+
+  function handleSbManualPvpUsdMayorChange(val: string) {
+    const num = parseFloat(val)
+    setSbManualPvpUsdMayorCompleto(isNaN(num) ? 0 : num, val)
+    const costo = calcularCostoContablePreview()
+    if (!costo || isNaN(num) || tasaValor <= 0) return
+    const { margenPct, pvpBs } = cascadaDesdePvpUsdManual(costo, new Decimal(num), new Decimal(tasaValor))
+    setSbManualMargenMayor(margenPct.toFixed(2))
+    setSbManualPvpBsMayorCompleto(pvpBs.toNumber(), toMaskedDisplay(pvpBs.toNumber()))
+  }
+
+  function handleSbManualPvpBsMayorChange(val: string) {
+    const num = parseFloat(val)
+    setSbManualPvpBsMayorCompleto(isNaN(num) ? 0 : num, val)
+    const costo = calcularCostoContablePreview()
+    if (!costo || isNaN(num) || tasaValor <= 0) return
+    const { margenPct, pvpUsd } = cascadaDesdePvpBsManual(costo, new Decimal(num), new Decimal(tasaValor))
+    setSbManualMargenMayor(margenPct.toFixed(2))
+    setSbManualPvpUsdMayorCompleto(pvpUsd.toNumber(), toMaskedDisplay(pvpUsd.toNumber()))
+  }
+
+  function handleSbManualMargenEspecialChange(val: string) {
+    setSbManualMargenEspecial(val)
+    const costo = calcularCostoContablePreview()
+    const margenN = parseFloat(val)
+    if (!costo || isNaN(margenN) || tasaValor <= 0) return
+    const { pvpUsd, pvpBs } = cascadaDesdeMargenManual(costo, new Decimal(margenN), new Decimal(tasaValor))
+    setSbManualPvpUsdEspecialCompleto(pvpUsd.toNumber(), toMaskedDisplay(pvpUsd.toNumber()))
+    setSbManualPvpBsEspecialCompleto(pvpBs.toNumber(), toMaskedDisplay(pvpBs.toNumber()))
+  }
+
+  function handleSbManualPvpUsdEspecialChange(val: string) {
+    const num = parseFloat(val)
+    setSbManualPvpUsdEspecialCompleto(isNaN(num) ? 0 : num, val)
+    const costo = calcularCostoContablePreview()
+    if (!costo || isNaN(num) || tasaValor <= 0) return
+    const { margenPct, pvpBs } = cascadaDesdePvpUsdManual(costo, new Decimal(num), new Decimal(tasaValor))
+    setSbManualMargenEspecial(margenPct.toFixed(2))
+    setSbManualPvpBsEspecialCompleto(pvpBs.toNumber(), toMaskedDisplay(pvpBs.toNumber()))
+  }
+
+  function handleSbManualPvpBsEspecialChange(val: string) {
+    const num = parseFloat(val)
+    setSbManualPvpBsEspecialCompleto(isNaN(num) ? 0 : num, val)
+    const costo = calcularCostoContablePreview()
+    if (!costo || isNaN(num) || tasaValor <= 0) return
+    const { margenPct, pvpUsd } = cascadaDesdePvpBsManual(costo, new Decimal(num), new Decimal(tasaValor))
+    setSbManualMargenEspecial(margenPct.toFixed(2))
+    setSbManualPvpUsdEspecialCompleto(pvpUsd.toNumber(), toMaskedDisplay(pvpUsd.toNumber()))
+  }
+
+  /**
+   * Bloqueo de "Confirmar cambios" (modo "Editar manual todo"): `true` si
+   * CUALQUIER nivel visible (Detal siempre, Mayor/Especial solo si el
+   * tenant los tiene activos) quedo con margen negativo tras cualquier
+   * edicion de Margen %, Precio Venta $ o Precio Venta Bs. El margen manual
+   * nunca clampea a 0 (a diferencia de `handleMargenChange` del form real)
+   * porque el objetivo es AVISAR y BLOQUEAR, no corregir en silencio (ver
+   * design.md, "Bloqueo de margen negativo"). El chequeo en si es la
+   * funcion pura `hayMargenNegativoEnNiveles` (unit-testeable sin montar
+   * este componente); aqui solo se arma el array de margenes VISIBLES para
+   * este tenant, leyendo el estado directo (sin memo).
+   */
+  function hayMargenNegativoManual(): boolean {
+    if (modoRecalculo !== 'manual') return false
+    return hayMargenNegativoEnNiveles([
+      sbManualMargenDetal,
+      nivel2 ? sbManualMargenMayor : null,
+      nivel3 ? sbManualMargenEspecial : null,
+    ])
+  }
+
   /**
    * Preview de margen%/PVP para UN nivel de precio bajo el modo de
    * recalculo elegido, sin mutar el form real todavia (ver
@@ -1154,14 +1328,20 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       return { margenPct, pvpUsd: pvpActual }
     }
     if (modoRecalculo === 'manual') {
+      // Ya NO recalcula aqui: lee el estado que el ULTIMO handler editado
+      // (Margen %, Precio Venta $ o Precio Venta Bs) ya sincronizo via su
+      // cascada (`cascadaDesde{Margen,PvpUsd,PvpBs}Manual`). Si esta rama
+      // recalculara desde `sbManualMargen*` como antes, pisaria el PVP $/Bs
+      // que el usuario acaba de tipear a mano en esos campos (ver
+      // design.md, seccion "Branch isolation — calcularPreviewNivel").
       const margenStr = nivel === 'detal' ? sbManualMargenDetal : nivel === 'mayor' ? sbManualMargenMayor : sbManualMargenEspecial
-      const margenPctD = new Decimal(parseFloat(margenStr) || 0)
-      // Decimal de punta a punta (costoContable ya es Decimal, ver
-      // `calcularCostoContablePreview`) — nunca se rompe la cadena con
-      // `.toNumber()` a mitad de camino (regla de negocio #10). El `number`
-      // solo aparece en el `return`, que es el limite de escritura hacia
-      // los refs de precision completa (`setPrecio*Completo`).
-      return { margenPct: margenPctD.toNumber(), pvpUsd: calcularPrecioPreservandoMargenD(costoContable, margenPctD).toNumber() }
+      const pvpUsdFull =
+        nivel === 'detal'
+          ? sbManualPvpUsdDetalFullRef.current
+          : nivel === 'mayor'
+            ? sbManualPvpUsdMayorFullRef.current
+            : sbManualPvpUsdEspecialFullRef.current
+      return { margenPct: parseFloat(margenStr) || 0, pvpUsd: pvpUsdFull }
     }
     // 'margen' (default): preserva el margen previo del nivel. Mismo
     // criterio Decimal-de-punta-a-punta que el modo 'manual' de arriba.
@@ -1234,6 +1414,23 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setSbManualMargenDetal(margenFullRef.current !== 0 ? toMaskedDisplay(margenFullRef.current) : '0')
       setSbManualMargenMayor(margenMayorFullRef.current !== 0 ? toMaskedDisplay(margenMayorFullRef.current) : '0')
       setSbManualMargenEspecial(margenEspecialFullRef.current !== 0 ? toMaskedDisplay(margenEspecialFullRef.current) : '0')
+
+      // Pre-llena Precio Venta $/Bs desde el valor REAL vigente del form
+      // (mismo criterio que el margen de arriba: "arranca desde el valor
+      // real vigente"), para que los 3 campos de cada nivel arranquen
+      // consistentes entre si (spec.md, Requirement "Pre-fill extendido").
+      const prellenarPvpNivel = (
+        pvpUsdFull: number,
+        setPvpUsdCompleto: (fullValue: number, displayVal: string) => void,
+        setPvpBsCompleto: (fullValue: number, displayVal: string) => void
+      ) => {
+        setPvpUsdCompleto(pvpUsdFull, pvpUsdFull > 0 ? toMaskedDisplay(pvpUsdFull) : '0')
+        const pvpBsFull = tasaValor > 0 ? usdToBs(new Decimal(pvpUsdFull), new Decimal(tasaValor)).toNumber() : 0
+        setPvpBsCompleto(pvpBsFull, pvpBsFull > 0 ? toMaskedDisplay(pvpBsFull) : '0')
+      }
+      prellenarPvpNivel(precioVentaUsdFullRef.current, setSbManualPvpUsdDetalCompleto, setSbManualPvpBsDetalCompleto)
+      prellenarPvpNivel(precioMayorUsdFullRef.current, setSbManualPvpUsdMayorCompleto, setSbManualPvpBsMayorCompleto)
+      prellenarPvpNivel(precioEspecialUsdFullRef.current, setSbManualPvpUsdEspecialCompleto, setSbManualPvpBsEspecialCompleto)
     }
     setModoRecalculo(modo)
   }
@@ -1246,6 +1443,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
    * `handleSubmit` debe persistir (costo_factura_usd + tasa_paralela_ref).
    */
   function handleConfirmarSandbox() {
+    // Defensa en profundidad: el boton ya esta `disabled` cuando hay margen
+    // negativo en modo manual (ver JSX), pero este guard evita confirmar si
+    // se llamara por otra via (p.ej. Enter en algun input del sandbox).
+    if (hayMargenNegativoManual()) return
     const costoContable = calcularCostoContablePreview()
     if (!costoContable) return
     const costoContableN = costoContable.toNumber()
@@ -2661,6 +2862,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                     <th className="px-2 py-1.5 text-left font-medium text-amber-800">Nivel</th>
                                     <th className="px-2 py-1.5 text-left font-medium text-amber-800">Margen (%)</th>
                                     <th className="px-2 py-1.5 text-left font-medium text-amber-800">Precio Venta $</th>
+                                    {modoRecalculo === 'manual' && (
+                                      <th className="px-2 py-1.5 text-left font-medium text-amber-800">Precio Venta Bs</th>
+                                    )}
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-amber-100">
@@ -2668,40 +2872,146 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                     <td className="px-2 py-1.5 text-gray-700">{nivel1?.nombre ?? 'Detal'}</td>
                                     <td className="px-2 py-1.5">
                                       {modoRecalculo === 'manual' ? (
+                                        <>
+                                          <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={sbManualMargenDetal}
+                                            onChange={(e) => handleSbManualMargenDetalChange(soloNumeroPositivo(e.target.value))}
+                                            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                            onWheel={stopScroll}
+                                            className={`w-20 rounded border border-gray-300 px-1.5 py-1 text-xs ${noSpinner}`}
+                                          />
+                                          {parseFloat(sbManualMargenDetal) < 0 && (
+                                            <p className="text-red-600 text-[11px] mt-0.5">Margen negativo en este nivel.</p>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <span className="tabular-nums">{previewDetal.margenPct.toFixed(2)}%</span>
+                                      )}
+                                    </td>
+                                    <td className="px-2 py-1.5 tabular-nums">
+                                      {modoRecalculo === 'manual' ? (
                                         <input
                                           type="text"
                                           inputMode="decimal"
-                                          value={sbManualMargenDetal}
-                                          onChange={(e) => setSbManualMargenDetal(soloNumeroPositivo(e.target.value))}
+                                          value={sbManualPvpUsdDetal}
+                                          onChange={(e) => handleSbManualPvpUsdDetalChange(soloNumeroPositivo(e.target.value))}
+                                          onFocus={() =>
+                                            sbManualPvpUsdDetalFullRef.current > 0 &&
+                                            setSbManualPvpUsdDetal(toFullDisplay(sbManualPvpUsdDetalFullRef.current))
+                                          }
+                                          onBlur={() =>
+                                            setSbManualPvpUsdDetal(
+                                              sbManualPvpUsdDetal.trim() === '' ? '' : toMaskedDisplay(sbManualPvpUsdDetalFullRef.current)
+                                            )
+                                          }
                                           onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                           onWheel={stopScroll}
                                           className={`w-20 rounded border border-gray-300 px-1.5 py-1 text-xs ${noSpinner}`}
                                         />
                                       ) : (
-                                        <span className="tabular-nums">{previewDetal.margenPct.toFixed(2)}%</span>
+                                        `$${previewDetal.pvpUsd.toFixed(2)}`
                                       )}
                                     </td>
-                                    <td className="px-2 py-1.5 tabular-nums">${previewDetal.pvpUsd.toFixed(2)}</td>
+                                    {modoRecalculo === 'manual' && (
+                                      <td className="px-2 py-1.5 tabular-nums">
+                                        <input
+                                          type="text"
+                                          inputMode="decimal"
+                                          value={sbManualPvpBsDetal}
+                                          onChange={(e) => handleSbManualPvpBsDetalChange(soloNumeroPositivo(e.target.value))}
+                                          onFocus={() =>
+                                            sbManualPvpBsDetalFullRef.current > 0 &&
+                                            setSbManualPvpBsDetal(toFullDisplay(sbManualPvpBsDetalFullRef.current))
+                                          }
+                                          onBlur={() =>
+                                            setSbManualPvpBsDetal(
+                                              sbManualPvpBsDetal.trim() === '' ? '' : toMaskedDisplay(sbManualPvpBsDetalFullRef.current)
+                                            )
+                                          }
+                                          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                          onWheel={stopScroll}
+                                          disabled={tasaValor <= 0}
+                                          className={`w-20 rounded border px-1.5 py-1 text-xs ${noSpinner} ${
+                                            tasaValor <= 0 ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                                          } border-gray-300`}
+                                        />
+                                      </td>
+                                    )}
                                   </tr>
                                   {nivel2 && (
                                     <tr>
                                       <td className="px-2 py-1.5 text-gray-700">{nivel2.nombre}</td>
                                       <td className="px-2 py-1.5">
                                         {modoRecalculo === 'manual' ? (
+                                          <>
+                                            <input
+                                              type="text"
+                                              inputMode="decimal"
+                                              value={sbManualMargenMayor}
+                                              onChange={(e) => handleSbManualMargenMayorChange(soloNumeroPositivo(e.target.value))}
+                                              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                              onWheel={stopScroll}
+                                              className={`w-20 rounded border border-gray-300 px-1.5 py-1 text-xs ${noSpinner}`}
+                                            />
+                                            {parseFloat(sbManualMargenMayor) < 0 && (
+                                              <p className="text-red-600 text-[11px] mt-0.5">Margen negativo en este nivel.</p>
+                                            )}
+                                          </>
+                                        ) : (
+                                          <span className="tabular-nums">{previewMayor.margenPct.toFixed(2)}%</span>
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1.5 tabular-nums">
+                                        {modoRecalculo === 'manual' ? (
                                           <input
                                             type="text"
                                             inputMode="decimal"
-                                            value={sbManualMargenMayor}
-                                            onChange={(e) => setSbManualMargenMayor(soloNumeroPositivo(e.target.value))}
+                                            value={sbManualPvpUsdMayor}
+                                            onChange={(e) => handleSbManualPvpUsdMayorChange(soloNumeroPositivo(e.target.value))}
+                                            onFocus={() =>
+                                              sbManualPvpUsdMayorFullRef.current > 0 &&
+                                              setSbManualPvpUsdMayor(toFullDisplay(sbManualPvpUsdMayorFullRef.current))
+                                            }
+                                            onBlur={() =>
+                                              setSbManualPvpUsdMayor(
+                                                sbManualPvpUsdMayor.trim() === '' ? '' : toMaskedDisplay(sbManualPvpUsdMayorFullRef.current)
+                                              )
+                                            }
                                             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                             onWheel={stopScroll}
                                             className={`w-20 rounded border border-gray-300 px-1.5 py-1 text-xs ${noSpinner}`}
                                           />
                                         ) : (
-                                          <span className="tabular-nums">{previewMayor.margenPct.toFixed(2)}%</span>
+                                          `$${previewMayor.pvpUsd.toFixed(2)}`
                                         )}
                                       </td>
-                                      <td className="px-2 py-1.5 tabular-nums">${previewMayor.pvpUsd.toFixed(2)}</td>
+                                      {modoRecalculo === 'manual' && (
+                                        <td className="px-2 py-1.5 tabular-nums">
+                                          <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={sbManualPvpBsMayor}
+                                            onChange={(e) => handleSbManualPvpBsMayorChange(soloNumeroPositivo(e.target.value))}
+                                            onFocus={() =>
+                                              sbManualPvpBsMayorFullRef.current > 0 &&
+                                              setSbManualPvpBsMayor(toFullDisplay(sbManualPvpBsMayorFullRef.current))
+                                            }
+                                            onBlur={() =>
+                                              setSbManualPvpBsMayor(
+                                                sbManualPvpBsMayor.trim() === '' ? '' : toMaskedDisplay(sbManualPvpBsMayorFullRef.current)
+                                              )
+                                            }
+                                            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                            onWheel={stopScroll}
+                                            disabled={tasaValor <= 0}
+                                            className={`w-20 rounded border px-1.5 py-1 text-xs ${noSpinner} ${
+                                              tasaValor <= 0 ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                                            } border-gray-300`}
+                                          />
+                                        </td>
+                                      )}
                                     </tr>
                                   )}
                                   {nivel3 && (
@@ -2709,20 +3019,73 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                       <td className="px-2 py-1.5 text-gray-700">{nivel3.nombre}</td>
                                       <td className="px-2 py-1.5">
                                         {modoRecalculo === 'manual' ? (
+                                          <>
+                                            <input
+                                              type="text"
+                                              inputMode="decimal"
+                                              value={sbManualMargenEspecial}
+                                              onChange={(e) => handleSbManualMargenEspecialChange(soloNumeroPositivo(e.target.value))}
+                                              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                              onWheel={stopScroll}
+                                              className={`w-20 rounded border border-gray-300 px-1.5 py-1 text-xs ${noSpinner}`}
+                                            />
+                                            {parseFloat(sbManualMargenEspecial) < 0 && (
+                                              <p className="text-red-600 text-[11px] mt-0.5">Margen negativo en este nivel.</p>
+                                            )}
+                                          </>
+                                        ) : (
+                                          <span className="tabular-nums">{previewEspecial.margenPct.toFixed(2)}%</span>
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1.5 tabular-nums">
+                                        {modoRecalculo === 'manual' ? (
                                           <input
                                             type="text"
                                             inputMode="decimal"
-                                            value={sbManualMargenEspecial}
-                                            onChange={(e) => setSbManualMargenEspecial(soloNumeroPositivo(e.target.value))}
+                                            value={sbManualPvpUsdEspecial}
+                                            onChange={(e) => handleSbManualPvpUsdEspecialChange(soloNumeroPositivo(e.target.value))}
+                                            onFocus={() =>
+                                              sbManualPvpUsdEspecialFullRef.current > 0 &&
+                                              setSbManualPvpUsdEspecial(toFullDisplay(sbManualPvpUsdEspecialFullRef.current))
+                                            }
+                                            onBlur={() =>
+                                              setSbManualPvpUsdEspecial(
+                                                sbManualPvpUsdEspecial.trim() === '' ? '' : toMaskedDisplay(sbManualPvpUsdEspecialFullRef.current)
+                                              )
+                                            }
                                             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                             onWheel={stopScroll}
                                             className={`w-20 rounded border border-gray-300 px-1.5 py-1 text-xs ${noSpinner}`}
                                           />
                                         ) : (
-                                          <span className="tabular-nums">{previewEspecial.margenPct.toFixed(2)}%</span>
+                                          `$${previewEspecial.pvpUsd.toFixed(2)}`
                                         )}
                                       </td>
-                                      <td className="px-2 py-1.5 tabular-nums">${previewEspecial.pvpUsd.toFixed(2)}</td>
+                                      {modoRecalculo === 'manual' && (
+                                        <td className="px-2 py-1.5 tabular-nums">
+                                          <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={sbManualPvpBsEspecial}
+                                            onChange={(e) => handleSbManualPvpBsEspecialChange(soloNumeroPositivo(e.target.value))}
+                                            onFocus={() =>
+                                              sbManualPvpBsEspecialFullRef.current > 0 &&
+                                              setSbManualPvpBsEspecial(toFullDisplay(sbManualPvpBsEspecialFullRef.current))
+                                            }
+                                            onBlur={() =>
+                                              setSbManualPvpBsEspecial(
+                                                sbManualPvpBsEspecial.trim() === '' ? '' : toMaskedDisplay(sbManualPvpBsEspecialFullRef.current)
+                                              )
+                                            }
+                                            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                            onWheel={stopScroll}
+                                            disabled={tasaValor <= 0}
+                                            className={`w-20 rounded border px-1.5 py-1 text-xs ${noSpinner} ${
+                                              tasaValor <= 0 ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                                            } border-gray-300`}
+                                          />
+                                        </td>
+                                      )}
                                     </tr>
                                   )}
                                 </tbody>
@@ -2733,7 +3096,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               <button
                                 type="button"
                                 onClick={handleConfirmarSandbox}
-                                className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
+                                disabled={hayMargenNegativoManual()}
+                                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                                  hayMargenNegativoManual()
+                                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                    : 'text-white bg-blue-600 hover:bg-blue-700'
+                                }`}
                               >
                                 Confirmar cambios
                               </button>
@@ -2745,6 +3113,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                 Deshacer
                               </button>
                             </div>
+                            {hayMargenNegativoManual() && (
+                              <p className="text-red-600 text-xs">
+                                No se puede confirmar: hay niveles con margen negativo.
+                              </p>
+                            )}
                           </div>
                         </>
                       )}
