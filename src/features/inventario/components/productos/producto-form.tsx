@@ -1415,22 +1415,38 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setSbManualMargenMayor(margenMayorFullRef.current !== 0 ? toMaskedDisplay(margenMayorFullRef.current) : '0')
       setSbManualMargenEspecial(margenEspecialFullRef.current !== 0 ? toMaskedDisplay(margenEspecialFullRef.current) : '0')
 
-      // Pre-llena Precio Venta $/Bs desde el valor REAL vigente del form
-      // (mismo criterio que el margen de arriba: "arranca desde el valor
-      // real vigente"), para que los 3 campos de cada nivel arranquen
-      // consistentes entre si (spec.md, Requirement "Pre-fill extendido").
-      const prellenarPvpNivel = (
-        pvpUsdFull: number,
+      // Pre-llena Precio Venta $/Bs RECALCULANDO desde el margen que se
+      // acaba de preservar arriba contra el costo contable VIGENTE del
+      // sandbox (no desde el PVP $ previo, que puede quedar desalineado
+      // con un costo contable nuevo tras cambiar factura/tasa paralela).
+      // Misma formula que el modo "Recalcular por margen previo"
+      // (`cascadaDesdeMargenManual`), para que los 3 campos de cada nivel
+      // arranquen coherentes entre si (spec.md, Requirement "Pre-fill
+      // extendido").
+      const costoContableSeed = calcularCostoContablePreview()
+      const prellenarPvpDesdeMargenNivel = (
+        margenFull: number,
         setPvpUsdCompleto: (fullValue: number, displayVal: string) => void,
         setPvpBsCompleto: (fullValue: number, displayVal: string) => void
       ) => {
-        setPvpUsdCompleto(pvpUsdFull, pvpUsdFull > 0 ? toMaskedDisplay(pvpUsdFull) : '0')
-        const pvpBsFull = tasaValor > 0 ? usdToBs(new Decimal(pvpUsdFull), new Decimal(tasaValor)).toNumber() : 0
-        setPvpBsCompleto(pvpBsFull, pvpBsFull > 0 ? toMaskedDisplay(pvpBsFull) : '0')
+        if (!costoContableSeed || tasaValor <= 0) {
+          setPvpUsdCompleto(0, '0')
+          setPvpBsCompleto(0, '0')
+          return
+        }
+        const { pvpUsd, pvpBs } = cascadaDesdeMargenManual(costoContableSeed, new Decimal(margenFull), new Decimal(tasaValor))
+        const pvpUsdN = pvpUsd.toNumber()
+        const pvpBsN = pvpBs.toNumber()
+        setPvpUsdCompleto(pvpUsdN, pvpUsdN > 0 ? toMaskedDisplay(pvpUsdN) : '0')
+        setPvpBsCompleto(pvpBsN, pvpBsN > 0 ? toMaskedDisplay(pvpBsN) : '0')
       }
-      prellenarPvpNivel(precioVentaUsdFullRef.current, setSbManualPvpUsdDetalCompleto, setSbManualPvpBsDetalCompleto)
-      prellenarPvpNivel(precioMayorUsdFullRef.current, setSbManualPvpUsdMayorCompleto, setSbManualPvpBsMayorCompleto)
-      prellenarPvpNivel(precioEspecialUsdFullRef.current, setSbManualPvpUsdEspecialCompleto, setSbManualPvpBsEspecialCompleto)
+      prellenarPvpDesdeMargenNivel(margenFullRef.current, setSbManualPvpUsdDetalCompleto, setSbManualPvpBsDetalCompleto)
+      if (nivel2) {
+        prellenarPvpDesdeMargenNivel(margenMayorFullRef.current, setSbManualPvpUsdMayorCompleto, setSbManualPvpBsMayorCompleto)
+      }
+      if (nivel3) {
+        prellenarPvpDesdeMargenNivel(margenEspecialFullRef.current, setSbManualPvpUsdEspecialCompleto, setSbManualPvpBsEspecialCompleto)
+      }
     }
     setModoRecalculo(modo)
   }
