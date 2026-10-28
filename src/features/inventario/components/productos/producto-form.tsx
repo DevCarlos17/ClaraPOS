@@ -21,7 +21,7 @@ import { db } from '@/core/db/powersync/db'
 import { usdToBs, bsToUsd } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { toMaskedDisplay, toFullDisplay } from '@/lib/decimal-display-mask'
-import { soloNumeroPositivo } from '@/lib/numeric-input'
+import { selectOnFocus, soloNumeroPositivo } from '@/lib/numeric-input'
 import {
   calcularPrecioPreservandoMargen,
   calcularPrecioPreservandoMargenD,
@@ -2452,10 +2452,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       inputMode="decimal"
                       value={esComboLocal ? '0' : costoUsd}
                       onChange={(e) => handleCostoUsdChange(soloNumeroPositivo(e.target.value))}
-                      onFocus={() =>
+                      onFocus={(e) => {
                         costoUsdFullRef.current > 0 &&
-                        setCostoUsd(toFullDisplay(costoUsdFullRef.current))
-                      }
+                          setCostoUsd(toFullDisplay(costoUsdFullRef.current))
+                        selectOnFocus(e)
+                      }}
                       onBlur={() =>
                         // Distingue "" (campo vacio) de "0" (cero tipeado
                         // explicitamente, dato real): solo el vacio se queda
@@ -2498,7 +2499,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       inputMode="decimal"
                       value={esComboLocal ? '0' : costoBs}
                       onChange={(e) => handleCostoBsChange(soloNumeroPositivo(e.target.value))}
-                      onFocus={() => setCostoBs(revealPrecioBsCompleto(costoUsdFullRef.current))}
+                      onFocus={(e) => {
+                        setCostoBs(revealPrecioBsCompleto(costoUsdFullRef.current))
+                        selectOnFocus(e)
+                      }}
                       onBlur={() => setCostoBs(maskPrecioBsCompleto(costoUsdFullRef.current))}
                       onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                       onWheel={stopScroll}
@@ -2557,10 +2561,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             inputMode="decimal"
                             value={costoFacturaStr}
                             onChange={(e) => handleCostoFacturaChange(soloNumeroPositivo(e.target.value))}
-                            onFocus={() =>
+                            onFocus={(e) => {
                               costoFacturaFullRef.current > 0 &&
-                              setCostoFacturaStr(toFullDisplay(costoFacturaFullRef.current))
-                            }
+                                setCostoFacturaStr(toFullDisplay(costoFacturaFullRef.current))
+                              selectOnFocus(e)
+                            }}
                             onBlur={() =>
                               setCostoFacturaStr(
                                 costoFacturaStr.trim() === '' ? '' : toMaskedDisplay(costoFacturaFullRef.current)
@@ -2582,10 +2587,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             inputMode="decimal"
                             value={tasaParalelaStr}
                             onChange={(e) => handleTasaParalelaChange(soloNumeroPositivo(e.target.value))}
-                            onFocus={() =>
+                            onFocus={(e) => {
                               tasaParalelaFullRef.current > 0 &&
-                              setTasaParalelaStr(toFullDisplay(tasaParalelaFullRef.current, 4))
-                            }
+                                setTasaParalelaStr(toFullDisplay(tasaParalelaFullRef.current, 4))
+                              selectOnFocus(e)
+                            }}
                             onBlur={() =>
                               setTasaParalelaStr(
                                 tasaParalelaStr.trim() === '' ? '' : toMaskedDisplay(tasaParalelaFullRef.current, 4)
@@ -2840,10 +2846,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               value={margen}
                               onChange={(e) => handleMargenChange(soloNumeroPositivo(e.target.value))}
-                              onFocus={() =>
+                              onFocus={(e) => {
                                 margenFullRef.current > 0 &&
-                                setMargen(toFullDisplay(margenFullRef.current))
-                              }
+                                  setMargen(toFullDisplay(margenFullRef.current))
+                                selectOnFocus(e)
+                              }}
                               onBlur={() =>
                                 // Distingue "" (vacio) de "0" (cero explicito).
                                 setMargen(
@@ -2866,10 +2873,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               value={precioVentaUsd}
                               onChange={(e) => handlePrecioVentaUsdChange(soloNumeroPositivo(e.target.value))}
-                              onFocus={() =>
+                              onFocus={(e) => {
                                 precioVentaUsdFullRef.current > 0 &&
-                                setPrecioVentaUsd(toFullDisplay(precioVentaUsdFullRef.current))
-                              }
+                                  setPrecioVentaUsd(toFullDisplay(precioVentaUsdFullRef.current))
+                                selectOnFocus(e)
+                              }}
                               onBlur={() =>
                                 // Distingue "" (vacio) de "0" (cero explicito).
                                 setPrecioVentaUsd(
@@ -2898,7 +2906,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               value={precioVentaBs}
                               onChange={(e) => handlePrecioVentaBsChange(soloNumeroPositivo(e.target.value))}
-                              onFocus={() => setPrecioVentaBs(revealPrecioBsCompleto(precioVentaUsdFullRef.current))}
+                              onFocus={(e) => {
+                                setPrecioVentaBs(revealPrecioBsCompleto(precioVentaUsdFullRef.current))
+                                selectOnFocus(e)
+                              }}
                               onBlur={() => setPrecioVentaBs(maskPrecioBsCompleto(precioVentaUsdFullRef.current))}
                               onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                               onWheel={stopScroll}
@@ -2925,9 +2936,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   inputMode="decimal"
                                   value={precioFinalDetalUsd}
                                   onChange={(e) => handlePrecioFinalDetalUsdChange(soloNumeroPositivo(e.target.value))}
-                                  onFocus={() => {
+                                  onFocus={(e) => {
                                     precioFinalFocusRef.current.add('detalUsd')
                                     if (pfDetalUsd > 0) setPrecioFinalDetalUsd(toFullDisplay(pfDetalUsd))
+                                    selectOnFocus(e)
                                   }}
                                   onBlur={() => {
                                     precioFinalFocusRef.current.delete('detalUsd')
@@ -2945,9 +2957,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   inputMode="decimal"
                                   value={precioFinalDetalBs}
                                   onChange={(e) => handlePrecioFinalDetalBsChange(soloNumeroPositivo(e.target.value))}
-                                  onFocus={() => {
+                                  onFocus={(e) => {
                                     precioFinalFocusRef.current.add('detalBs')
                                     if (pfDetalBs > 0) setPrecioFinalDetalBs(toFullDisplay(pfDetalBs))
+                                    selectOnFocus(e)
                                   }}
                                   onBlur={() => {
                                     precioFinalFocusRef.current.delete('detalBs')
@@ -2978,10 +2991,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               value={margenMayor}
                               onChange={(e) => handleMargenMayorChange(soloNumeroPositivo(e.target.value))}
-                              onFocus={() =>
+                              onFocus={(e) => {
                                 margenMayorFullRef.current > 0 &&
-                                setMargenMayor(toFullDisplay(margenMayorFullRef.current))
-                              }
+                                  setMargenMayor(toFullDisplay(margenMayorFullRef.current))
+                                selectOnFocus(e)
+                              }}
                               onBlur={() =>
                                 // Distingue "" (vacio) de "0" (cero explicito).
                                 setMargenMayor(
@@ -3004,10 +3018,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               value={precioMayorUsd}
                               onChange={(e) => handlePrecioMayorUsdChange(soloNumeroPositivo(e.target.value))}
-                              onFocus={() =>
+                              onFocus={(e) => {
                                 precioMayorUsdFullRef.current > 0 &&
-                                setPrecioMayorUsd(toFullDisplay(precioMayorUsdFullRef.current))
-                              }
+                                  setPrecioMayorUsd(toFullDisplay(precioMayorUsdFullRef.current))
+                                selectOnFocus(e)
+                              }}
                               onBlur={() =>
                                 // Distingue "" (vacio) de "0" (cero explicito).
                                 setPrecioMayorUsd(
@@ -3036,7 +3051,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               value={precioMayorBs}
                               onChange={(e) => handlePrecioMayorBsChange(soloNumeroPositivo(e.target.value))}
-                              onFocus={() => setPrecioMayorBs(revealPrecioBsCompleto(precioMayorUsdFullRef.current))}
+                              onFocus={(e) => {
+                                setPrecioMayorBs(revealPrecioBsCompleto(precioMayorUsdFullRef.current))
+                                selectOnFocus(e)
+                              }}
                               onBlur={() => setPrecioMayorBs(maskPrecioBsCompleto(precioMayorUsdFullRef.current))}
                               onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                               onWheel={stopScroll}
@@ -3063,9 +3081,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   inputMode="decimal"
                                   value={precioFinalMayorUsd}
                                   onChange={(e) => handlePrecioFinalMayorUsdChange(soloNumeroPositivo(e.target.value))}
-                                  onFocus={() => {
+                                  onFocus={(e) => {
                                     precioFinalFocusRef.current.add('mayorUsd')
                                     if (pfMayorUsd > 0) setPrecioFinalMayorUsd(toFullDisplay(pfMayorUsd))
+                                    selectOnFocus(e)
                                   }}
                                   onBlur={() => {
                                     precioFinalFocusRef.current.delete('mayorUsd')
@@ -3083,9 +3102,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   inputMode="decimal"
                                   value={precioFinalMayorBs}
                                   onChange={(e) => handlePrecioFinalMayorBsChange(soloNumeroPositivo(e.target.value))}
-                                  onFocus={() => {
+                                  onFocus={(e) => {
                                     precioFinalFocusRef.current.add('mayorBs')
                                     if (pfMayorBs > 0) setPrecioFinalMayorBs(toFullDisplay(pfMayorBs))
+                                    selectOnFocus(e)
                                   }}
                                   onBlur={() => {
                                     precioFinalFocusRef.current.delete('mayorBs')
@@ -3117,10 +3137,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               value={margenEspecial}
                               onChange={(e) => handleMargenEspecialChange(soloNumeroPositivo(e.target.value))}
-                              onFocus={() =>
+                              onFocus={(e) => {
                                 margenEspecialFullRef.current > 0 &&
-                                setMargenEspecial(toFullDisplay(margenEspecialFullRef.current))
-                              }
+                                  setMargenEspecial(toFullDisplay(margenEspecialFullRef.current))
+                                selectOnFocus(e)
+                              }}
                               onBlur={() =>
                                 // Distingue "" (vacio) de "0" (cero explicito).
                                 setMargenEspecial(
@@ -3143,10 +3164,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               value={precioEspecialUsd}
                               onChange={(e) => handlePrecioEspecialUsdChange(soloNumeroPositivo(e.target.value))}
-                              onFocus={() =>
+                              onFocus={(e) => {
                                 precioEspecialUsdFullRef.current > 0 &&
-                                setPrecioEspecialUsd(toFullDisplay(precioEspecialUsdFullRef.current))
-                              }
+                                  setPrecioEspecialUsd(toFullDisplay(precioEspecialUsdFullRef.current))
+                                selectOnFocus(e)
+                              }}
                               onBlur={() =>
                                 // Distingue "" (vacio) de "0" (cero explicito).
                                 setPrecioEspecialUsd(
@@ -3177,7 +3199,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               value={precioEspecialBs}
                               onChange={(e) => handlePrecioEspecialBsChange(soloNumeroPositivo(e.target.value))}
-                              onFocus={() => setPrecioEspecialBs(revealPrecioBsCompleto(precioEspecialUsdFullRef.current))}
+                              onFocus={(e) => {
+                                setPrecioEspecialBs(revealPrecioBsCompleto(precioEspecialUsdFullRef.current))
+                                selectOnFocus(e)
+                              }}
                               onBlur={() => setPrecioEspecialBs(maskPrecioBsCompleto(precioEspecialUsdFullRef.current))}
                               onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                               onWheel={stopScroll}
@@ -3204,9 +3229,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   inputMode="decimal"
                                   value={precioFinalEspecialUsd}
                                   onChange={(e) => handlePrecioFinalEspecialUsdChange(soloNumeroPositivo(e.target.value))}
-                                  onFocus={() => {
+                                  onFocus={(e) => {
                                     precioFinalFocusRef.current.add('especialUsd')
                                     if (pfEspecialUsd > 0) setPrecioFinalEspecialUsd(toFullDisplay(pfEspecialUsd))
+                                    selectOnFocus(e)
                                   }}
                                   onBlur={() => {
                                     precioFinalFocusRef.current.delete('especialUsd')
@@ -3224,9 +3250,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   inputMode="decimal"
                                   value={precioFinalEspecialBs}
                                   onChange={(e) => handlePrecioFinalEspecialBsChange(soloNumeroPositivo(e.target.value))}
-                                  onFocus={() => {
+                                  onFocus={(e) => {
                                     precioFinalFocusRef.current.add('especialBs')
                                     if (pfEspecialBs > 0) setPrecioFinalEspecialBs(toFullDisplay(pfEspecialBs))
+                                    selectOnFocus(e)
                                   }}
                                   onBlur={() => {
                                     precioFinalFocusRef.current.delete('especialBs')
