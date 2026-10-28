@@ -240,11 +240,11 @@ export function cascadaDesdePvpBsManual(
 }
 
 /**
- * Bloqueo de "Confirmar cambios" del modo "Editar manual todo" (sandbox Tasa
- * Paralela): `true` si CUALQUIER margen % de la lista es negativo. Extraida
+ * Bloqueo de "Confirmar cambios" del sandbox "Tasa Paralela" (los 3 modos de
+ * recalculo): `true` si CUALQUIER margen % de la lista es negativo. Extraida
  * como funcion pura (en vez de vivir como closure sobre el estado del
  * componente) para que sea unit-testeable sin montar `ProductoForm` — el
- * caller (`hayMargenNegativoManual` en producto-form.tsx) solo arma el
+ * caller (`hayMargenNegativoSandbox` en producto-form.tsx) solo arma el
  * array con los margenes de los niveles VISIBLES para ese tenant (Detal
  * siempre, Mayor/Especial `null` si el nivel no esta activo).
  *
