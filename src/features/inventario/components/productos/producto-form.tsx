@@ -1283,23 +1283,37 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   /**
-   * Bloqueo de "Confirmar cambios" (modo "Editar manual todo"): `true` si
+   * Bloqueo de "Confirmar cambios" del sandbox "Tasa Paralela": `true` si
    * CUALQUIER nivel visible (Detal siempre, Mayor/Especial solo si el
-   * tenant los tiene activos) quedo con margen negativo tras cualquier
-   * edicion de Margen %, Precio Venta $ o Precio Venta Bs. El margen manual
-   * nunca clampea a 0 (a diferencia de `handleMargenChange` del form real)
-   * porque el objetivo es AVISAR y BLOQUEAR, no corregir en silencio (ver
-   * design.md, "Bloqueo de margen negativo"). El chequeo en si es la
+   * tenant los tiene activos) quedaria con margen negativo al confirmar,
+   * sea cual sea el modo de recalculo elegido ('margen', 'mantener_pvp' o
+   * 'manual'). El margen manual nunca clampea a 0 (a diferencia de
+   * `handleMargenChange` del form real) porque el objetivo es AVISAR y
+   * BLOQUEAR, no corregir en silencio (ver design.md, "Bloqueo de margen
+   * negativo"). Los modos 'margen' y 'mantener_pvp' convergen en
+   * `calcularPreviewNivel(nivel)` — la misma funcion que alimenta la tabla
+   * de preview Y que `handleConfirmarSandbox` vuelve a llamar para
+   * escribir el form real — asi que leer su `margenPct` aqui es
+   * exactamente lo que se confirmaria. El chequeo en si sigue siendo la
    * funcion pura `hayMargenNegativoEnNiveles` (unit-testeable sin montar
    * este componente); aqui solo se arma el array de margenes VISIBLES para
-   * este tenant, leyendo el estado directo (sin memo).
+   * este tenant segun el modo activo.
    */
-  function hayMargenNegativoManual(): boolean {
-    if (modoRecalculo !== 'manual') return false
+  function hayMargenNegativoSandbox(): boolean {
+    if (modoRecalculo === 'manual') {
+      return hayMargenNegativoEnNiveles([
+        sbManualMargenDetal,
+        nivel2 ? sbManualMargenMayor : null,
+        nivel3 ? sbManualMargenEspecial : null,
+      ])
+    }
+    const detal = calcularPreviewNivel('detal')
+    const mayor = nivel2 ? calcularPreviewNivel('mayor') : null
+    const especial = nivel3 ? calcularPreviewNivel('especial') : null
     return hayMargenNegativoEnNiveles([
-      sbManualMargenDetal,
-      nivel2 ? sbManualMargenMayor : null,
-      nivel3 ? sbManualMargenEspecial : null,
+      detal.margenPct.toString(),
+      mayor ? mayor.margenPct.toString() : null,
+      especial ? especial.margenPct.toString() : null,
     ])
   }
 
@@ -1460,9 +1474,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
    */
   function handleConfirmarSandbox() {
     // Defensa en profundidad: el boton ya esta `disabled` cuando hay margen
-    // negativo en modo manual (ver JSX), pero este guard evita confirmar si
-    // se llamara por otra via (p.ej. Enter en algun input del sandbox).
-    if (hayMargenNegativoManual()) return
+    // negativo en cualquier modo (ver JSX), pero este guard evita confirmar
+    // si se llamara por otra via (p.ej. Enter en algun input del sandbox).
+    if (hayMargenNegativoSandbox()) return
     const costoContable = calcularCostoContablePreview()
     if (!costoContable) return
     const costoContableN = costoContable.toNumber()
@@ -3127,9 +3141,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               <button
                                 type="button"
                                 onClick={handleConfirmarSandbox}
-                                disabled={hayMargenNegativoManual()}
+                                disabled={hayMargenNegativoSandbox()}
                                 className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-                                  hayMargenNegativoManual()
+                                  hayMargenNegativoSandbox()
                                     ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                                     : 'text-white bg-blue-600 hover:bg-blue-700'
                                 }`}
@@ -3144,7 +3158,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                 Deshacer
                               </button>
                             </div>
-                            {hayMargenNegativoManual() && (
+                            {hayMargenNegativoSandbox() && (
                               <p className="text-red-600 text-xs">
                                 No se puede confirmar: hay niveles con margen negativo.
                               </p>
