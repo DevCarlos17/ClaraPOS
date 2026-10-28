@@ -6,6 +6,11 @@ import {
   debeExplorarCosto,
   calcularCostoDesdeNivel,
   fijarCostoYCascada,
+  calcularMargenPreservandoPvp,
+  cascadaDesdeMargenManual,
+  cascadaDesdePvpUsdManual,
+  cascadaDesdePvpBsManual,
+  hayMargenNegativoEnNiveles,
 } from '../producto-precio-gating'
 
 describe('calcularPrecioPreservandoMargen', () => {
@@ -137,5 +142,134 @@ describe('fijarCostoYCascada', () => {
       margenEspecialPct: new Decimal(10),
     })
     expect(resultado.detalUsd.toFixed(2)).toBe('100.00')
+  })
+})
+
+describe('calcularMargenPreservandoPvp', () => {
+  it('retorna 0 cuando el costo es 0 (nada que derivar aun, sin division por cero)', () => {
+    const margen = calcularMargenPreservandoPvp(new Decimal(0), new Decimal(150))
+    expect(margen.toFixed(2)).toBe('0.00')
+  })
+
+  it('retorna 0 cuando el costo es negativo', () => {
+    const margen = calcularMargenPreservandoPvp(new Decimal(-10), new Decimal(150))
+    expect(margen.toFixed(2)).toBe('0.00')
+  })
+
+  it('retorna 0 cuando el pvp es 0 (nada que derivar aun)', () => {
+    const margen = calcularMargenPreservandoPvp(new Decimal(100), new Decimal(0))
+    expect(margen.toFixed(2)).toBe('0.00')
+  })
+
+  it('retorna 0 cuando el pvp es negativo', () => {
+    const margen = calcularMargenPreservandoPvp(new Decimal(100), new Decimal(-5))
+    expect(margen.toFixed(2)).toBe('0.00')
+  })
+
+  it('caso normal: costo 100, pvp 150 -> margen 50%', () => {
+    const margen = calcularMargenPreservandoPvp(new Decimal(100), new Decimal(150))
+    expect(margen.toFixed(2)).toBe('50.00')
+  })
+})
+
+describe('cascadaDesdeMargenManual', () => {
+  it('margen normal: costo 100, margen 50%, tasa 40 -> pvp$ 150, pvpBs 6000', () => {
+    const resultado = cascadaDesdeMargenManual(new Decimal(100), new Decimal(50), new Decimal(40))
+    expect(resultado.margenPct.toFixed(2)).toBe('50.00')
+    expect(resultado.pvpUsd.toFixed(2)).toBe('150.00')
+    expect(resultado.pvpBs.toFixed(2)).toBe('6000.00')
+  })
+
+  it('margen muy negativo clampea el pvp$ a 0 (y por lo tanto pvpBs a 0)', () => {
+    const resultado = cascadaDesdeMargenManual(new Decimal(100), new Decimal(-200), new Decimal(40))
+    expect(resultado.pvpUsd.toFixed(2)).toBe('0.00')
+    expect(resultado.pvpBs.toFixed(2)).toBe('0.00')
+  })
+
+  it('margen 0% -> pvp$ iguala el costo y pvpBs es costo * tasa', () => {
+    const resultado = cascadaDesdeMargenManual(new Decimal(100), new Decimal(0), new Decimal(40))
+    expect(resultado.pvpUsd.toFixed(2)).toBe('100.00')
+    expect(resultado.pvpBs.toFixed(2)).toBe('4000.00')
+  })
+})
+
+describe('cascadaDesdePvpUsdManual', () => {
+  it('pvp$ mayor al costo -> margen positivo y pvpBs consistente', () => {
+    const resultado = cascadaDesdePvpUsdManual(new Decimal(100), new Decimal(150), new Decimal(40))
+    expect(resultado.margenPct.toFixed(2)).toBe('50.00')
+    expect(resultado.pvpUsd.toFixed(2)).toBe('150.00')
+    expect(resultado.pvpBs.toFixed(2)).toBe('6000.00')
+  })
+
+  it('pvp$ menor al costo -> margen negativo (no clampea, solo informa)', () => {
+    const resultado = cascadaDesdePvpUsdManual(new Decimal(100), new Decimal(80), new Decimal(40))
+    expect(resultado.margenPct.toFixed(2)).toBe('-20.00')
+    expect(resultado.pvpBs.toFixed(2)).toBe('3200.00')
+  })
+
+  it('pvp$ en 0 -> margen 0 via guard de calcularMargenPreservandoPvp, pvpBs 0', () => {
+    const resultado = cascadaDesdePvpUsdManual(new Decimal(100), new Decimal(0), new Decimal(40))
+    expect(resultado.margenPct.toFixed(2)).toBe('0.00')
+    expect(resultado.pvpBs.toFixed(2)).toBe('0.00')
+  })
+
+  it('costo en 0 (div0 guard) -> margen 0 sin NaN/Infinity', () => {
+    const resultado = cascadaDesdePvpUsdManual(new Decimal(0), new Decimal(150), new Decimal(40))
+    expect(resultado.margenPct.toFixed(2)).toBe('0.00')
+    expect(resultado.margenPct.isNaN()).toBe(false)
+  })
+})
+
+describe('cascadaDesdePvpBsManual', () => {
+  it('tasa normal: costo 100, pvpBs 6000, tasa 40 -> pvp$ 150, margen 50%', () => {
+    const resultado = cascadaDesdePvpBsManual(new Decimal(100), new Decimal(6000), new Decimal(40))
+    expect(resultado.pvpUsd.toFixed(2)).toBe('150.00')
+    expect(resultado.margenPct.toFixed(2)).toBe('50.00')
+    expect(resultado.pvpBs.toFixed(2)).toBe('6000.00')
+  })
+
+  it('tasa en 0 (guard de bsToUsd) -> pvp$ 0 y margen 0, sin NaN/Infinity', () => {
+    const resultado = cascadaDesdePvpBsManual(new Decimal(100), new Decimal(6000), new Decimal(0))
+    expect(resultado.pvpUsd.toFixed(2)).toBe('0.00')
+    expect(resultado.margenPct.toFixed(2)).toBe('0.00')
+    expect(resultado.pvpUsd.isNaN()).toBe(false)
+    expect(resultado.margenPct.isNaN()).toBe(false)
+  })
+
+  it('round-trip $->Bs->$ preserva precision de 8 decimales (tasa no entera)', () => {
+    const costo = new Decimal(100)
+    const tasa = new Decimal('37.6543')
+    const pvpUsdOriginal = new Decimal('123.45678901')
+    const pvpBs = pvpUsdOriginal.times(tasa)
+
+    const resultado = cascadaDesdePvpBsManual(costo, pvpBs, tasa)
+
+    expect(resultado.pvpUsd.toFixed(8)).toBe(pvpUsdOriginal.toFixed(8))
+  })
+
+  it('costo en 0 (div0 guard) -> margen 0 sin NaN/Infinity, pvp$ sigue derivandose de Bs', () => {
+    const resultado = cascadaDesdePvpBsManual(new Decimal(0), new Decimal(6000), new Decimal(40))
+    expect(resultado.pvpUsd.toFixed(2)).toBe('150.00')
+    expect(resultado.margenPct.toFixed(2)).toBe('0.00')
+    expect(resultado.margenPct.isNaN()).toBe(false)
+  })
+})
+
+describe('hayMargenNegativoEnNiveles', () => {
+  it('ningun nivel negativo -> false', () => {
+    expect(hayMargenNegativoEnNiveles(['50.00', '30.00', '10.00'])).toBe(false)
+  })
+
+  it('un nivel negativo (mayor) entre 3 -> true', () => {
+    expect(hayMargenNegativoEnNiveles(['50.00', '-5.00', '10.00'])).toBe(true)
+  })
+
+  it('niveles ausentes (null, tenant sin mayor/especial) se ignoran, no cuentan como negativos', () => {
+    expect(hayMargenNegativoEnNiveles(['-1.00', null, null])).toBe(true)
+    expect(hayMargenNegativoEnNiveles(['5.00', null, null])).toBe(false)
+  })
+
+  it('string vacio (campo en blanco) no se considera negativo', () => {
+    expect(hayMargenNegativoEnNiveles(['', '30.00', ''])).toBe(false)
   })
 })
