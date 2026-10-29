@@ -133,6 +133,15 @@ describe('MovimientosTable — Historico — boton Desconciliar (nuevo, flip de 
     expect(screen.queryByRole('button', { name: 'Desconciliar' })).not.toBeInTheDocument()
   })
 
+  it('NUEVO (terminal, change reverso-terminal-tesoreria): NO se renderiza cuando origen=REVERSO, aunque validado=1 y reversado=0', () => {
+    const onDesconciliar = vi.fn()
+    const row = buildRow({ validado: 1, reversado: 0, origen: 'REVERSO', onDesconciliar })
+
+    render(<MovimientosTable movimientos={[row]} modo="historico" />)
+
+    expect(screen.queryByRole('button', { name: 'Desconciliar' })).not.toBeInTheDocument()
+  })
+
   it('al hacer click invoca onDesconciliar con el id correcto, SIN tocar onReversar', async () => {
     const onDesconciliar = vi.fn()
     const onReversar = vi.fn()
@@ -175,5 +184,26 @@ describe('MovimientosTable — Pendientes — boton Rechazar (regresion)', () =>
     render(<MovimientosTable movimientos={[row]} modo="pendiente" />)
 
     expect(screen.queryByRole('button', { name: 'Rechazar' })).not.toBeInTheDocument()
+  })
+
+  it('NUEVO (defensa en profundidad, change reverso-terminal-tesoreria): NO se muestra cuando origen=REVERSO, sin importar validado', () => {
+    const onReversar = vi.fn()
+    const rowPendiente = buildRow({ id: 'mov-rev-0', validado: 0, reversado: 0, origen: 'REVERSO', onReversar })
+    const rowValidado = buildRow({ id: 'mov-rev-1', validado: 1, reversado: 0, origen: 'REVERSO', onReversar })
+
+    render(<MovimientosTable movimientos={[rowPendiente, rowValidado]} modo="pendiente" />)
+
+    expect(screen.queryByRole('button', { name: 'Rechazar' })).not.toBeInTheDocument()
+  })
+})
+
+describe('MovimientosTable — Pendientes — boton Conciliar (regresion: mecanismo legado reversarMovBancario)', () => {
+  it('REGRESSION GUARD: SIGUE mostrando Conciliar para origen=REVERSO con validado=0 (reverso legado de GASTO/PAGO_PROVEEDOR/MANUAL/TRASPASO via reversarMovBancario, gate Conciliar permanece origin-agnostic)', () => {
+    const onValidar = vi.fn()
+    const row = buildRow({ validado: 0, reversado: 0, origen: 'REVERSO', onValidar })
+
+    render(<MovimientosTable movimientos={[row]} modo="pendiente" />)
+
+    expect(screen.getByRole('button', { name: 'Conciliar' })).toBeInTheDocument()
   })
 })

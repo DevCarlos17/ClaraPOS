@@ -258,7 +258,7 @@ function PendienteRow({
               Conciliar
             </Button>
           )}
-          {!isReversado && mov.onReversar && (
+          {!isReversado && mov.origen !== 'REVERSO' && mov.onReversar && (
             <Button
               size="sm"
               variant="ghost"
@@ -391,7 +391,7 @@ function HistoricoRow({
       {/* Acciones */}
       <td className="py-3 px-4 text-right">
         <div className="flex items-center justify-end gap-1">
-          {isValidado && !isReversado && mov.onDesconciliar && (
+          {isValidado && !isReversado && mov.origen !== 'REVERSO' && mov.onDesconciliar && (
             <Button
               size="sm"
               variant="ghost"
