@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { ConsultaFacturaModal } from '../consulta-factura-modal'
@@ -13,11 +13,39 @@ import {
 import type { FacturaParaAnular } from '../../hooks/use-notas-credito'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useGastoAbsorcionFactura } from '@/features/contabilidad/hooks/use-gastos'
+import { usePagosFactura } from '@/features/cxc/hooks/use-cxc'
+import { clasificarAbonoParaReverso } from '../../hooks/use-clasificar-abono-reverso'
 
 // PR3b (reimpresion-factura-fiscal): la logica de reconstruccion de recibo
 // (useReciboDesdeFactura) ya tiene su propia suite (recibo-desde-factura.test.ts).
 // Este modal solo compone: hook -> FacturaDetallePanel + Descargar/Compartir.
 vi.mock('../../utils/recibo-desde-factura', () => ({ useReciboDesdeFactura: vi.fn() }))
+
+// consulta-factura-reverso-abono-directo (Unit 2): `usePagosFactura` (el
+// mismo hook, llamado directo por este modal para las filas crudas de
+// "Abonos individuales") importa `use-cxc.ts`, que arrastra `db.ts`
+// (instancia un `PowerSyncDatabase` real al cargarse) — se mockea en el
+// boundary, mismo criterio que `recibo-desde-factura.test.ts`.
+vi.mock('@/features/cxc/hooks/use-cxc', () => ({ usePagosFactura: vi.fn() }))
+
+// `clasificarAbonoParaReverso` (Unit 1, llamado directo por este modal para
+// derivar `estadoReverso`/`mensajeDeshabilitado` por fila) arrastra
+// `use-clasificar-abono-reverso.ts` -> `db.ts` real — se mockea en el
+// boundary, mismo criterio que `usePagosFactura` arriba. Ninguno de los
+// tests existentes/Unit 2 de este archivo ejercita su resultado (eso vive
+// en `confirmar-reverso-abono-modal.test.tsx`/`factura-detalle-panel.test.tsx`).
+vi.mock('../../hooks/use-clasificar-abono-reverso', () => ({
+  clasificarAbonoParaReverso: vi.fn().mockResolvedValue({ pagoId: '', estado: 'LEGACY', sesionCerrada: false }),
+}))
+
+// `ConfirmarReversoAbonoModal` tiene su propia suite — aqui se mockea
+// SHALLOW para probar solo que este modal lo renderiza/cablea (mismo
+// criterio que `FacturaDetallePanel` abajo).
+vi.mock('../confirmar-reverso-abono-modal', () => ({
+  ConfirmarReversoAbonoModal: ({ pagoId, isOpen }: { pagoId: string | null; isOpen: boolean }) => (
+    <div data-testid="confirmar-reverso-abono-modal" data-pago-id={pagoId ?? ''} data-is-open={String(isOpen)} />
+  ),
+}))
 
 vi.mock('../../utils/factura-export', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../utils/factura-export')>()
@@ -30,19 +58,34 @@ vi.mock('../../utils/factura-export', async (importOriginal) => {
 // data-attribute para probar el wiring de este modal sin re-mockear
 // `FacturaDetallePanel` por completo (mismo criterio que los otros mocks
 // de esta suite).
+// consulta-factura-reverso-abono-directo (Unit 2): el mock EXPONE
+// `pagosIndividuales`/`onReversarAbono` (via un boton por fila) para poder
+// probar el wiring de este modal sin re-mockear `FacturaDetallePanel` por
+// completo (mismo criterio que `gastoAbsorbido` arriba).
 vi.mock('../factura-detalle-panel', () => ({
   FacturaDetallePanel: ({
     recibo,
     gastoAbsorbido,
+    pagosIndividuales,
+    onReversarAbono,
   }: {
     recibo: ReciboData | null
     gastoAbsorbido?: { montoUsd: string; tipo: string } | null
+    pagosIndividuales?: { id: string }[]
+    onReversarAbono?: (pagoId: string) => void
   }) => (
     <div
       data-testid="factura-detalle-panel"
       data-nro-factura={recibo?.nroFactura ?? ''}
       data-gasto-absorbido-monto={gastoAbsorbido?.montoUsd ?? ''}
-    />
+      data-pagos-individuales-count={pagosIndividuales?.length ?? 0}
+    >
+      {pagosIndividuales?.map((p) => (
+        <button key={p.id} type="button" onClick={() => onReversarAbono?.(p.id)}>
+          Reversar {p.id}
+        </button>
+      ))}
+    </div>
   ),
 }))
 
@@ -56,6 +99,7 @@ const mockedCompartirReciboImagen = vi.mocked(compartirReciboImagen)
 const mockedToastError = vi.mocked(toast.error)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 const mockedUseGastoAbsorcionFactura = vi.mocked(useGastoAbsorcionFactura)
+const mockedUsePagosFactura = vi.mocked(usePagosFactura)
 
 function baseInput(overrides: Partial<BuildReciboDataInput> = {}): BuildReciboDataInput {
   return {
@@ -108,6 +152,7 @@ beforeEach(() => {
     loading: false,
   })
   mockedUseGastoAbsorcionFactura.mockReturnValue({ gasto: null, isLoading: false })
+  mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
 })
 
 afterEach(() => {
@@ -250,5 +295,97 @@ describe('ConsultaFacturaModal — nc-reembolso-real-reverso-gasto (Slice B: pas
     render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
 
     expect(mockedUseGastoAbsorcionFactura).toHaveBeenCalledWith(VENTA.nro_factura, 'emp-1')
+  })
+})
+
+// ─── consulta-factura-reverso-abono-directo (Unit 2): filas crudas de
+// `usePagosFactura` (id/is_reversed, perdidos por `agruparPagosPorMetodo`)
+// se mapean a `pagosIndividuales` y se cablean al modal de confirmacion. ──
+
+describe('ConsultaFacturaModal — Unit 2 (abonos individuales + ConfirmarReversoAbonoModal)', () => {
+  it('mapea pagosRaw (id/metodo/monto/moneda/fecha/is_reversed) a pagosIndividuales del panel', async () => {
+    mockedUseReciboDesdeFactura.mockReturnValue({ recibo: reciboFixture(), isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [
+        {
+          id: 'pago-1',
+          venta_id: 'venta-1',
+          metodo_cobro_id: 'm1',
+          moneda_id: 'mon-1',
+          tasa: '36.50',
+          monto: '23.20',
+          monto_usd: '23.20',
+          referencia: null,
+          fecha: '2026-05-10T10:00:00-04:00',
+          metodo_nombre: 'Efectivo USD',
+          moneda_label: 'USD',
+          is_reversed: 0,
+          reversed_at: null,
+          reversed_by: null,
+          reversed_reason: null,
+          procesado_por_nombre: null,
+          created_by: null,
+        },
+      ],
+      isLoading: false,
+    })
+
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+
+    expect(screen.getByTestId('factura-detalle-panel')).toHaveAttribute(
+      'data-pagos-individuales-count',
+      '1'
+    )
+    expect(screen.getByRole('button', { name: 'Reversar pago-1' })).toBeInTheDocument()
+    await waitFor(() => expect(vi.mocked(clasificarAbonoParaReverso)).toHaveBeenCalledWith('emp-1', 'pago-1'))
+  })
+
+  it('sin pagos (default): pasa pagosIndividuales vacio, sin romper el resto del modal', () => {
+    mockedUseReciboDesdeFactura.mockReturnValue({ recibo: reciboFixture(), isLoading: false })
+
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+
+    expect(screen.getByTestId('factura-detalle-panel')).toHaveAttribute(
+      'data-pagos-individuales-count',
+      '0'
+    )
+  })
+
+  it('click en "Reversar {pagoId}" del panel abre ConfirmarReversoAbonoModal con ese pagoId', async () => {
+    const user = userEvent.setup()
+    mockedUseReciboDesdeFactura.mockReturnValue({ recibo: reciboFixture(), isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({
+      pagos: [
+        {
+          id: 'pago-9',
+          venta_id: 'venta-1',
+          metodo_cobro_id: 'm1',
+          moneda_id: 'mon-1',
+          tasa: '36.50',
+          monto: '10.00',
+          monto_usd: '10.00',
+          referencia: null,
+          fecha: '2026-05-10T10:00:00-04:00',
+          metodo_nombre: 'Transferencia',
+          moneda_label: 'USD',
+          is_reversed: 0,
+          reversed_at: null,
+          reversed_by: null,
+          reversed_reason: null,
+          procesado_por_nombre: null,
+          created_by: null,
+        },
+      ],
+      isLoading: false,
+    })
+
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+
+    expect(screen.getByTestId('confirmar-reverso-abono-modal')).toHaveAttribute('data-is-open', 'false')
+
+    await user.click(screen.getByRole('button', { name: 'Reversar pago-9' }))
+
+    expect(screen.getByTestId('confirmar-reverso-abono-modal')).toHaveAttribute('data-pago-id', 'pago-9')
+    expect(screen.getByTestId('confirmar-reverso-abono-modal')).toHaveAttribute('data-is-open', 'true')
   })
 })
