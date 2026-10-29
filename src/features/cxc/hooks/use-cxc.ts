@@ -1963,6 +1963,16 @@ export async function reversarPagoEnTx(tx: Transaction, params: ReversarPagoEnTx
 
   // 3. Si tiene factura: restaurar saldo_pend_usd
   let nroFactura = ''
+  // Delta REAL que la venta absorbio en este reverso (0<=delta<=montoUsd,
+  // clampeado por el techo `Decimal.min` de abajo). Fix doble-conteo
+  // (sdd/reverso-abono-tesoreria/design-fix-doble-saldo, D1): el Step 4
+  // reabre la deuda del CLIENTE usando ESTE delta, nunca el `montoUsd`
+  // crudo del pago — si la factura ya estaba restaurada (retry/race), la
+  // venta absorbe 0 y el cliente tampoco debe subir. Default = montoUsd
+  // preserva el comportamiento historico para el caso (no esperado por
+  // construccion, ver docstring de `generatedLote` arriba) de un pago sin
+  // `venta_id` que tampoco genero lote SAF.
+  let ventaDeltaReal = montoUsd
   if (pago.venta_id) {
     const ventaResult = await tx.execute(
       `SELECT nro_factura, saldo_pend_usd, total_usd FROM ventas WHERE id = ?`,
@@ -1978,6 +1988,7 @@ export async function reversarPagoEnTx(tx: Transaction, params: ReversarPagoEnTx
       const saldoPendActual = new Decimal(venta.saldo_pend_usd || '0')
       const totalFactura = new Decimal(venta.total_usd || '0')
       const nuevoSaldoFactura = Decimal.min(totalFactura, saldoPendActual.plus(montoUsd))
+      ventaDeltaReal = nuevoSaldoFactura.minus(saldoPendActual)
       const estadoReverso = calcularEstadoVenta(nuevoSaldoFactura, totalFactura, 'REV')
       await tx.execute(`UPDATE ventas SET saldo_pend_usd = ?, estado = ? WHERE id = ?`, [
         toStorageString(nuevoSaldoFactura),
@@ -2009,8 +2020,13 @@ export async function reversarPagoEnTx(tx: Transaction, params: ReversarPagoEnTx
       reversedBy,
       now,
     })
-  } else {
-    // 4. Restaurar saldo del cliente
+  } else if (ventaDeltaReal.gt(0)) {
+    // 4. Restaurar saldo del cliente — SOLO por el delta REAL que la venta
+    // absorbio (`ventaDeltaReal`, Step 3), NUNCA por `montoUsd` crudo (fix
+    // doble-conteo, D1/D2). Si `ventaDeltaReal<=0` (factura ya estaba
+    // restaurada por un reverso previo/race), esta rama completa se
+    // omite: ni UPDATE clientes ni INSERT movimientos_cuenta — evita
+    // violar el CHECK monto>0 y el doble-conteo de saldo_actual.
     const clienteResult = await tx.execute(
       `SELECT saldo_actual, saldo_pendiente_usd FROM clientes WHERE id = ?`,
       [pago.cliente_id]
@@ -2020,12 +2036,12 @@ export async function reversarPagoEnTx(tx: Transaction, params: ReversarPagoEnTx
     }
     const clienteRevRow = clienteResult.rows.item(0) as { saldo_actual: string; saldo_pendiente_usd: string }
     const saldoActual = new Decimal(clienteRevRow.saldo_actual || '0')
-    const saldoNuevo = saldoActual.plus(montoUsd)
+    const saldoNuevo = saldoActual.plus(ventaDeltaReal)
     // Escritura optimista pareada de saldo_pendiente_usd (slice 1b,
     // cxc-ledger-saldos-redesign): un reverso de pago reabre deuda, igual
     // que FAC/NDB — mismo trigger (migrations/0110) como autoridad final.
     const saldoPendienteAnteriorRev = new Decimal(clienteRevRow.saldo_pendiente_usd || '0')
-    const saldoPendienteNuevoRev = calcularSaldoPendienteClienteNuevo('REV', saldoPendienteAnteriorRev, montoUsd)
+    const saldoPendienteNuevoRev = calcularSaldoPendienteClienteNuevo('REV', saldoPendienteAnteriorRev, ventaDeltaReal)
 
     await tx.execute(
       `UPDATE clientes SET saldo_actual = ?, saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?`,
@@ -2057,7 +2073,7 @@ export async function reversarPagoEnTx(tx: Transaction, params: ReversarPagoEnTx
         movId,
         pago.cliente_id,
         referencia,
-        toStorageString(montoUsd),
+        toStorageString(ventaDeltaReal),
         toStorageString(saldoActual),
         toStorageString(saldoNuevo),
         `Reverso de abono${nroFactura ? ` factura ${nroFactura}` : ''}: ${reason.trim()} (por ${reversedByNombre})`,
