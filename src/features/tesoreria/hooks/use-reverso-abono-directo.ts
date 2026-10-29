@@ -58,6 +58,9 @@ interface BridgeRow {
  *         inline: `tipo='EGRESO'`, `origen='REVERSO'`, `monto` = el total
  *         del ingreso — nunca la suma de `montoAplicadoUsd` por pago,
  *         `deposito_directo` garantiza `ingreso.monto = Sigma pagos`),
+ *         `validado=1`/`validado_por=userId`/`validado_at=now` (nace
+ *         directo en Historico como Validado, nunca en Pendientes — ver
+ *         `openspec/specs/tesoreria-reverso-abono-directo/spec.md`),
  *         decrementar `bancos_empresa.saldo_actual`, marcar el ingreso
  *         original `reversado=1`.
  *   (iii) Loop sobre los `pago_id` del puente delegando en
@@ -160,8 +163,9 @@ export async function reversarAbonoDirectoDesdeTesoreria(
     await tx.execute(
       `INSERT INTO movimientos_bancarios
          (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-          doc_origen_id, doc_origen_tipo, referencia, descripcion, validado, reversado, reverso_de, fecha, created_at, created_by)
-       VALUES (?, ?, ?, 'EGRESO', 'REVERSO', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          doc_origen_id, doc_origen_tipo, referencia, descripcion, validado, validado_por, validado_at,
+          reversado, reverso_de, fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'EGRESO', 'REVERSO', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         egresoId,
         empresaId,
@@ -173,7 +177,9 @@ export async function reversarAbonoDirectoDesdeTesoreria(
         mov.doc_origen_tipo,
         null,
         motivo,
-        0,
+        1,
+        userId,
+        now,
         0,
         ingresoId,
         todayStr(),

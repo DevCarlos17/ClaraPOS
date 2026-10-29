@@ -250,3 +250,71 @@ describe('ConciliacionTesoreria — Desconciliar desde Historico (nuevo, flip de
     expect(screen.queryByTestId('mock-reverso-modal')).not.toBeInTheDocument()
   })
 })
+
+// Change `reverso-directo-a-historico`: el egreso-contraparte de un
+// reverso de abono directo (`reversarAbonoDirectoDesdeTesoreria`) ahora
+// nace `validado=1`, `reversado=0`, `origen='REVERSO'` — directo en
+// Historico como Validado, nunca en Pendientes (cuya query SQL real
+// filtra `validado=0`). Esta suite prueba la regresion a nivel de UI: con
+// esa fila devuelta SOLO por el estado 'historico' del mock (Pendientes
+// vacio, reflejando el filtro real de `useMovBancariosFiltrados`), el
+// componente debe renderizarla en Historico con badge "Validado" y
+// UNICAMENTE el boton "Desconciliar" — nunca "Rechazar" (solo existe en
+// la tabla de Pendientes), "Conciliar" (gate exige `validado=0`) ni
+// "Reversar" (gate exige `origen==='TRANSFERENCIA_CLIENTE'`, y aqui el
+// origen es `'REVERSO'`) — ver `movimientos-table.tsx` `HistoricoRow`.
+describe('ConciliacionTesoreria — reverso de abono directo aterriza en Historico como Validado', () => {
+  const movReverso = buildMovBancario({
+    id: 'mov-reverso-1',
+    tipo: 'EGRESO',
+    origen: 'REVERSO',
+    validado: 1,
+    validado_por: 'user-1',
+    validado_at: '2026-10-29T10:00:00Z',
+    reversado: 0,
+    reverso_de: 'mov-ingreso-original-1',
+    descripcion: 'Transferencia duplicada por error',
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupDefaults()
+    // Pendientes SIEMPRE vacio para este escenario — refleja el filtro
+    // real `validado = 0 AND reversado = 0` de `useMovBancariosFiltrados`,
+    // que un movimiento validado=1 nunca satisface.
+    mockedUseMovBancariosFiltrados.mockImplementation(({ estado }) => {
+      if (estado === 'pendiente') {
+        return { data: [], total: 0, page: 1, totalPages: 1, isLoading: false }
+      }
+      return { data: [movReverso], total: 1, page: 1, totalPages: 1, isLoading: false }
+    })
+  })
+
+  it('la fila del reverso aparece en Historico (nunca en Pendientes) con badge Validado y UNICAMENTE "Desconciliar"', async () => {
+    render(<ConciliacionTesoreria />)
+
+    await seleccionarCuentaYTab('Pendientes')
+    expect(screen.getByText('No hay movimientos pendientes')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Rechazar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Conciliar' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Historico' }))
+
+    expect(screen.getByText('Validado')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Desconciliar' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reversar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Rechazar' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Conciliar' })).not.toBeInTheDocument()
+  })
+
+  it('click en "Desconciliar" sobre la fila del reverso llama desconciliarMovBancario con su id, NO ReversoModal', async () => {
+    render(<ConciliacionTesoreria />)
+
+    await seleccionarCuentaYTab('Historico')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Desconciliar' }))
+
+    expect(mockedDesconciliarMovBancario).toHaveBeenCalledWith('mov-reverso-1', 'empresa-1')
+    expect(screen.queryByTestId('mock-reverso-modal')).not.toBeInTheDocument()
+  })
+})

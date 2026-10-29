@@ -97,6 +97,25 @@ function setupWriteTransaction(opts: Parameters<typeof buildFakeTx>[0]) {
   return calls
 }
 
+/**
+ * Mapea los params posicionales del INSERT INTO movimientos_bancarios a un
+ * record { columna: valor }, leyendo la lista de columnas directamente del
+ * SQL — evita que las aserciones dependan del orden exacto de columnas
+ * (solo `tipo`/`origen` son literales embebidos en el SQL, no params).
+ */
+function parseInsertEgreso(call: Call): Record<string, unknown> {
+  const match = call.sql.match(/INSERT INTO movimientos_bancarios\s*\(([^)]+)\)/)
+  if (!match) throw new Error('No se pudo parsear columnas del INSERT INTO movimientos_bancarios')
+  const cols = match[1]!.split(',').map((c) => c.trim())
+  const literalCols = new Set(['tipo', 'origen'])
+  const paramCols = cols.filter((c) => !literalCols.has(c))
+  const record: Record<string, unknown> = { tipo: 'EGRESO', origen: 'REVERSO' }
+  paramCols.forEach((col, idx) => {
+    record[col] = call.params[idx]
+  })
+  return record
+}
+
 describe('reversarAbonoDirectoDesdeTesoreria — orquestador caso simple (sin SAF, slice 2b-i-a)', () => {
   it('escenario simple ($100, 1 factura, sin SAF): crea EXACTAMENTE 1 egreso, decrementa el banco, marca el ingreso reversado, y delega el reverso del pago a reversarPagoEnTx', async () => {
     mockedDb.getAll
@@ -127,6 +146,16 @@ describe('reversarAbonoDirectoDesdeTesoreria — orquestador caso simple (sin SA
     expect(egreso.params).toContain('Transferencia duplicada por error') // descripcion = motivo
     expect(egreso.params).toContain('user-1') // created_by
     expect(egreso.params).toContain('400.00000000') // saldo_nuevo = 500 - 100
+
+    // El egreso-reverso nace directo en Historico como Validado (nunca en
+    // Pendientes, ver spec `tesoreria-reverso-abono-directo`): validado=1,
+    // validado_por=userId que confirma el reverso, validado_at poblado
+    // (no NULL) — mismo patron que `validarMovBancario`.
+    const egresoRecord = parseInsertEgreso(egreso)
+    expect(egresoRecord.validado).toBe(1)
+    expect(egresoRecord.validado_por).toBe('user-1')
+    expect(egresoRecord.validado_at).toBeTruthy()
+    expect(typeof egresoRecord.validado_at).toBe('string')
 
     // bancos_empresa decrementado al saldo nuevo.
     const bancoUpdate = calls.find((c) => c.sql.startsWith('UPDATE bancos_empresa'))
@@ -359,6 +388,13 @@ describe('reversarAbonoDirectoDesdeTesoreria — caso global multi-factura (fan-
     expect(egresoInserts).toHaveLength(1)
     expect(egresoInserts[0]!.params).toContain('2.00000000')
 
+    // El egreso-reverso del abono global tambien nace Validado (nunca
+    // Pendiente) — misma regla que el caso simple.
+    const egresoRecordGlobal2 = parseInsertEgreso(egresoInserts[0]!)
+    expect(egresoRecordGlobal2.validado).toBe(1)
+    expect(egresoRecordGlobal2.validado_por).toBe('user-1')
+    expect(egresoRecordGlobal2.validado_at).toBeTruthy()
+
     // El banco se decrementa UNA sola vez por el total ($500 - $2 = $498),
     // nunca dos veces por $1 cada una.
     const bancoUpdate = calls.find((c) => c.sql.startsWith('UPDATE bancos_empresa'))
@@ -406,6 +442,13 @@ describe('reversarAbonoDirectoDesdeTesoreria — caso global multi-factura (fan-
     // igual a la suma de los 3 pagos individuales ($1+$1+$1), nunca
     // recomputado sumando por pago (viene directo de mov.monto).
     expect(egresoInserts[0]!.params).toContain('3.00000000')
+
+    // El egreso-reverso del abono global de 3 facturas tambien nace
+    // Validado (nunca Pendiente) — misma regla que el caso simple.
+    const egresoRecordGlobal3 = parseInsertEgreso(egresoInserts[0]!)
+    expect(egresoRecordGlobal3.validado).toBe(1)
+    expect(egresoRecordGlobal3.validado_por).toBe('user-1')
+    expect(egresoRecordGlobal3.validado_at).toBeTruthy()
 
     expect(mockedReversarPagoEnTx).toHaveBeenCalledTimes(3)
     const pagoIdsLlamados = mockedReversarPagoEnTx.mock.calls.map(
