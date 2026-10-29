@@ -30,6 +30,8 @@ import {
   type VencimientoVenta,
   type SafAplicacionFacturaCxc,
 } from '../hooks/use-cxc'
+import { clasificarAbonoParaReverso } from '@/features/ventas/hooks/use-clasificar-abono-reverso'
+import { reversarAbonoDirectoDesdeTesoreria } from '@/features/tesoreria/hooks/use-reverso-abono-directo'
 import Decimal from 'decimal.js'
 import { PagoFacturaModal } from './pago-factura-modal'
 
@@ -365,19 +367,40 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   }
 
   async function handleConfirmReverso(reason: string) {
-    if (!pagoAReverse || !supervisorId || !user) return
+    if (!pagoAReverse || !supervisorId || !user?.empresa_id) return
     setReversing(true)
     try {
       const reversedByNombre = hasPermission(PERMISSIONS.CXC_REVERSE)
         ? user.nombre
         : 'Supervisor'
-      await registrarReversoAbono({
-        pago_id: pagoAReverse.id,
-        reason,
-        reversed_by: supervisorId,
-        reversed_by_nombre: reversedByNombre,
-        empresa_id: user.empresa_id!,
-      })
+
+      // Bug fix (tesoreria-reverso-abono-directo, Unit 3): un abono DIRECTO
+      // (fila en el puente `movimientos_bancarios_pagos`) debe enrutarse al
+      // orquestador de tesoreria para que el egreso bancario contraparte se
+      // cree y `bancos_empresa.saldo_actual` decremente — reversarlo via
+      // `registrarReversoAbono` (CxC-only, sin leg bancario) dejaba el saldo
+      // del banco inflado permanentemente (bug ya en produccion). No-DIRECT
+      // (BATCH/SAF/LEGACY) preserva EXACTAMENTE el comportamiento previo.
+      const clasificacion = await clasificarAbonoParaReverso(user.empresa_id, pagoAReverse.id)
+
+      if (clasificacion.estado === 'DIRECT' && clasificacion.ingresoId) {
+        await reversarAbonoDirectoDesdeTesoreria({
+          ingresoId: clasificacion.ingresoId,
+          motivo: reason,
+          userId: supervisorId,
+          reversedByNombre,
+          empresaId: user.empresa_id,
+        })
+      } else {
+        await registrarReversoAbono({
+          pago_id: pagoAReverse.id,
+          reason,
+          reversed_by: supervisorId,
+          reversed_by_nombre: reversedByNombre,
+          empresa_id: user.empresa_id,
+        })
+      }
+
       toast.success(`Abono de ${formatUsd(parseFloat(pagoAReverse.monto_usd))} reversado exitosamente`)
       setShowReasonDialog(false)
       setPagoAReverse(null)
