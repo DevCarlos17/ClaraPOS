@@ -1,4 +1,6 @@
 import { formatUsd, formatBs, usdToBs, type DecimalInput } from '@/lib/currency'
+import { formatDate } from '@/lib/format'
+import { Button } from '@/components/ui/button'
 import {
   construirFilasTotales,
   construirLineasEvolucion,
@@ -9,6 +11,32 @@ import {
   type ReciboData,
 } from '../utils/factura-export'
 import type { BadgeReverso, ReversoAplicado } from '../utils/notas-credito-ui'
+
+/**
+ * `consulta-factura-reverso-abono-directo` (Unit 2): fila cruda de
+ * `usePagosFactura`, SIN agrupar por metodo (a diferencia de `recibo.pagos`
+ * que ya llega colapsado via `agruparPagosPorMetodo`, perdiendo `pago.id`).
+ *
+ * `estadoReverso`/`mensajeDeshabilitado` llegan YA RESUELTOS por el
+ * llamador (`ConsultaFacturaModal`, que clasifica via el adapter de Unit 1,
+ * `clasificarAbonoParaReverso` — funcion PURA, no el hook, para poder
+ * resolver N pagos en paralelo sin violar las Rules of Hooks) — este panel
+ * NUNCA clasifica por si mismo: sigue siendo 100% PRESENTACION pura, sin
+ * fetch, para no arrastrar el import real de `db.ts` del clasificador a su
+ * suite de tests existente.
+ */
+export interface PagoIndividualAbono {
+  id: string
+  metodoNombre: string
+  monto: number
+  monedaLabel: 'USD' | 'BS'
+  fecha: string
+  isReversed: boolean
+  /** `null` mientras se resuelve la clasificacion (estado "Verificando..."). */
+  estadoReverso: 'DIRECT' | 'BATCH' | 'SAF' | 'LEGACY' | null
+  /** Presente cuando `estadoReverso` no es `'DIRECT'` ni `null`. */
+  mensajeDeshabilitado?: string | null
+}
 
 /**
  * Panel de detalle fiscal de la factura seleccionada (Design §Decision 5,
@@ -62,6 +90,20 @@ export interface FacturaDetallePanelProps {
    * `null`/ausente (default): comportamiento actual sin cambios.
    */
   gastoAbsorbido?: { montoUsd: DecimalInput; tipo: string } | null
+  /**
+   * `consulta-factura-reverso-abono-directo` (Unit 2): abonos individuales
+   * (no agrupados) a listar en la nueva seccion "Abonos individuales", con
+   * su accion de reverso por fila. Omitido/vacio (default): la seccion no
+   * se renderiza — additive, sin cambios para los 3 consumidores que aun no
+   * la pasan.
+   */
+  pagosIndividuales?: PagoIndividualAbono[]
+  /**
+   * Invocado con el `pago.id` al pulsar "Reversar" en una fila no
+   * reversada. El panel sigue siendo de PRESENTACION pura — delega en el
+   * llamador abrir el modal de confirmacion (`ConfirmarReversoAbonoModal`).
+   */
+  onReversarAbono?: (pagoId: string) => void
 }
 
 export function FacturaDetallePanel({
@@ -70,6 +112,8 @@ export function FacturaDetallePanel({
   badgeReverso = null,
   hideFacturaTitle = false,
   gastoAbsorbido = null,
+  pagosIndividuales = [],
+  onReversarAbono,
 }: FacturaDetallePanelProps) {
   if (!recibo) {
     return (
@@ -214,6 +258,57 @@ export function FacturaDetallePanel({
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/*
+        consulta-factura-reverso-abono-directo (Unit 2): seccion ADITIVA de
+        abonos individuales (ver `PagoIndividualAbono` arriba) — distinta de
+        "Metodos de pago" (que agrupa por metodo y pierde `pago.id`). Permite
+        identificar y reversar un abono puntual sin tocar la seccion de
+        arriba.
+      */}
+
+      {pagosIndividuales.length > 0 && (
+        <div className="space-y-2 rounded-xl border bg-card p-3 text-sm shadow-md">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Abonos individuales
+          </p>
+          {pagosIndividuales.map((pago) => (
+            <div key={pago.id} className="flex items-center justify-between gap-2">
+              <div>
+                <p className="font-medium text-foreground">{pago.metodoNombre}</p>
+                <p className="text-xs text-muted-foreground">{formatDate(pago.fecha)}</p>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="tabular-nums font-semibold text-foreground">
+                    {pago.monedaLabel === 'BS' ? formatBs(pago.monto) : formatUsd(pago.monto)}
+                  </span>
+                  {pago.isReversed ? (
+                    <span className="text-xs font-medium text-muted-foreground">Reversado</span>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      title={pago.mensajeDeshabilitado ?? undefined}
+                      disabled={pago.estadoReverso === null || pago.estadoReverso !== 'DIRECT'}
+                      onClick={() => onReversarAbono?.(pago.id)}
+                    >
+                      Reversar
+                    </Button>
+                  )}
+                </div>
+                {!pago.isReversed && pago.estadoReverso === null && (
+                  <p className="text-xs text-muted-foreground">Verificando...</p>
+                )}
+                {!pago.isReversed && pago.mensajeDeshabilitado && (
+                  <p className="text-xs text-muted-foreground">{pago.mensajeDeshabilitado}</p>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

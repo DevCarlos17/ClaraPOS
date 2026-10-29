@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react'
-import { FacturaDetallePanel } from '../factura-detalle-panel'
+import userEvent from '@testing-library/user-event'
+import { FacturaDetallePanel, type PagoIndividualAbono } from '../factura-detalle-panel'
 import {
   buildReciboData,
   formatMontoBimonetario,
@@ -584,5 +585,163 @@ describe('FacturaDetallePanel — gastoAbsorbido (nc-reembolso-real-reverso-gast
     expect(screen.getByText('Botox 50U')).toBeInTheDocument()
     expect(screen.getByText('TOTAL FACTURA')).toBeInTheDocument()
     expect(screen.getByText('Efectivo USD')).toBeInTheDocument()
+  })
+})
+
+// ─── consulta-factura-reverso-abono-directo (Unit 2): seccion "Abonos
+// individuales" — 5 estados visuales por fila (4 estados del clasificador +
+// reversado). El panel es PRESENTACION pura: recibe `estadoReverso`/
+// `mensajeDeshabilitado` YA RESUELTOS (nunca clasifica por si mismo). ────
+
+describe('FacturaDetallePanel — Unit 2 (seccion "Abonos individuales", 5 estados visuales)', () => {
+  function abono(overrides: Partial<PagoIndividualAbono> = {}): PagoIndividualAbono {
+    return {
+      id: 'pago-1',
+      metodoNombre: 'Transferencia',
+      monto: 50,
+      monedaLabel: 'USD',
+      fecha: '2026-01-10T10:00:00-04:00',
+      isReversed: false,
+      estadoReverso: 'DIRECT',
+      mensajeDeshabilitado: null,
+      ...overrides,
+    }
+  }
+
+  it('pagosIndividuales omitido (default): NO muestra la seccion (additive, regresion para los 3 consumidores sin cambios)', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
+
+    expect(screen.queryByText('Abonos individuales')).not.toBeInTheDocument()
+  })
+
+  it('pagosIndividuales vacio: NO muestra la seccion', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} pagosIndividuales={[]} />)
+
+    expect(screen.queryByText('Abonos individuales')).not.toBeInTheDocument()
+  })
+
+  it('estado DIRECT: boton "Reversar" habilitado, sin mensaje de bloqueo', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} pagosIndividuales={[abono({ estadoReverso: 'DIRECT' })]} />)
+
+    const boton = screen.getByRole('button', { name: 'Reversar' })
+    expect(boton).toBeEnabled()
+    expect(screen.queryByText(/no disponible todavía/i)).not.toBeInTheDocument()
+  })
+
+  it('estado BATCH: boton deshabilitado con el mensaje "reverso por lote no disponible todavía"', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        pagosIndividuales={[
+          abono({ estadoReverso: 'BATCH', mensajeDeshabilitado: 'Reverso por lote no disponible todavía' }),
+        ]}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Reversar' })).toBeDisabled()
+    expect(screen.getByText('Reverso por lote no disponible todavía')).toBeInTheDocument()
+  })
+
+  it('estado SAF: boton deshabilitado con el mensaje de bloqueo SAF', () => {
+    const mensaje =
+      'Este abono generó saldo a favor consumido en otras facturas; reversar desde tesorería no está disponible todavía'
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        pagosIndividuales={[abono({ estadoReverso: 'SAF', mensajeDeshabilitado: mensaje })]}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Reversar' })).toBeDisabled()
+    expect(screen.getByText(mensaje)).toBeInTheDocument()
+  })
+
+  it('estado LEGACY: boton deshabilitado con el mensaje "sin trazabilidad"', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        pagosIndividuales={[
+          abono({
+            estadoReverso: 'LEGACY',
+            mensajeDeshabilitado: 'Este abono no tiene trazabilidad; no se puede reversar desde aquí',
+          }),
+        ]}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Reversar' })).toBeDisabled()
+    expect(screen.getByText(/no tiene trazabilidad/i)).toBeInTheDocument()
+  })
+
+  it('isReversed=true: muestra "Reversado", NUNCA el boton "Reversar" (sin importar estadoReverso)', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        pagosIndividuales={[abono({ isReversed: true, estadoReverso: 'DIRECT' })]}
+      />
+    )
+
+    expect(screen.getByText('Reversado')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reversar' })).not.toBeInTheDocument()
+  })
+
+  it('estadoReverso null (clasificacion en vuelo): boton deshabilitado con "Verificando..."', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        pagosIndividuales={[abono({ estadoReverso: null, mensajeDeshabilitado: null })]}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Reversar' })).toBeDisabled()
+    expect(screen.getByText('Verificando...')).toBeInTheDocument()
+  })
+
+  it('click en "Reversar" (DIRECT habilitado) invoca onReversarAbono con el pago.id', async () => {
+    const onReversarAbono = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        pagosIndividuales={[abono({ id: 'pago-direct-1', estadoReverso: 'DIRECT' })]}
+        onReversarAbono={onReversarAbono}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Reversar' }))
+
+    expect(onReversarAbono).toHaveBeenCalledWith('pago-direct-1')
+  })
+
+  it('metodo/monto/fecha se muestran por fila; moneda BS usa formatBs', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        pagosIndividuales={[
+          abono({ metodoNombre: 'Pago Movil', monto: 500, monedaLabel: 'BS', fecha: '2026-02-01T00:00:00-04:00' }),
+        ]}
+      />
+    )
+
+    expect(screen.getByText('Pago Movil')).toBeInTheDocument()
+    expect(screen.getByText('Bs. 500,00')).toBeInTheDocument()
+    expect(screen.getByText('01/02/2026')).toBeInTheDocument()
+  })
+
+  it('multiples abonos: cada uno se muestra en su propia fila, sin mezclarse', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        pagosIndividuales={[
+          abono({ id: 'a1', metodoNombre: 'Efectivo', estadoReverso: 'DIRECT' }),
+          abono({ id: 'a2', metodoNombre: 'Transferencia', isReversed: true }),
+        ]}
+      />
+    )
+
+    expect(screen.getByText('Efectivo')).toBeInTheDocument()
+    expect(screen.getByText('Transferencia')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Reversar' })).toHaveLength(1)
+    expect(screen.getByText('Reversado')).toBeInTheDocument()
   })
 })

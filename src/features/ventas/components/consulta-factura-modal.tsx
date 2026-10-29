@@ -1,13 +1,21 @@
+import { useState, useEffect } from 'react'
 import { DownloadSimple, ShareNetwork } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { BottomSheet } from '@/components/shared/bottom-sheet'
-import { FacturaDetallePanel } from './factura-detalle-panel'
+import { FacturaDetallePanel, type PagoIndividualAbono } from './factura-detalle-panel'
+import { ConfirmarReversoAbonoModal } from './confirmar-reverso-abono-modal'
 import { useReciboDesdeFactura } from '../utils/recibo-desde-factura'
 import { descargarReciboPdf, compartirReciboImagen } from '../utils/factura-export'
+import { MENSAJES_POR_REASON_CODE } from '../utils/abono-reverso-mensajes'
 import type { FacturaParaAnular } from '../hooks/use-notas-credito'
+import {
+  clasificarAbonoParaReverso,
+  type ClasificacionAbonoReverso,
+} from '../hooks/use-clasificar-abono-reverso'
 import { useGastoAbsorcionFactura } from '@/features/contabilidad/hooks/use-gastos'
+import { usePagosFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useMobile } from '@/hooks/use-mobile'
 
@@ -82,6 +90,65 @@ export function ConsultaFacturaModal({
     ? { montoUsd: gastoAbsorbidoRaw.monto_usd, tipo: gastoAbsorbidoRaw.descripcion }
     : null
 
+  // consulta-factura-reverso-abono-directo (Unit 2): filas CRUDAS de pagos
+  // (no agrupadas por metodo) para la nueva seccion "Abonos individuales" —
+  // `useReciboDesdeFactura` ya consulta `usePagosFactura` internamente pero
+  // descarta `pago.id` al agrupar (ver `recibo.pagos` arriba); esta segunda
+  // suscripcion reactiva (misma query, PowerSync) es la unica forma de
+  // identificar que abono puntual reversar.
+  const { pagos: pagosRaw } = usePagosFactura(venta?.id ?? null)
+  const empresaId = user?.empresa_id ?? ''
+
+  // Clasifica (Unit 1) cada pago NO reversado para derivar el estado de
+  // accion por fila (spec Requirement "Tres estados deshabilitados
+  // distintos") — usa la funcion PURA `clasificarAbonoParaReverso` (no el
+  // hook) en un `Promise.all`, porque el hook no puede invocarse N veces
+  // dentro de un `.map()` (Rules of Hooks: numero de pagos es dinamico).
+  const [clasificaciones, setClasificaciones] = useState<Record<string, ClasificacionAbonoReverso>>({})
+  const pagoIdsPendientesKey = pagosRaw
+    .filter((p) => p.is_reversed !== 1)
+    .map((p) => p.id)
+    .join(',')
+
+  useEffect(() => {
+    const idsPendientes = pagoIdsPendientesKey ? pagoIdsPendientesKey.split(',') : []
+    if (!empresaId || idsPendientes.length === 0) return
+    let cancelled = false
+    Promise.all(idsPendientes.map((id) => clasificarAbonoParaReverso(empresaId, id)))
+      .then((resultados) => {
+        if (cancelled) return
+        setClasificaciones((prev) => {
+          const next = { ...prev }
+          for (const r of resultados) next[r.pagoId] = r
+          return next
+        })
+      })
+      .catch(() => {
+        // Best-effort: si falla, las filas afectadas quedan "Verificando..."
+        // indefinidamente (estadoReverso null) en vez de romper el panel.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [empresaId, pagoIdsPendientesKey])
+
+  const pagosIndividuales: PagoIndividualAbono[] = pagosRaw.map((p) => {
+    const clasificacion = clasificaciones[p.id]
+    return {
+      id: p.id,
+      metodoNombre: p.metodo_nombre,
+      monto: Number(p.monto),
+      monedaLabel: p.moneda_label === 'BS' ? 'BS' : 'USD',
+      fecha: p.fecha,
+      isReversed: p.is_reversed === 1,
+      estadoReverso: p.is_reversed === 1 ? null : clasificacion?.estado ?? null,
+      mensajeDeshabilitado: clasificacion?.reasonCode
+        ? MENSAJES_POR_REASON_CODE[clasificacion.reasonCode]
+        : null,
+    }
+  })
+  const [pagoIdParaReverso, setPagoIdParaReverso] = useState<string | null>(null)
+
   // Evaluado en cada render (no module-level, a diferencia de
   // `venta-exitosa-modal.tsx`) para que el boton reaccione si el entorno
   // cambia entre aperturas del modal (y para permitir `vi.stubGlobal` por test).
@@ -125,7 +192,12 @@ export function ConsultaFacturaModal({
     </div>
   ) : (
     <>
-      <FacturaDetallePanel recibo={recibo} gastoAbsorbido={gastoAbsorbido} />
+      <FacturaDetallePanel
+        recibo={recibo}
+        gastoAbsorbido={gastoAbsorbido}
+        pagosIndividuales={pagosIndividuales}
+        onReversarAbono={setPagoIdParaReverso}
+      />
       <div className={puedeCompartir ? 'grid grid-cols-2 gap-2' : ''}>
         <Button
           className="h-10 w-full gap-2.5 rounded-xl"
@@ -151,53 +223,71 @@ export function ConsultaFacturaModal({
     </>
   )
 
+  // consulta-factura-reverso-abono-directo (Unit 2): UNA sola instancia,
+  // reusada en ambas ramas (mobile/desktop) — el estado `pagoIdParaReverso`
+  // vive a nivel de este componente para sobrevivir el cambio de rama.
+  const confirmarReversoModal = (
+    <ConfirmarReversoAbonoModal
+      pagoId={pagoIdParaReverso}
+      isOpen={pagoIdParaReverso !== null}
+      onClose={() => setPagoIdParaReverso(null)}
+      portalContainer={portalContainer}
+    />
+  )
+
   if (isMobile) {
     return (
-      <BottomSheet
-        open={isOpen}
-        onOpenChange={(v) => {
-          if (!v) onClose()
-        }}
-        title="Consulta de Factura"
-        bodyClassName="flex flex-col gap-4 p-4"
-        // Mismo motivo que la rama Dialog: cuando este modal se abre desde otro
-        // modal en la top layer del navegador (`<dialog>` con showModal(), ej.
-        // nota-credito-pos-modal), portalizar al body deja el sheet POR DEBAJO
-        // de la top layer (bug: solo se veia el overlay). Pasar el contenedor
-        // del padre lo apila correctamente encima.
-        portalContainer={portalContainer ?? undefined}
-        footer={
-          onAplicarNc && (
-            <Button
-              type="button"
-              className="h-11 w-full rounded-xl text-base"
-              disabled={!venta || venta.tiene_reverso_total === 1}
-              onClick={handleAplicarNc}
-            >
-              Aplicar nota de credito
-            </Button>
-          )
-        }
-      >
-        {cuerpo}
-      </BottomSheet>
+      <>
+        <BottomSheet
+          open={isOpen}
+          onOpenChange={(v) => {
+            if (!v) onClose()
+          }}
+          title="Consulta de Factura"
+          bodyClassName="flex flex-col gap-4 p-4"
+          // Mismo motivo que la rama Dialog: cuando este modal se abre desde otro
+          // modal en la top layer del navegador (`<dialog>` con showModal(), ej.
+          // nota-credito-pos-modal), portalizar al body deja el sheet POR DEBAJO
+          // de la top layer (bug: solo se veia el overlay). Pasar el contenedor
+          // del padre lo apila correctamente encima.
+          portalContainer={portalContainer ?? undefined}
+          footer={
+            onAplicarNc && (
+              <Button
+                type="button"
+                className="h-11 w-full rounded-xl text-base"
+                disabled={!venta || venta.tiene_reverso_total === 1}
+                onClick={handleAplicarNc}
+              >
+                Aplicar nota de credito
+              </Button>
+            )
+          }
+        >
+          {cuerpo}
+        </BottomSheet>
+        {confirmarReversoModal}
+      </>
     )
   }
 
   return (
-    <Dialog
-      open={isOpen}
-      onOpenChange={(v) => {
-        if (!v) onClose()
-      }}
-    >
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" container={portalContainer ?? undefined}>
-        <DialogHeader>
-          <DialogTitle>Consulta de Factura</DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog
+        open={isOpen}
+        onOpenChange={(v) => {
+          if (!v) onClose()
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" container={portalContainer ?? undefined}>
+          <DialogHeader>
+            <DialogTitle>Consulta de Factura</DialogTitle>
+          </DialogHeader>
 
-        {cuerpo}
-      </DialogContent>
-    </Dialog>
+          {cuerpo}
+        </DialogContent>
+      </Dialog>
+      {confirmarReversoModal}
+    </>
   )
 }
