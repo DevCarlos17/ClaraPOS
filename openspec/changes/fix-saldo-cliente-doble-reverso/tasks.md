@@ -48,15 +48,15 @@ Both units close the same bug class; design recommends same release but each is 
 
 ## Phase 3: Migration `migrations/0118_reconciliar_saldo_cliente_y_assertion_rev.sql`
 
-- [ ] 3.1 Create file (next free after 0117); header comment per house convention (template: 0115).
-- [ ] 3.2 Reconciliation query FIRST: CTE `real` = `SUM(ventas.saldo_pend_usd)` WHERE `status != 'ANULADA'` grouped by cliente_id/empresa_id; CTE `drift` where `ABS(deuda_real - saldo_pendiente_usd) > 0.005`; `UPDATE clientes` applying the SAME delta to `saldo_pendiente_usd` AND `saldo_actual`; wrap in `set_config('clarapos.trigger_context','mov_cuenta',TRUE)`; `GET DIAGNOSTICS` + `RAISE NOTICE` row count.
-- [ ] 3.3 AFTER reconciliation, `CREATE OR REPLACE FUNCTION actualizar_saldo_cliente()` adding `ELSIF NEW.tipo = 'REV'` asserting `ABS((NEW.saldo_nuevo - NEW.saldo_anterior) - NEW.monto) <= 0.005`, else `RAISE EXCEPTION ... ERRCODE = 'P0001'`. Ordering is deliberate: reconcile drift before the new assertion can reject it.
-- [ ] 3.4 Copy FAC/NDB/PAG/NCR/SAF/SAFV/SAFC/SAFR/SAL branches verbatim from 0115 — only the REV `ELSIF` is new.
-- [ ] 3.5 Manual `BEGIN;...ROLLBACK;` blocks (pattern: 0110/0115): TC6 idempotency (seed drift → corrects N rows → rerun corrects 0); TC7 assertion (bad `saldo_nuevo` → P0001; good → success).
-- [ ] 3.6 Rollback note: re-apply 0115 verbatim (no constraint change in 0118).
+- [x] 3.1 Create file (next free after 0117); header comment per house convention (template: 0115).
+- [x] 3.2 Reconciliation query FIRST: CTE `real` = `SUM(ventas.saldo_pend_usd)` WHERE `status != 'ANULADA'` grouped by cliente_id/empresa_id; CTE `drift` where `ABS(deuda_real - saldo_pendiente_usd) > 0.005`; `UPDATE clientes` applying the SAME delta to `saldo_pendiente_usd` AND `saldo_actual`; wrap in `set_config('clarapos.trigger_context','mov_cuenta',TRUE)`; `GET DIAGNOSTICS` + `RAISE NOTICE` row count.
+- [x] 3.3 AFTER reconciliation, `CREATE OR REPLACE FUNCTION actualizar_saldo_cliente()` adding `ELSIF NEW.tipo = 'REV'` asserting `ABS((NEW.saldo_nuevo - NEW.saldo_anterior) - NEW.monto) <= 0.005`, else `RAISE EXCEPTION ... ERRCODE = 'P0001'`. Ordering is deliberate: reconcile drift before the new assertion can reject it.
+- [x] 3.4 Copy FAC/NDB/PAG/NCR/SAF/SAFV/SAFC/SAFR/SAL branches verbatim from 0115 — only the REV `ELSIF` is new.
+- [x] 3.5 Manual `BEGIN;...ROLLBACK;` blocks (pattern: 0110/0115): TC6 idempotency (seed drift → corrects N rows → rerun corrects 0); TC7 assertion (bad `saldo_nuevo` → P0001; good → success). (Documented as manual verification comments in the file header, same pattern as 0110/0115 — no Postgres test infra in this repo.)
+- [x] 3.6 Rollback note: re-apply 0115 verbatim (no constraint change in 0118).
 
 ## Phase 4: Verification
 
 - [x] 4.1 `yarn type-check` on `use-cxc.ts`. (Full repo `yarn type-check` has pre-existing, unrelated noise: vitest globals — `expect`/`it`/`describe`/`vi` — missing from root `tsconfig` `types[]`, affecting every `*.test.ts(x)` file project-wide, confirmed on `origin/develop` baseline, not introduced by this change. No error references any line touched by this fix.)
 - [x] 4.2 Re-run scoped test file (2.6); confirm pre-existing `reversarPagoEnTx` tests unaffected. (Both original tests still pass unchanged.)
-- [ ] 4.3 Manually trace migration 0118 against design's D5 no-false-positive proof (direct / fan-in / SAF paths). — Unit B, not started.
+- [x] 4.3 Manually trace migration 0118 against design's D5 no-false-positive proof (direct / fan-in / SAF paths). — Unit B. Done by reasoning (see apply return summary): direct reverse, global fan-in, and SAF-reversal paths all satisfy `saldo_nuevo = saldo_anterior + monto` exactly; reconciliation never touches `movimientos_cuenta` so it cannot trip the new trigger assertion.
