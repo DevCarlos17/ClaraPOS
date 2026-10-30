@@ -501,7 +501,7 @@ export async function aplicarPagoFacturaEnTx(
   tx: Transaction,
   params: AplicarPagoEnTxParams,
   now: string
-): Promise<void> {
+): Promise<{ pagoId: string; montoUsd: Decimal }> {
   const {
     venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto,
     fechaPago, referencia, empresa_id, procesado_por,
@@ -776,6 +776,8 @@ export async function aplicarPagoFacturaEnTx(
       // Fallo en contabilidad/bancos no bloquea el pago
     }
   }
+
+  return { pagoId, montoUsd }
 }
 
 /**

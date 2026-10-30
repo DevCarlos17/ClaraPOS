@@ -1139,6 +1139,19 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     // 7c. Discrepancy resolution records
     //     Runs after steps 6+7 so saldo_pend_usd and tipo are already set.
     //     ABSORBER / DIFERENCIAL_FALTANTE also override saldo_pend_usd to 0.
+    //
+    // Trazabilidad puente del excedente SAF/FIFO (change
+    // trazabilidad-pago-saf-en-venta-pos): espeja el fan-in `bridgeEntries[]` de
+    // `registrarAbonoGlobal` (use-cxc.ts). `pagoSafIndex` es el indice (dentro de
+    // `pagos[]`) del leg que fondea el excedente SAF — calculado UNA sola vez aqui
+    // y reusado en Paso 8 para nunca re-derivar `pagoSaf` por separado (ver
+    // design.md, Decision "Correlation key"). `safFifoBridgeEntries` acumula un
+    // {pagoId, montoUsd} por cada pago FIFO-a-factura-vieja (Paso A) y por el
+    // pago remanente/anticipo (Paso B) — Paso 8 los vuelca como filas puente
+    // adicionales contra el `movBancoId` de ese mismo leg.
+    let pagoSafIndex = -1
+    const safFifoBridgeEntries: Array<{ pagoId: string; montoUsd: Decimal }> = []
+
     if (discrepancy && discrepancy.mode && discrepancy.montoUsd > 0.001) {
       switch (discrepancy.mode) {
 
@@ -1150,6 +1163,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             const pagoSaf = pagos.find(p => p.moneda === 'BS') ?? pagos[0]
             const metodoIdSaf = pagoSaf?.metodo_cobro_id
             const monedaSaf = (pagoSaf?.moneda ?? 'BS') as 'USD' | 'BS'
+            pagoSafIndex = pagos.indexOf(pagoSaf)
 
             if (!metodoIdSaf) break
 
@@ -1165,7 +1179,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                   ? usdToBs(inv.montoUsd, tasa).toNumber()
                   : inv.montoUsd
 
-                await aplicarPagoFacturaEnTx(
+                const { pagoId: pagoIdFifo, montoUsd: montoUsdFifo } = await aplicarPagoFacturaEnTx(
                   tx,
                   {
                     venta_id: inv.ventaId,
@@ -1189,6 +1203,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                   },
                   now
                 )
+                // montoUsd capeado viene del retorno REAL de aplicarPagoFacturaEnTx,
+                // nunca re-derivado de `inv.montoUsd` (puede diferir si la factura
+                // vieja ya tenia un saldo menor al asignado).
+                safFifoBridgeEntries.push({ pagoId: pagoIdFifo, montoUsd: montoUsdFifo })
 
                 totalAppliedUsd += inv.montoUsd
               }
@@ -1232,6 +1250,11 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                   now, empresa_id, now, usuario_id,
                 ]
               )
+              // Remanente/anticipo NO es cosmetico (ver proposal.md): el chequeo de
+              // seguridad SAF en `reversarAbonoDirectoDesdeTesoreria` (bloquea
+              // revertir un pago cuyo credito de excedente ya fue consumido) solo
+              // puede dispararse si este pago tiene fila puente.
+              safFifoBridgeEntries.push({ pagoId: pagoExcedenteIdSaf, montoUsd: remainingSaf })
 
               // Movimiento de cuenta: CREACION de credito puro (tipo='SAFC', no
               // 'PAG'). saldo_actual (ledger crudo) baja a negativo igual que
@@ -1808,6 +1831,19 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                VALUES (?, ?, ?, ?, ?, ?, ?)`,
               [uuidv4(), empresa_id, movBancoId, correlacion.pagoId, toStorageString(correlacion.montoUsd), now, usuario_id]
             )
+          }
+
+          // Excedente SAF/FIFO (change trazabilidad-pago-saf-en-venta-pos): aditivo
+          // a la fila `correlacion` de arriba. Solo el leg que fondea el SAF
+          // (`pagoSafIndex`, calculado una vez en Paso 7c) recibe estas filas extra.
+          if (i === pagoSafIndex) {
+            for (const entry of safFifoBridgeEntries) {
+              await tx.execute(
+                `INSERT INTO movimientos_bancarios_pagos (id, empresa_id, ingreso_id, pago_id, monto_aplicado_usd, created_at, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [uuidv4(), empresa_id, movBancoId, entry.pagoId, toStorageString(entry.montoUsd), now, usuario_id]
+              )
+            }
           }
         }
       }

@@ -189,6 +189,18 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
      * WHERE id = ?`. Default: `'moneda-bs'` -> `'VES'`, cualquier otro id -> `'USD'`.
      */
     monedasCodigoIso?: Record<string, string>
+    /**
+     * Change `trazabilidad-pago-saf-en-venta-pos`: facturas VIEJAS pendientes
+     * leidas por `aplicarPagoFacturaEnTx` (`SELECT nro_factura, saldo_pend_usd,
+     * total_usd, tasa FROM ventas WHERE id = ?`) cuando el excedente SAF se
+     * aplica via FIFO (Paso 7c, Paso A). Key = `ventaId` de la factura vieja.
+     * Venta no mapeada = sin fila (`length: 0`), preserva "Factura no
+     * encontrada" para fixtures que no la necesitan.
+     */
+    ventasPendientes?: Record<
+      string,
+      { nro_factura: string; saldo_pend_usd: string; total_usd: string; tasa: string }
+    >
   }
 
   /**
@@ -335,6 +347,21 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
             return id
               ? { rows: { length: 1, item: () => ({ cuenta_contable_id: id }) } }
               : { rows: { length: 0, item: () => undefined } }
+          }
+          if (sql.startsWith('SELECT nro_factura, saldo_pend_usd, total_usd, tasa FROM ventas WHERE id = ?')) {
+            const ventaId = params[0] as string
+            const row = opts.ventasPendientes?.[ventaId]
+            return row ? { rows: { length: 1, item: () => row } } : { rows: { length: 0, item: () => undefined } }
+          }
+          // Discovered during Phase 2 RED (change trazabilidad-pago-saf-en-venta-pos):
+          // `aplicarPagoFacturaEnTx` (use-cxc.ts) resuelve la moneda via query
+          // PARAMETRIZADA (`codigo_iso = ?`), a diferencia de las queries propias de
+          // `crearVenta` mas abajo que usan literal `'USD'`/`'VES'` en el SQL. Sin esta
+          // rama, cualquier test que alcance el loop FIFO (Paso A) explota con "No se
+          // encontro la moneda" antes de llegar al gap real que Phase 2 busca exponer.
+          if (sql.startsWith('SELECT id FROM monedas WHERE codigo_iso = ?')) {
+            const codigo = params[0] as string
+            return { rows: { length: 1, item: () => ({ id: codigo === 'VES' ? 'moneda-bs' : 'moneda-usd' }) } }
           }
 
           return { rows: { length: 0, item: () => undefined } }
@@ -1726,6 +1753,329 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       if (puenteIdx !== -1) {
         expect(puenteIdx).toBeGreaterThan(updateBancoIdx)
       }
+    })
+  })
+
+  describe('crearVenta — trazabilidad movimientos_bancarios_pagos (capa SAF/FIFO, change trazabilidad-pago-saf-en-venta-pos)', () => {
+    function pagoSafFixture() {
+      return {
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '100.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '100.000' },
+      }
+    }
+
+    /** INSERT INTO pagos del pago FIFO/anticipo creado via `aplicarPagoFacturaEnTx`
+     *  (columna `is_pos_saf_allocation`) — distinto del INSERT INTO pagos de Paso 5
+     *  (columna `is_reversed`, mismo nombre de tabla, lista de columnas diferente). */
+    function findFifoPagoInserts(calls: { sql: string; params: unknown[] }[]) {
+      return calls.filter((c) => c.sql.startsWith('INSERT INTO pagos') && c.sql.includes('is_pos_saf_allocation'))
+    }
+
+    function findMovBancoInsert(calls: { sql: string; params: unknown[] }[]) {
+      return calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_bancarios') && !c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos')
+      )
+    }
+
+    it('FIFO a 1 factura vieja: excedente cierra 1 factura -> 1 fila puente extra (ingreso_id = movBancoId del leg pagoSaf, pago_id = pago FIFO, monto_aplicado_usd capeado), ademas de la fila correlacion del leg de caja', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoSafFixture(),
+        metodosCobro: { 'metodo-transferencia': { banco_empresa_id: 'banco-1', deposito_directo: 1 } },
+        bancosEmpresa: { 'banco-1': { saldo_actual: '0.00000000', moneda_id: 'moneda-usd' } },
+        ventasPendientes: {
+          'venta-old-1': { nro_factura: 'F-OLD-1', saldo_pend_usd: '500.00000000', total_usd: '500.00000000', tasa: '1.00000000' },
+        },
+      })
+
+      await crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          cliente_id: 'cliente-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 500 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-transferencia', moneda: 'USD', monto: 1000 })],
+          discrepancy: {
+            mode: 'SAF',
+            montoUsd: 500,
+            montoBs: 20000,
+            clienteId: 'cliente-1',
+            invoiceAssignments: [{ ventaId: 'venta-old-1', nroFactura: 'F-OLD-1', montoUsd: 500 }],
+          },
+        })
+      )
+
+      const movBancoInsert = findMovBancoInsert(calls)
+      expect(movBancoInsert).toBeDefined()
+      const movBancoId = movBancoInsert!.params[0] as string
+
+      const fifoPagoInserts = findFifoPagoInserts(calls)
+      expect(fifoPagoInserts).toHaveLength(1)
+      const fifoPagoId = fifoPagoInserts[0]!.params[0] as string
+
+      const puenteInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+      // 1 correlacion (leg de caja) + 1 extra (FIFO) = 2
+      expect(puenteInserts).toHaveLength(2)
+      expect(puenteInserts.every((p) => p.params[2] === movBancoId)).toBe(true)
+
+      const fifoBridge = puenteInserts.find((p) => p.params[3] === fifoPagoId)
+      expect(fifoBridge).toBeDefined()
+      expect(fifoBridge!.params[4]).toBe(toStorageString(500))
+    })
+
+    it('FIFO distribuido en 3 facturas viejas -> 3 filas puente extra, todas contra el mismo ingreso_id', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoSafFixture(),
+        metodosCobro: { 'metodo-transferencia': { banco_empresa_id: 'banco-1', deposito_directo: 1 } },
+        bancosEmpresa: { 'banco-1': { saldo_actual: '0.00000000', moneda_id: 'moneda-usd' } },
+        ventasPendientes: {
+          'venta-old-1': { nro_factura: 'F-OLD-1', saldo_pend_usd: '200.00000000', total_usd: '200.00000000', tasa: '1.00000000' },
+          'venta-old-2': { nro_factura: 'F-OLD-2', saldo_pend_usd: '200.00000000', total_usd: '200.00000000', tasa: '1.00000000' },
+          'venta-old-3': { nro_factura: 'F-OLD-3', saldo_pend_usd: '100.00000000', total_usd: '100.00000000', tasa: '1.00000000' },
+        },
+      })
+
+      await crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          cliente_id: 'cliente-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 500 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-transferencia', moneda: 'USD', monto: 1000 })],
+          discrepancy: {
+            mode: 'SAF',
+            montoUsd: 500,
+            montoBs: 20000,
+            clienteId: 'cliente-1',
+            invoiceAssignments: [
+              { ventaId: 'venta-old-1', nroFactura: 'F-OLD-1', montoUsd: 200 },
+              { ventaId: 'venta-old-2', nroFactura: 'F-OLD-2', montoUsd: 200 },
+              { ventaId: 'venta-old-3', nroFactura: 'F-OLD-3', montoUsd: 100 },
+            ],
+          },
+        })
+      )
+
+      const movBancoInsert = findMovBancoInsert(calls)
+      const movBancoId = movBancoInsert!.params[0] as string
+
+      const fifoPagoInserts = findFifoPagoInserts(calls)
+      expect(fifoPagoInserts).toHaveLength(3)
+      const fifoPagoIds = fifoPagoInserts.map((c) => c.params[0] as string)
+
+      const puenteInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+      // 1 correlacion (leg de caja) + 3 extras (FIFO) = 4
+      expect(puenteInserts).toHaveLength(4)
+      expect(puenteInserts.every((p) => p.params[2] === movBancoId)).toBe(true)
+
+      const fifoBridges = puenteInserts.filter((p) => fifoPagoIds.includes(p.params[3] as string))
+      expect(fifoBridges).toHaveLength(3)
+      const montosAplicados = fifoBridges.map((b) => b.params[4]).sort()
+      expect(montosAplicados).toEqual([toStorageString(100), toStorageString(200), toStorageString(200)].sort())
+    })
+
+    it('remanente/anticipo solo (sin invoiceAssignments): el pago anticipo (venta_id=NULL) recibe exactamente 1 fila puente', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoSafFixture(),
+        metodosCobro: { 'metodo-1': { banco_empresa_id: 'banco-1', deposito_directo: 1 } },
+        bancosEmpresa: { 'banco-1': { saldo_actual: '0.00000000', moneda_id: 'moneda-usd' } },
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          cliente_id: 'cliente-1',
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          // Pago de $15 sobre una factura de $10: excedente $5 sin facturas asignadas -> anticipo puro.
+          pagos: [pago({ metodo_cobro_id: 'metodo-1', moneda: 'USD', monto: 15 })],
+          discrepancy: {
+            mode: 'SAF',
+            montoUsd: 5,
+            montoBs: 200,
+            clienteId: 'cliente-1',
+          },
+        })
+      )
+
+      const movBancoInsert = findMovBancoInsert(calls)
+      const movBancoId = movBancoInsert!.params[0] as string
+
+      const pagoAnticipo = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO pagos') && /VALUES \(\?, NULL,/.test(c.sql)
+      )
+      expect(pagoAnticipo).toBeDefined()
+      const pagoAnticipoId = pagoAnticipo!.params[0] as string
+
+      const puenteInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+      // 1 correlacion (leg de caja, monto completo $15 sin invoiceAssignments) + 1 anticipo ($5) = 2
+      expect(puenteInserts).toHaveLength(2)
+      expect(puenteInserts.every((p) => p.params[2] === movBancoId)).toBe(true)
+
+      const anticipoBridge = puenteInserts.find((p) => p.params[3] === pagoAnticipoId)
+      expect(anticipoBridge).toBeDefined()
+      expect(anticipoBridge!.params[4]).toBe(toStorageString(5))
+    })
+
+    it('combinado (2 facturas FIFO + remanente/anticipo) -> 3 filas puente extra, todas contra el mismo ingreso_id', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoSafFixture(),
+        metodosCobro: { 'metodo-transferencia': { banco_empresa_id: 'banco-1', deposito_directo: 1 } },
+        bancosEmpresa: { 'banco-1': { saldo_actual: '0.00000000', moneda_id: 'moneda-usd' } },
+        ventasPendientes: {
+          'venta-old-1': { nro_factura: 'F-OLD-1', saldo_pend_usd: '30.00000000', total_usd: '30.00000000', tasa: '1.00000000' },
+          'venta-old-2': { nro_factura: 'F-OLD-2', saldo_pend_usd: '20.00000000', total_usd: '20.00000000', tasa: '1.00000000' },
+        },
+      })
+
+      await crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          cliente_id: 'cliente-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 100 })],
+          // Pago de $170 sobre factura de $100: excedente $70 -> $50 via FIFO (2 facturas) + $20 remanente
+          pagos: [pago({ metodo_cobro_id: 'metodo-transferencia', moneda: 'USD', monto: 170 })],
+          discrepancy: {
+            mode: 'SAF',
+            montoUsd: 70,
+            montoBs: 2800,
+            clienteId: 'cliente-1',
+            invoiceAssignments: [
+              { ventaId: 'venta-old-1', nroFactura: 'F-OLD-1', montoUsd: 30 },
+              { ventaId: 'venta-old-2', nroFactura: 'F-OLD-2', montoUsd: 20 },
+            ],
+          },
+        })
+      )
+
+      const movBancoInsert = findMovBancoInsert(calls)
+      const movBancoId = movBancoInsert!.params[0] as string
+
+      const fifoPagoInserts = findFifoPagoInserts(calls)
+      expect(fifoPagoInserts).toHaveLength(2)
+      const fifoPagoIds = fifoPagoInserts.map((c) => c.params[0] as string)
+
+      const pagoAnticipo = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO pagos') && /VALUES \(\?, NULL,/.test(c.sql)
+      )
+      expect(pagoAnticipo).toBeDefined()
+      const pagoAnticipoId = pagoAnticipo!.params[0] as string
+
+      const puenteInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+      // 1 correlacion (leg de caja) + 2 FIFO + 1 remanente = 4
+      expect(puenteInserts).toHaveLength(4)
+      expect(puenteInserts.every((p) => p.params[2] === movBancoId)).toBe(true)
+
+      const extraBridges = puenteInserts.filter(
+        (p) => fifoPagoIds.includes(p.params[3] as string) || p.params[3] === pagoAnticipoId
+      )
+      expect(extraBridges).toHaveLength(3)
+      const montosExtras = extraBridges.map((b) => b.params[4]).sort()
+      expect(montosExtras).toEqual([toStorageString(20), toStorageString(20), toStorageString(30)].sort())
+    })
+
+    it('pago mixto (leg BS deposito_directo=1 fondea el SAF + leg efectivo): TODAS las filas FIFO atan al movBancoId del leg BS; el leg efectivo no genera fila puente ni movimiento bancario', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoSafFixture(),
+        metodosCobro: {
+          'metodo-bs': { banco_empresa_id: 'banco-bs', deposito_directo: 1 },
+          'metodo-efectivo': { banco_empresa_id: null, deposito_directo: 0 },
+        },
+        bancosEmpresa: { 'banco-bs': { saldo_actual: '0.00000000', moneda_id: 'moneda-bs' } },
+        ventasPendientes: {
+          'venta-old-1': { nro_factura: 'F-OLD-1', saldo_pend_usd: '100.00000000', total_usd: '100.00000000', tasa: '1.00000000' },
+        },
+      })
+
+      await crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          cliente_id: 'cliente-1',
+          tasa: 40,
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 50 })],
+          // leg BS: Bs equivalente a $120 (cubre $50 de factura + $70 de excedente)
+          // leg efectivo: $30 adicionales (excedente total = 120+30-50 = 100)
+          pagos: [
+            pago({ metodo_cobro_id: 'metodo-bs', moneda: 'BS', monto: 4800 }),
+            pago({ metodo_cobro_id: 'metodo-efectivo', moneda: 'USD', monto: 30 }),
+          ],
+          discrepancy: {
+            mode: 'SAF',
+            montoUsd: 100,
+            montoBs: 4000,
+            clienteId: 'cliente-1',
+            invoiceAssignments: [{ ventaId: 'venta-old-1', nroFactura: 'F-OLD-1', montoUsd: 100 }],
+          },
+        })
+      )
+
+      const movBancoInserts = calls.filter(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_bancarios') && !c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos')
+      )
+      // solo el leg BS (deposito_directo=1) genera movimiento bancario
+      expect(movBancoInserts).toHaveLength(1)
+      const movBancoId = movBancoInserts[0]!.params[0] as string
+
+      const fifoPagoInserts = findFifoPagoInserts(calls)
+      expect(fifoPagoInserts).toHaveLength(1)
+      const fifoPagoId = fifoPagoInserts[0]!.params[0] as string
+
+      const puenteInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
+      // 1 correlacion (leg BS) + 1 FIFO = 2, ninguna para el leg efectivo
+      expect(puenteInserts).toHaveLength(2)
+      expect(puenteInserts.every((p) => p.params[2] === movBancoId)).toBe(true)
+
+      const fifoBridge = puenteInserts.find((p) => p.params[3] === fifoPagoId)
+      expect(fifoBridge).toBeDefined()
+      expect(fifoBridge!.params[4]).toBe(toStorageString(100))
+    })
+
+    it('[no-regresion] el wiring SAF/FIFO es aditivo: 0 UPDATE/DELETE sobre pagos o movimientos_cuenta, is_pos_saf_allocation=1 preservado, y la asignacion FIFO NO crea movimientos_metodo_cobro adicional (anti doble-conteo de cuadre de caja)', async () => {
+      const calls = mockCrearVentaTx({
+        ...pagoSafFixture(),
+        metodosCobro: { 'metodo-transferencia': { banco_empresa_id: 'banco-1', deposito_directo: 1 } },
+        bancosEmpresa: { 'banco-1': { saldo_actual: '0.00000000', moneda_id: 'moneda-usd' } },
+        ventasPendientes: {
+          'venta-old-1': { nro_factura: 'F-OLD-1', saldo_pend_usd: '500.00000000', total_usd: '500.00000000', tasa: '1.00000000' },
+        },
+      })
+
+      await crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          cliente_id: 'cliente-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 500 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-transferencia', moneda: 'USD', monto: 1000 })],
+          discrepancy: {
+            mode: 'SAF',
+            montoUsd: 500,
+            montoBs: 20000,
+            clienteId: 'cliente-1',
+            invoiceAssignments: [{ ventaId: 'venta-old-1', nroFactura: 'F-OLD-1', montoUsd: 500 }],
+          },
+        })
+      )
+
+      // Inmutabilidad: pagos y movimientos_cuenta son append-only — jamas UPDATE/DELETE.
+      expect(calls.some((c) => c.sql.startsWith('UPDATE pagos'))).toBe(false)
+      expect(calls.some((c) => c.sql.startsWith('DELETE FROM pagos'))).toBe(false)
+      expect(calls.some((c) => c.sql.startsWith('UPDATE movimientos_cuenta'))).toBe(false)
+      expect(calls.some((c) => c.sql.startsWith('DELETE FROM movimientos_cuenta'))).toBe(false)
+
+      // isPosAllocation intacto: el pago FIFO queda marcado is_pos_saf_allocation=1
+      const fifoPagoInserts = findFifoPagoInserts(calls)
+      expect(fifoPagoInserts).toHaveLength(1)
+      const cols = fifoPagoInserts[0]!.sql
+        .slice(fifoPagoInserts[0]!.sql.indexOf('(') + 1, fifoPagoInserts[0]!.sql.indexOf(')'))
+        .split(',')
+        .map((c) => c.trim())
+      const isPosAllocationIdx = cols.indexOf('is_pos_saf_allocation')
+      expect(fifoPagoInserts[0]!.params[isPosAllocationIdx]).toBe(1)
+
+      // Supresion de cuadre intacta: la asignacion FIFO (isPosAllocation=true) NO
+      // genera su propio movimientos_metodo_cobro (evita doble conteo del efectivo
+      // que ya ingreso con la venta original) — solo existe el de la venta (Paso 5).
+      const movMetodoCobroInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro'))
+      expect(movMetodoCobroInserts).toHaveLength(1)
     })
   })
 })

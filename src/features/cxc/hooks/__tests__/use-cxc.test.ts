@@ -1613,6 +1613,28 @@ describe('aplicarPagoFacturaEnTx — movimientos_bancarios_pagos (bridge, 0a-wir
     const bridgeRows = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios_pagos'))
     expect(bridgeRows).toHaveLength(0)
   })
+
+  // Change `trazabilidad-pago-saf-en-venta-pos`: `aplicarPagoFacturaEnTx` deja de
+  // ser un helper `void` silencioso — retorna `{pagoId, montoUsd}` para que
+  // `crearVenta` (POS, Paso 7c) pueda bridgear el excedente SAF/FIFO sin
+  // re-derivar el monto aplicado desde ningun otro dato (ver design.md).
+  it('retorna {pagoId, montoUsd} con el id/monto EXACTOS del INSERT a pagos capturado, no valores re-derivados', async () => {
+    const { tx, calls } = makeTx({
+      saldoActual: '0.00000000',
+      saldoPendienteUsd: '100.00000000',
+      facturaSaldoPend: '100.00000000',
+      depositoDirecto: 0,
+    })
+
+    const result = await aplicarPagoFacturaEnTx(tx, baseParams({ monto: 100 }), '2026-10-19T00:00:00-04:00')
+
+    const pagoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO pagos ('))
+    const pagoId = pagoInsert!.params[0] as string
+    const montoUsdInsertado = pagoInsert!.params[7] as string
+
+    expect(result.pagoId).toBe(pagoId)
+    expect(toStorageString(result.montoUsd)).toBe(montoUsdInsertado)
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────
