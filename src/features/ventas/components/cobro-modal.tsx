@@ -250,15 +250,19 @@ export function CobroModal({
       return
     }
     if (pendienteBs4.lt('-0.01')) {
-      // Overpago: siempre mostrar formulario completo, sin auto-resolver por diferencial
+      // Overpago: ninguna opcion queda pre-seleccionada (fix
+      // pos-excedente-vuelto-validacion) — el cajero elige explicitamente
+      // Dar vuelto/Saldo a favor/Propina via boton o F5/F6/F7. Resetear a
+      // null (no 'VUELTO') en vez de no tocar nada: limpia un modo
+      // obsoleto (CREDITO/ABSORBER/DIFERENCIAL_*) que pudo quedar vivo de
+      // una transicion faltante->excedente previa.
       if (
-        discrepancyMode === null ||
         discrepancyMode === 'DIFERENCIAL_SOBRANTE' ||
         discrepancyMode === 'DIFERENCIAL_FALTANTE' ||
         discrepancyMode === 'CREDITO' ||
         discrepancyMode === 'ABSORBER'
       ) {
-        setDiscrepancyMode('VUELTO')
+        setDiscrepancyMode(null)
       }
     } else if (pendienteBs4.gt('0.01')) {
       // Faltante: sin sobreescribir elección activa del cajero
@@ -322,11 +326,11 @@ export function CobroModal({
   // redondeo de denominaciones físicas en USD); negativo = se asigna MENOS (el
   // sobrante queda en caja como diferencial implícito).
   const splitVueltoExceso = splitVueltoSumBs.minus(vueltoMontoBs)
-  const splitVueltoValid =
-    splitVuelto.length === 0 ||
-    // Bajo-distribución: siempre válido — el monto no asignado queda en caja
-    // Sobre-distribución: válido si el exceso ≤ umbralBs (e.g. redondeo USD→Bs)
-    splitVueltoExceso.lte(umbralBs.plus('0.01'))
+  // Distribucion no-vacia (sdd/pos-excedente-vuelto-validacion): cualquier
+  // monto > 0 habilita Procesar, sin exigir que matchee el ideal — la
+  // diferencia (sobrante o faltante) se registra en crearVenta via
+  // `vueltoDeltaBs`, nunca se absorbe en silencio.
+  const splitVueltoValid = splitVueltoSumBs.gt(0)
 
   // ── Estado del botón Procesar (modo-aware) ────────────────────────────────
   const puedeProcesar = (() => {
@@ -476,8 +480,8 @@ export function CobroModal({
       toast.error('Se requiere autorización de supervisor para absorber la diferencia')
       return
     }
-    if (discrepancyMode === 'VUELTO' && splitVuelto.length > 0 && !splitVueltoValid) {
-      toast.error('La suma del vuelto asignado no coincide con el total de vuelto')
+    if (discrepancyMode === 'VUELTO' && !splitVueltoValid) {
+      toast.error('Debés distribuir el vuelto entre al menos un método antes de procesar')
       return
     }
 
@@ -530,6 +534,13 @@ export function CobroModal({
           vueltoEntries:
             discrepancyMode === 'VUELTO' && splitVuelto.length > 0
               ? splitVuelto.map((e) => ({ metodoCobro_id: e.metodoCobro_id, montoBs: e.montoBs }))
+              : undefined,
+          // Delta entre lo distribuido y el excedente ideal (higiene de
+          // redondeo flotante: 0.005 Bs, NO el umbralBs de negocio) — ver
+          // design.md sdd/pos-excedente-vuelto-validacion.
+          vueltoDeltaBs:
+            discrepancyMode === 'VUELTO' && splitVueltoExceso.abs().gt('0.005')
+              ? splitVueltoExceso.toNumber()
               : undefined,
           invoiceAssignments,
         }
@@ -1088,22 +1099,25 @@ export function CobroModal({
                         <span className="text-muted-foreground">
                           Asignado: {formatBs(splitVueltoSumBs)}
                         </span>
+                        {/* Mensaje no bloqueante (sdd/pos-excedente-vuelto-validacion):
+                            cualquier diferencia ≠ 0 (umbral 0.005 Bs de higiene de
+                            redondeo flotante, NO el umbralBs de negocio) se avisa pero
+                            NUNCA bloquea Procesar — se registra como sobrante/faltante
+                            de caja en crearVenta via discrepancy.vueltoDeltaBs. */}
                         <span
                           className={
-                            splitVueltoExceso.abs().lte(new Decimal('0.01'))
+                            splitVueltoExceso.abs().lte('0.005')
                               ? 'text-green-600 font-medium'
-                              : splitVueltoValid
+                              : splitVueltoExceso.lt(0)
                               ? 'text-amber-600 font-medium'
                               : 'text-orange-600 font-medium'
                           }
                         >
-                          {splitVueltoExceso.abs().lte(new Decimal('0.01'))
+                          {splitVueltoExceso.abs().lte('0.005')
                             ? '✓ Correcto'
-                            : splitVueltoExceso.lt(new Decimal('-0.01'))
-                            ? `Sin asignar: ${formatBs(-splitVueltoExceso)}`
-                            : splitVueltoValid
-                            ? `Dif. cambio: +${formatBs(splitVueltoExceso)}`
-                            : `Excede: +${formatBs(splitVueltoExceso)}`}
+                            : splitVueltoExceso.lt(0)
+                            ? `Diferencia: ${formatBs(splitVueltoExceso.abs())} — se registrará como sobrante de caja`
+                            : `Diferencia: ${formatBs(splitVueltoExceso)} — se registrará como faltante de caja`}
                         </span>
                       </div>
                     )}

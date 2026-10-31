@@ -1,4 +1,5 @@
 import { useQuery } from '@powersync/react'
+import type { Transaction } from '@powersync/common'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { localNow, timestampToVE, todayStr } from '@/lib/dates'
@@ -131,6 +132,17 @@ export interface DiscrepancyOptions {
   supervisorId?: string
   /** VUELTO split: per-method change breakdown. */
   vueltoEntries?: VueltoEntry[]
+  /**
+   * VUELTO: delta en Bs entre lo distribuido (`vueltoEntries`) y el
+   * excedente ideal, a precision completa. Negativo = sobrante (se
+   * distribuyó MENOS que el ideal, el resto queda en caja); positivo =
+   * faltante (se distribuyó MAS, se entregó de mas y se absorbe como
+   * gasto). `undefined` o `0` = sin diferencia significativa (higiene de
+   * redondeo flotante, umbral 0.005 Bs — NO el `umbralBs` de negocio
+   * usado en otras ramas de diferencial-cambiario). Ver design.md
+   * sdd/pos-excedente-vuelto-validacion.
+   */
+  vueltoDeltaBs?: number
   /**
    * SAF con "Aplicar a facturas": lista de facturas pendientes a las que se
    * aplica el excedente (FIFO). Si hay sobrante después de aplicar, queda
@@ -290,6 +302,136 @@ export async function buscarProductoPorCodigoBarras(
   )
   if (!result.rows || result.rows.length === 0) return null
   return result.rows.item(0) as ProductoVenta
+}
+
+/**
+ * Registra el ingreso de caja de un diferencial cambiario SOBRANTE (lo
+ * distribuido fue MENOS que el ideal — el sobrante queda en caja). Extraido
+ * del cuerpo de `case 'DIFERENCIAL_SOBRANTE'` (sdd/pos-excedente-vuelto-validacion)
+ * para reusarlo tambien desde `case 'VUELTO'` cuando la distribucion de
+ * `vueltoEntries` queda por debajo del excedente ideal. `metodoCobroId` nulo
+ * es un no-op silencioso — mismo comportamiento que el `if (metodoDiffSobrId)`
+ * original.
+ */
+async function insertDiferencialSobranteMovimiento(params: {
+  tx: Transaction
+  empresaId: string
+  montoBs: number
+  metodoCobroId: string | null
+  ventaId: string
+  nroFactura: string
+  sesionCajaId: string | null
+  now: string
+  usuarioId: string
+  concepto: string
+}): Promise<void> {
+  const { tx, empresaId, montoBs, metodoCobroId, ventaId, nroFactura, sesionCajaId, now, usuarioId, concepto } = params
+  if (!metodoCobroId) return
+  await tx.execute(
+    `INSERT INTO movimientos_metodo_cobro
+       (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+        doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+     VALUES (?, ?, ?, 'INGRESO', 'DIFERENCIAL_CAMBIARIO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      uuidv4(),
+      empresaId,
+      metodoCobroId,
+      toStorageString(montoBs),
+      ventaId,
+      `VEN-${nroFactura}`,
+      concepto,
+      sesionCajaId ?? null,
+      now,
+      now,
+      usuarioId,
+    ]
+  )
+}
+
+/**
+ * Registra el gasto compensatorio de un diferencial cambiario FALTANTE (lo
+ * distribuido fue MAS que el ideal — se entrego de mas y se absorbe como
+ * gasto). Extraido del cuerpo de `case 'DIFERENCIAL_FALTANTE'` (sdd/pos-excedente-vuelto-validacion)
+ * para reusarlo tambien desde `case 'VUELTO'`. Lanza `Error('sin-cuenta')` si
+ * no hay cuenta contable configurada (ni `PERDIDA_DIFERENCIAL_CAMBIARIO` ni
+ * `gastos_generales` como fallback) — mismo comportamiento que el original,
+ * aborta toda la transaccion sin dejar una factura sin respaldo contable.
+ */
+async function insertDiferencialFaltanteGasto(params: {
+  tx: Transaction
+  empresaId: string
+  montoUsd: number
+  nroFactura: string
+  ventaId: string
+  sesionCajaId: string | null
+  cajeroId: string
+  usuarioId: string
+  tasa: number
+  monedaUsdId: string
+  now: string
+}): Promise<void> {
+  const { tx, empresaId, montoUsd, nroFactura, ventaId, sesionCajaId, cajeroId, usuarioId, tasa, monedaUsdId, now } = params
+  // UUID-based: unique per venta, immune to multi-device COUNT collisions
+  const nroGastoDiff = `POS-DIFF-${ventaId.slice(0, 8).toUpperCase()}`
+  const cuentaDiffRes = await tx.execute(
+    `SELECT cuenta_contable_id FROM cuentas_config
+     WHERE empresa_id = ? AND clave = 'PERDIDA_DIFERENCIAL_CAMBIARIO' LIMIT 1`,
+    [empresaId]
+  )
+  let cuentaDiffId = (
+    cuentaDiffRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
+  )?.cuenta_contable_id ?? ''
+  // Fallback: si PERDIDA_DIFERENCIAL_CAMBIARIO no está configurado, usar gastos_generales
+  if (!cuentaDiffId) {
+    const fallbackRes = await tx.execute(
+      `SELECT cuenta_contable_id FROM cuentas_config
+       WHERE empresa_id = ? AND clave = 'gastos_generales' LIMIT 1`,
+      [empresaId]
+    )
+    cuentaDiffId = (
+      fallbackRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
+    )?.cuenta_contable_id ?? ''
+  }
+  // Only insert if some account is configured — empty cuenta_id violates FK in Supabase
+  if (!cuentaDiffId) throw new Error('sin-cuenta')
+
+  // Cajero nombre y fecha sesión para observacion legible (no UUIDs)
+  const cajeroNomDiffRes = await tx.execute(
+    'SELECT nombre FROM usuarios WHERE id = ? LIMIT 1',
+    [cajeroId]
+  )
+  const cajeroNomDiff = (cajeroNomDiffRes.rows?.item(0) as { nombre: string } | undefined)?.nombre ?? 'Sistema'
+  let sesionFechaDiff = ''
+  if (sesionCajaId) {
+    const sesionResDiff = await tx.execute(
+      'SELECT fecha_apertura FROM sesiones_caja WHERE id = ? LIMIT 1',
+      [sesionCajaId]
+    )
+    sesionFechaDiff = (sesionResDiff.rows?.item(0) as { fecha_apertura: string } | undefined)
+      ?.fecha_apertura?.slice(0, 10) ?? ''
+  }
+  const obsDiff = `Diferencial cambiario. Fac. ${nroFactura}. Cajero: ${cajeroNomDiff}${sesionFechaDiff ? '. Sesion: ' + sesionFechaDiff : ''}`
+
+  await tx.execute(
+    `INSERT INTO gastos
+       (id, empresa_id, nro_gasto, nro_factura, cuenta_id, descripcion, fecha,
+        moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
+        tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
+        saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by)
+     VALUES (?, ?, ?, ?, ?, 'DIFERENCIAL_CAMBIARIO_FALTANTE', ?,
+             ?, 'USD', 0, ?, ?, ?,
+             'Exento', '0.00', ?, '0.00',
+              '0.00', ?, 'REGISTRADO', ?, ?, ?)`,
+    [
+      uuidv4(), empresaId, nroGastoDiff, nroFactura, cuentaDiffId,
+      todayStr(), monedaUsdId,
+      toStorageString(tasa),
+      toStorageString(montoUsd),
+      toStorageString(montoUsd),
+      toStorageString(montoUsd),
+      obsDiff, now, now, usuarioId,
+    ]
+  )
 }
 
 export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaResult> {
@@ -1413,69 +1555,19 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           // Auto-absorbed small denomination shortfall — saldo_pend_usd = 0 already
           // written in the INSERT (saldoPendFinal, venta-saldo-pend-single-write-p0001).
           // No UPDATE needed here anymore.
-          {
-            // UUID-based: unique per venta, immune to multi-device COUNT collisions
-            const nroGastoDiff = `POS-DIFF-${ventaId.slice(0, 8).toUpperCase()}`
-            const cuentaDiffRes = await tx.execute(
-              `SELECT cuenta_contable_id FROM cuentas_config
-               WHERE empresa_id = ? AND clave = 'PERDIDA_DIFERENCIAL_CAMBIARIO' LIMIT 1`,
-              [empresa_id]
-            )
-            let cuentaDiffId = (
-              cuentaDiffRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
-            )?.cuenta_contable_id ?? ''
-            // Fallback: si PERDIDA_DIFERENCIAL_CAMBIARIO no está configurado, usar gastos_generales
-            if (!cuentaDiffId) {
-              const fallbackRes = await tx.execute(
-                `SELECT cuenta_contable_id FROM cuentas_config
-                 WHERE empresa_id = ? AND clave = 'gastos_generales' LIMIT 1`,
-                [empresa_id]
-              )
-              cuentaDiffId = (
-                fallbackRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
-              )?.cuenta_contable_id ?? ''
-            }
-            // Only insert if some account is configured — empty cuenta_id violates FK in Supabase
-            if (!cuentaDiffId) throw new Error('sin-cuenta')
-
-            // Cajero nombre y fecha sesión para observacion legible (no UUIDs)
-            const cajeroNomDiffRes = await tx.execute(
-              'SELECT nombre FROM usuarios WHERE id = ? LIMIT 1',
-              [discrepancy.cajeroId ?? usuario_id]
-            )
-            const cajeroNomDiff = (cajeroNomDiffRes.rows?.item(0) as { nombre: string } | undefined)?.nombre ?? 'Sistema'
-            let sesionFechaDiff = ''
-            if (sesion_caja_id) {
-              const sesionResDiff = await tx.execute(
-                'SELECT fecha_apertura FROM sesiones_caja WHERE id = ? LIMIT 1',
-                [sesion_caja_id]
-              )
-              sesionFechaDiff = (sesionResDiff.rows?.item(0) as { fecha_apertura: string } | undefined)
-                ?.fecha_apertura?.slice(0, 10) ?? ''
-            }
-            const obsDiff = `Diferencial cambiario. Fac. ${nroFactura}. Cajero: ${cajeroNomDiff}${sesionFechaDiff ? '. Sesion: ' + sesionFechaDiff : ''}`
-
-            await tx.execute(
-              `INSERT INTO gastos
-                 (id, empresa_id, nro_gasto, nro_factura, cuenta_id, descripcion, fecha,
-                  moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
-                  tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
-                  saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by)
-               VALUES (?, ?, ?, ?, ?, 'DIFERENCIAL_CAMBIARIO_FALTANTE', ?,
-                       ?, 'USD', 0, ?, ?, ?,
-                       'Exento', '0.00', ?, '0.00',
-                        '0.00', ?, 'REGISTRADO', ?, ?, ?)`,
-              [
-                uuidv4(), empresa_id, nroGastoDiff, nroFactura, cuentaDiffId,
-                todayStr(), monedaUsdId,
-                toStorageString(tasa),
-                toStorageString(discrepancy.montoUsd),
-                toStorageString(discrepancy.montoUsd),
-                toStorageString(discrepancy.montoUsd),
-                obsDiff, now, now, usuario_id,
-              ]
-            )
-          }
+          await insertDiferencialFaltanteGasto({
+            tx,
+            empresaId: empresa_id,
+            montoUsd: discrepancy.montoUsd,
+            nroFactura,
+            ventaId,
+            sesionCajaId: sesion_caja_id,
+            cajeroId: discrepancy.cajeroId ?? usuario_id,
+            usuarioId: usuario_id,
+            tasa,
+            monedaUsdId,
+            now,
+          })
           break
         }
 
@@ -1517,27 +1609,18 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             pagos.find((p) => p.moneda === 'BS')?.metodo_cobro_id ??
             pagos[0]?.metodo_cobro_id ??
             null
-          if (metodoDiffSobrId) {
-            await tx.execute(
-              `INSERT INTO movimientos_metodo_cobro
-                 (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-                  doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
-               VALUES (?, ?, ?, 'INGRESO', 'DIFERENCIAL_CAMBIARIO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                uuidv4(),
-                empresa_id,
-                metodoDiffSobrId,
-                toStorageString(discrepancy.montoBs),
-                ventaId,
-                `VEN-${nroFactura}`,
-                `Diferencial cambiario sobrante — Venta ${nroFactura}`,
-                sesion_caja_id ?? null,
-                now,
-                now,
-                usuario_id,
-              ]
-            )
-          }
+          await insertDiferencialSobranteMovimiento({
+            tx,
+            empresaId: empresa_id,
+            montoBs: discrepancy.montoBs,
+            metodoCobroId: metodoDiffSobrId,
+            ventaId,
+            nroFactura,
+            sesionCajaId: sesion_caja_id,
+            now,
+            usuarioId: usuario_id,
+            concepto: `Diferencial cambiario sobrante — Venta ${nroFactura}`,
+          })
           break
         }
 
@@ -1586,6 +1669,49 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 usuario_id,
               ]
             )
+          }
+
+          // Delta entre lo distribuido (vueltoEntries) y el excedente ideal —
+          // bookea el sobrante/faltante con las mismas primitivas que
+          // DIFERENCIAL_SOBRANTE/FALTANTE (sdd/pos-excedente-vuelto-validacion).
+          // Negativo = sobrante (se distribuyó MENOS, el resto queda en caja);
+          // positivo = faltante (se distribuyó MAS, se absorbe como gasto).
+          // `undefined`/0 = sin diferencia significativa — no bookea nada.
+          if (discrepancy.vueltoDeltaBs !== undefined && discrepancy.vueltoDeltaBs !== 0) {
+            if (discrepancy.vueltoDeltaBs < 0) {
+              const metodoVueltoSobrId =
+                discrepancy.vueltoEntries?.[0]?.metodoCobro_id ??
+                pagos.find((p) => p.moneda === 'BS')?.metodo_cobro_id ??
+                pagos[0]?.metodo_cobro_id ??
+                null
+              await insertDiferencialSobranteMovimiento({
+                tx,
+                empresaId: empresa_id,
+                montoBs: Math.abs(discrepancy.vueltoDeltaBs),
+                metodoCobroId: metodoVueltoSobrId,
+                ventaId,
+                nroFactura,
+                sesionCajaId: sesion_caja_id,
+                now,
+                usuarioId: usuario_id,
+                concepto: `Diferencial cambiario sobrante (vuelto) — Venta ${nroFactura}`,
+              })
+            } else {
+              const montoUsdVueltoDelta = bsToUsd(new Decimal(discrepancy.vueltoDeltaBs), tasa).toNumber()
+              await insertDiferencialFaltanteGasto({
+                tx,
+                empresaId: empresa_id,
+                montoUsd: montoUsdVueltoDelta,
+                nroFactura,
+                ventaId,
+                sesionCajaId: sesion_caja_id,
+                cajeroId: discrepancy.cajeroId ?? usuario_id,
+                usuarioId: usuario_id,
+                tasa,
+                monedaUsdId,
+                now,
+              })
+            }
           }
           break
         }

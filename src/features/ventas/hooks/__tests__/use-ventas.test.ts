@@ -1040,6 +1040,159 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
     })
   })
 
+  describe('case VUELTO: booking del delta sobrante/faltante vs el excedente ideal (sdd/pos-excedente-vuelto-validacion)', () => {
+    it('vueltoDeltaBs<0 (distribuido MENOS que el ideal): inserta el EGRESO de vuelto Y un INGRESO movimientos_metodo_cobro origen=DIFERENCIAL_CAMBIARIO por el sobrante', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          tasa: 40,
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-1', moneda: 'USD', monto: 11 })],
+          // Excedente ideal: Bs 40 ($1). Cajero solo distribuye Bs 10 — el resto
+          // (Bs 30) queda en caja como sobrante.
+          discrepancy: {
+            mode: 'VUELTO',
+            montoUsd: 1,
+            montoBs: 40,
+            vueltoEntries: [{ metodoCobro_id: 'metodo-1', montoBs: 10 }],
+            vueltoDeltaBs: -30,
+          },
+        })
+      )
+
+      const egresoVuelto = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'EGRESO', 'VUELTO'")
+      )
+      expect(egresoVuelto).toBeDefined()
+      expect(egresoVuelto!.params[3]).toBe(toStorageString(10))
+
+      const ingresoSobrante = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'INGRESO', 'DIFERENCIAL_CAMBIARIO'")
+      )
+      expect(ingresoSobrante).toBeDefined()
+      expect(ingresoSobrante!.params[3]).toBe(toStorageString(30))
+      expect(ingresoSobrante!.params[2]).toBe('metodo-1')
+    })
+
+    it('vueltoDeltaBs>0 (distribuido MAS que el ideal): inserta el EGRESO de vuelto Y un gasto DIFERENCIAL_CAMBIARIO_FALTANTE por el faltante (convertido a USD a la tasa usada)', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        cuentasConfig: { PERDIDA_DIFERENCIAL_CAMBIARIO: 'cuenta-diff-1' },
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          tasa: 40,
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-1', moneda: 'USD', monto: 11 })],
+          // Excedente ideal: Bs 40. Cajero distribuye Bs 50 — Bs 10 de mas se
+          // absorben como gasto (Bs 10 / tasa 40 = $0.25).
+          discrepancy: {
+            mode: 'VUELTO',
+            montoUsd: 1,
+            montoBs: 40,
+            vueltoEntries: [{ metodoCobro_id: 'metodo-1', montoBs: 50 }],
+            vueltoDeltaBs: 10,
+          },
+        })
+      )
+
+      const egresoVuelto = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'EGRESO', 'VUELTO'")
+      )
+      expect(egresoVuelto).toBeDefined()
+      expect(egresoVuelto!.params[3]).toBe(toStorageString(50))
+
+      const gastoFaltante = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO gastos') && c.sql.includes('DIFERENCIAL_CAMBIARIO_FALTANTE')
+      )
+      expect(gastoFaltante).toBeDefined()
+      // params[8..10] son los 3 placeholders de monto_factura/monto_usd/base_imponible_usd,
+      // todos escritos con el mismo monto_usd del gasto (ver helper insertDiferencialFaltanteGasto).
+      expect(gastoFaltante!.params[9]).toBe(toStorageString(0.25))
+    })
+
+    it('vueltoDeltaBs undefined (distribuido EXACTAMENTE igual al ideal): NO inserta ninguna fila extra de diferencial', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          tasa: 40,
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-1', moneda: 'USD', monto: 11 })],
+          discrepancy: {
+            mode: 'VUELTO',
+            montoUsd: 1,
+            montoBs: 40,
+            vueltoEntries: [{ metodoCobro_id: 'metodo-1', montoBs: 40 }],
+            vueltoDeltaBs: undefined,
+          },
+        })
+      )
+
+      const diferencialRows = calls.filter(
+        (c) =>
+          (c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes('DIFERENCIAL_CAMBIARIO')) ||
+          (c.sql.startsWith('INSERT INTO gastos') && c.sql.includes('DIFERENCIAL_CAMBIARIO_FALTANTE'))
+      )
+      expect(diferencialRows).toHaveLength(0)
+
+      const egresoVuelto = calls.find(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'EGRESO', 'VUELTO'")
+      )
+      expect(egresoVuelto).toBeDefined()
+    })
+
+    it('vueltoDeltaBs>0 sin cuenta contable configurada: rechaza con "sin-cuenta" — la transaccion aborta completa (EGRESO de vuelto incluido, rollback atomico)', async () => {
+      mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+        // Sin cuentasConfig: ninguna de las 2 claves resuelve -> 'sin-cuenta'
+      })
+
+      await expect(
+        crearVenta(
+          baseParams({
+            tipo: 'CONTADO',
+            tasa: 40,
+            sesion_caja_id: 'sesion-1',
+            lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+            pagos: [pago({ metodo_cobro_id: 'metodo-1', moneda: 'USD', monto: 11 })],
+            discrepancy: {
+              mode: 'VUELTO',
+              montoUsd: 1,
+              montoBs: 40,
+              vueltoEntries: [{ metodoCobro_id: 'metodo-1', montoBs: 50 }],
+              vueltoDeltaBs: 10,
+            },
+          })
+        )
+      ).rejects.toThrow('sin-cuenta')
+    })
+  })
+
   describe('venta-saldo-pend-single-write-p0001 — escritura unica de saldo_pend_usd/tipo en el INSERT', () => {
     it('100% contado: el INSERT escribe saldo_pend_usd=0 y cero UPDATE de ventas la modifica despues', async () => {
       const calls = mockCrearVentaTx({
