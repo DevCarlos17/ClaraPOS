@@ -207,7 +207,7 @@ describe('CobroModal — SAF dual input (PR-A2, sdd/saf-snapshot-y-trazabilidad)
     expect(screen.getByRole('button', { name: /Procesar/i })).toBeDisabled()
   })
 
-  it('destildar SAF luego de un monto invalido resetea safEstado y no bloquea un sobrepago en efectivo genuino (regresion engram #5294)', async () => {
+  it('destildar SAF luego de un monto invalido resetea safEstado y no bloquea un sobrepago en efectivo genuino (regresion engram #5294) — ajustado a sdd/pos-excedente-vuelto-validacion: sin auto-seleccion, requiere elegir "Dar vuelto" + distribuir', async () => {
     // Mismo escenario que el test anterior ($1.30 total, SAF disponible
     // $1.70, SAF tipeado $1.50 que excede el total) pero el cajero
     // DESTILDA "Saldo a favor" antes de agregar el pago en efectivo. El
@@ -234,9 +234,125 @@ describe('CobroModal — SAF dual input (PR-A2, sdd/saf-snapshot-y-trazabilidad)
     const montoInput = screen.getByPlaceholderText(/Monto \(USD\)/i)
     await user.type(montoInput, '5{Enter}')
 
-    // Los controles de excedente deben aparecer (sobrepago legitimo) y
-    // Procesar debe quedar habilitado con el modo auto-seleccionado (VUELTO).
+    // Los controles de excedente deben aparecer (sobrepago legitimo) — pero
+    // NINGUN modo queda pre-seleccionado (fix pos-excedente-vuelto-validacion):
+    // `safEstado` ya NO esta bloqueando nada (quedo en 'ok' tras destildar), y
+    // Procesar sigue bloqueado hasta que el cajero elija explicitamente.
     expect(screen.getByRole('button', { name: /Dar vuelto/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Procesar/i })).toBeDisabled()
+
+    // El cajero elige "Dar vuelto" explicitamente — el AND-gate `safEstado`
+    // sigue sin bloquear (era el bug original #5293/#5294), pero ahora
+    // ademas se exige distribuir el vuelto antes de habilitar Procesar.
+    await user.click(screen.getByRole('button', { name: /Dar vuelto/i }))
+    expect(screen.getByRole('button', { name: /Procesar/i })).toBeDisabled()
+
+    const splitInput = screen.getByPlaceholderText('0.00')
+    await user.type(splitInput, '5')
+    expect(screen.getByRole('button', { name: /Procesar/i })).not.toBeDisabled()
+  })
+})
+
+describe('CobroModal — gating de excedente sin auto-seleccion (sdd/pos-excedente-vuelto-validacion)', () => {
+  function metodoEfectivoBs(overrides: Partial<PaymentMethod> = {}): PaymentMethod {
+    return makeMetodoEfectivo({
+      id: 'metodo-efectivo-bs',
+      nombre: 'Efectivo Bs',
+      moneda: 'BS',
+      moneda_id: 'moneda-bs',
+      ...overrides,
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockedUseFacturasPendientes.mockReturnValue({ facturas: [], isLoading: false })
+    mockedUseDeudaFacturasCliente.mockReturnValue({ deudaFacturasUsd: 0, isLoading: false })
+    mockedUseIgtfConfig.mockReturnValue({ aplicaIgtf: false, tasaIgtf: 3, isLoading: false })
+    mockedValidarStockServidor.mockResolvedValue(undefined)
+    mockedUseSaldoAFavor.mockReturnValue({ disponible: 0, tieneSaf: false })
+  })
+
+  /** Total $10 a tasa 40 = Bs 400. Pago Bs 440 -> excedente ideal Bs 40 ($1). */
+  async function generarExcedente(user: ReturnType<typeof userEvent.setup>, metodo: PaymentMethod) {
+    render(<CobroModal {...baseProps({ totalBrutoUsd: 10, metodos: [metodo] })} />)
+    await user.selectOptions(screen.getByRole('combobox'), metodo.id)
+    const montoInput = screen.getByPlaceholderText(/Monto \(BS\)/i)
+    await user.type(montoInput, '440{Enter}')
+  }
+
+  it('excedente detectado sin pago previo de discrepancyMode: ningun modo queda pre-seleccionado y Procesar queda bloqueado', async () => {
+    const metodo = metodoEfectivoBs()
+    const user = userEvent.setup()
+    await generarExcedente(user, metodo)
+
+    // El panel "Desglose de vuelto" solo se renderiza con discrepancyMode==='VUELTO'.
+    // Que NO aparezca prueba que no hubo auto-seleccion.
+    expect(screen.queryByText(/Desglose de vuelto/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Procesar/i })).toBeDisabled()
+  })
+
+  it('"Dar vuelto" elegido pero sin distribuir ningun monto: Procesar sigue bloqueado', async () => {
+    const metodo = metodoEfectivoBs()
+    const user = userEvent.setup()
+    await generarExcedente(user, metodo)
+
+    await user.click(screen.getByRole('button', { name: /Dar vuelto/i }))
+
+    expect(screen.getByRole('button', { name: /Procesar/i })).toBeDisabled()
+  })
+
+  it('una sola entrada no vacia (aunque no matchee el excedente ideal) habilita Procesar', async () => {
+    const metodo = metodoEfectivoBs()
+    const user = userEvent.setup()
+    await generarExcedente(user, metodo)
+
+    await user.click(screen.getByRole('button', { name: /Dar vuelto/i }))
+    const splitInput = screen.getByPlaceholderText('0.00')
+    await user.type(splitInput, '5')
+
+    expect(screen.getByRole('button', { name: /Procesar/i })).not.toBeDisabled()
+  })
+
+  it('distribuido MENOS que el ideal (Bs 10 de Bs 40): muestra mensaje de sobrante de caja y Procesar sigue habilitado', async () => {
+    const metodo = metodoEfectivoBs()
+    const user = userEvent.setup()
+    await generarExcedente(user, metodo)
+
+    await user.click(screen.getByRole('button', { name: /Dar vuelto/i }))
+    const splitInput = screen.getByPlaceholderText('0.00')
+    await user.type(splitInput, '10')
+
+    expect(screen.getByText(/sobrante de caja/i)).toBeInTheDocument()
+    expect(screen.queryByText(/faltante de caja/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Procesar/i })).not.toBeDisabled()
+  })
+
+  it('distribuido MAS que el ideal (Bs 50 de Bs 40): muestra mensaje de faltante de caja y Procesar sigue habilitado', async () => {
+    const metodo = metodoEfectivoBs()
+    const user = userEvent.setup()
+    await generarExcedente(user, metodo)
+
+    await user.click(screen.getByRole('button', { name: /Dar vuelto/i }))
+    const splitInput = screen.getByPlaceholderText('0.00')
+    await user.type(splitInput, '50')
+
+    expect(screen.getByText(/faltante de caja/i)).toBeInTheDocument()
+    expect(screen.queryByText(/sobrante de caja/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Procesar/i })).not.toBeDisabled()
+  })
+
+  it('distribuido EXACTAMENTE igual al ideal (Bs 40): no muestra mensaje de sobrante/faltante, Procesar habilitado', async () => {
+    const metodo = metodoEfectivoBs()
+    const user = userEvent.setup()
+    await generarExcedente(user, metodo)
+
+    await user.click(screen.getByRole('button', { name: /Dar vuelto/i }))
+    const splitInput = screen.getByPlaceholderText('0.00')
+    await user.type(splitInput, '40')
+
+    expect(screen.queryByText(/sobrante de caja/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/faltante de caja/i)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Procesar/i })).not.toBeDisabled()
   })
 })
